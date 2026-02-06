@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { getDatabase, initializeDatabase } from './database';
 import specificationRoutes from './routes/specifications';
+import invoiceRoutes from './routes/invoices';
 
 dotenv.config();
 
@@ -17,6 +18,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use(specificationRoutes);
+app.use(invoiceRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
