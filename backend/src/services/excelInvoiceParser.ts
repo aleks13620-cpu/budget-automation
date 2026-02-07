@@ -1,0 +1,151 @@
+import XLSX from 'xlsx';
+import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
+import { detectColumns, parseTableData, parsePrice } from './pdfParser';
+
+function extractMetadataFromRows(rows: string[][]): {
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  supplierName: string | null;
+  totalAmount: number | null;
+} {
+  let invoiceNumber: string | null = null;
+  let invoiceDate: string | null = null;
+  let supplierName: string | null = null;
+  let totalAmount: number | null = null;
+
+  // Search first 30 rows for metadata
+  const searchLimit = Math.min(rows.length, 30);
+
+  for (let i = 0; i < searchLimit; i++) {
+    const row = rows[i];
+    for (const cell of row) {
+      if (!cell) continue;
+      const text = String(cell);
+
+      // Invoice number
+      if (!invoiceNumber) {
+        const numMatch = text.match(/(?:счёт|счет|invoice)\s*[№#:]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
+        if (numMatch) {
+          invoiceNumber = numMatch[1].trim();
+        }
+      }
+
+      // Date
+      if (!invoiceDate) {
+        const dateMatch = text.match(/(?:от|date|дата)\s*[:\s]*(\d{2}[.\-/]\d{2}[.\-/]\d{4})/i);
+        if (dateMatch) {
+          invoiceDate = dateMatch[1].trim();
+        }
+      }
+
+      // Supplier
+      if (!supplierName) {
+        const orgMatch = text.match(/(ООО|ОАО|ЗАО|ИП|АО)\s*[«"']?([^»"'\n]{2,50})[»"']?/);
+        if (orgMatch) {
+          supplierName = `${orgMatch[1]} ${orgMatch[2]}`.trim();
+        } else {
+          const supplierMatch = text.match(/(?:поставщик|продавец)\s*[:\s]*([^\n]{3,60})/i);
+          if (supplierMatch) {
+            supplierName = supplierMatch[1].trim();
+          }
+        }
+      }
+
+      // Total amount
+      if (!totalAmount) {
+        const totalMatch = text.match(/(?:итого|всего|total)\s*[:\s]*([0-9\s]+[.,]\d{2})/i);
+        if (totalMatch) {
+          totalAmount = parsePrice(totalMatch[1]);
+        }
+      }
+    }
+  }
+
+  return { invoiceNumber, invoiceDate, supplierName, totalAmount };
+}
+
+export function parseExcelInvoice(filePath: string): InvoiceParseResult {
+  const errors: string[] = [];
+
+  // Read workbook
+  const workbook = XLSX.readFile(filePath);
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) {
+    return {
+      items: [],
+      errors: ['Файл не содержит листов'],
+      totalRows: 0,
+      skippedRows: 0,
+      invoiceNumber: null,
+      invoiceDate: null,
+      supplierName: null,
+      totalAmount: null,
+    };
+  }
+
+  const sheet = workbook.Sheets[sheetName];
+
+  // Convert sheet to 2D string array (header: 1 gives array of arrays)
+  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  // Convert all cell values to strings
+  const rows: string[][] = rawRows.map(row =>
+    row.map(cell => (cell === null || cell === undefined) ? '' : String(cell))
+  );
+
+  if (rows.length < 2) {
+    return {
+      items: [],
+      errors: ['Файл содержит менее 2 строк'],
+      totalRows: 0,
+      skippedRows: 0,
+      invoiceNumber: null,
+      invoiceDate: null,
+      supplierName: null,
+      totalAmount: null,
+    };
+  }
+
+  // Extract metadata from header area
+  const metadata = extractMetadataFromRows(rows);
+
+  // Detect columns and parse table data
+  const detected = detectColumns(rows);
+  if (!detected) {
+    return {
+      items: [],
+      errors: ['Не удалось определить колонки таблицы в Excel-файле'],
+      totalRows: rows.length,
+      skippedRows: 0,
+      invoiceNumber: metadata.invoiceNumber,
+      invoiceDate: metadata.invoiceDate,
+      supplierName: metadata.supplierName,
+      totalAmount: metadata.totalAmount,
+    };
+  }
+
+  const { mapping, headerRowIndex } = detected;
+  const result = parseTableData(rows, mapping, headerRowIndex + 1);
+
+  const totalRows = rows.length - headerRowIndex - 1;
+  const items = result.items;
+  errors.push(...result.errors);
+
+  // Calculate total if not found in metadata
+  let totalAmount = metadata.totalAmount;
+  if (!totalAmount && items.length > 0) {
+    const sum = items.reduce((acc, item) => acc + (item.amount || 0), 0);
+    if (sum > 0) totalAmount = sum;
+  }
+
+  return {
+    items,
+    errors,
+    totalRows,
+    skippedRows: result.skipped,
+    invoiceNumber: metadata.invoiceNumber,
+    invoiceDate: metadata.invoiceDate,
+    supplierName: metadata.supplierName,
+    totalAmount,
+  };
+}

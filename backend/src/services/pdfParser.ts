@@ -4,7 +4,7 @@ import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
 // pdf-parse v2 CJS import
 const { PDFParse } = require('pdf-parse');
 
-interface ColumnMapping {
+export interface ColumnMapping {
   article: number | null;
   name: number | null;
   unit: number | null;
@@ -13,7 +13,7 @@ interface ColumnMapping {
   amount: number | null;
 }
 
-const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
+export const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   article: ['артикул', 'article', 'код', 'арт.', 'арт'],
   name: ['наименование', 'товар', 'название', 'описание', 'номенклатура'],
   quantity: ['количество', 'кол-во', 'qty', 'кол.', 'кол'],
@@ -22,12 +22,12 @@ const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм'],
 };
 
-function normalizeText(text: unknown): string {
+export function normalizeText(text: unknown): string {
   if (text === null || text === undefined) return '';
   return String(text).toLowerCase().trim();
 }
 
-function parsePrice(value: string | null | undefined): number | null {
+export function parsePrice(value: string | null | undefined): number | null {
   if (!value) return null;
   const cleaned = value
     .replace(/\s/g, '')
@@ -41,7 +41,7 @@ function parsePrice(value: string | null | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
-function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number } | null {
+export function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number } | null {
   const searchLimit = Math.min(rows.length, 10);
 
   for (let i = 0; i < searchLimit; i++) {
@@ -83,7 +83,7 @@ function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowInd
   return null;
 }
 
-function parseTableData(rows: string[][], mapping: ColumnMapping, startRow: number): { items: InvoiceRow[]; errors: string[]; skipped: number } {
+export function parseTableData(rows: string[][], mapping: ColumnMapping, startRow: number): { items: InvoiceRow[]; errors: string[]; skipped: number } {
   const items: InvoiceRow[] = [];
   const errors: string[] = [];
   let skipped = 0;

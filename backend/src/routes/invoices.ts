@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
 import { parsePdfFile } from '../services/pdfParser';
+import { parseExcelInvoice } from '../services/excelInvoiceParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -26,10 +27,10 @@ const upload = multer({
   storage,
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.pdf') {
+    if (ext === '.pdf' || ext === '.xlsx' || ext === '.xls') {
       cb(null, true);
     } else {
-      cb(new Error('Допустимы только файлы .pdf'));
+      cb(new Error('Допустимы только файлы .pdf, .xlsx, .xls'));
     }
   },
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
@@ -52,8 +53,11 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       return res.status(400).json({ error: 'Файл не загружен' });
     }
 
-    // Parse PDF (async)
-    const parseResult = await parsePdfFile(req.file.path);
+    // Determine file type and parse
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    const parseResult = ext === '.pdf'
+      ? await parsePdfFile(req.file.path)
+      : parseExcelInvoice(req.file.path);
 
     if (parseResult.items.length === 0) {
       return res.status(400).json({
