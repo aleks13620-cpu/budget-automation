@@ -3,8 +3,9 @@ import './App.css';
 import { ProjectList } from './pages/ProjectList';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { InvoicePreview } from './pages/InvoicePreview';
+import { MatchingView } from './pages/MatchingView';
 
-type Page = 'projects' | 'project' | 'invoice-preview';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -30,6 +31,10 @@ function App() {
     setPage('invoice-preview');
   };
 
+  const goToMatching = () => {
+    setPage('matching');
+  };
+
   return (
     <>
       {/* Breadcrumbs */}
@@ -47,6 +52,12 @@ function App() {
             <span>Предпросмотр счёта</span>
           </>
         )}
+        {page === 'matching' && (
+          <>
+            <span>/</span>
+            <span>Сопоставление</span>
+          </>
+        )}
       </div>
 
       {page === 'projects' && (
@@ -58,12 +69,20 @@ function App() {
           projectId={projectId}
           onBack={goToProjects}
           onInvoicePreview={goToInvoicePreview}
+          onMatching={goToMatching}
         />
       )}
 
       {page === 'invoice-preview' && invoiceId && (
         <InvoicePreview
           invoiceId={invoiceId}
+          onBack={() => goToProject(projectId!, projectName)}
+        />
+      )}
+
+      {page === 'matching' && projectId && (
+        <MatchingView
+          projectId={projectId}
           onBack={() => goToProject(projectId!, projectName)}
         />
       )}

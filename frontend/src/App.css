@@ -155,3 +155,64 @@ label {
 .error-msg { color: #dc2626; font-size: 0.85rem; margin: 0.5rem 0; }
 .success-msg { color: #16a34a; font-size: 0.85rem; margin: 0.5rem 0; }
 .muted { color: #888; font-size: 0.85rem; }
+
+/* Matching summary cards */
+.matching-summary {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.summary-card {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  background: #f3f4f6;
+  text-align: center;
+}
+.summary-card .summary-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.summary-card .summary-label {
+  font-size: 0.75rem;
+  color: #666;
+  margin-top: 0.15rem;
+}
+.summary-matched { background: #fef3c7; }
+.summary-confirmed { background: #dcfce7; }
+.summary-unmatched { background: #fee2e2; }
+
+/* Matching table row colors */
+tr.match-row-confirmed { background: #dcfce7; }
+tr.match-row-confirmed:hover { background: #bbf7d0; }
+tr.match-row-candidate { background: #fefce8; }
+tr.match-row-candidate:hover { background: #fef9c3; }
+tr.match-row-unmatched { background: #f9fafb; }
+tr.match-row-unmatched:hover { background: #f3f4f6; }
+
+/* Confidence badge */
+.confidence-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: #e0e7ff;
+  color: #3730a3;
+}
+
+/* Expanded match candidates */
+.match-candidates {
+  border-top: 1px solid #e5e7eb;
+  background: #fafafa;
+}
+.match-candidate-row {
+  display: flex;
+  align-items: center;
+  padding: 0.35rem 0.75rem;
+  border-top: 1px dashed #e5e7eb;
+  font-size: 0.8rem;
+}
+.match-candidate-row.confirmed {
+  background: #ecfdf5;
+}

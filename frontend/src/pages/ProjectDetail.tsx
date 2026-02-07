@@ -24,9 +24,10 @@ interface Props {
   projectId: number;
   onBack: () => void;
   onInvoicePreview: (invoiceId: number) => void;
+  onMatching: () => void;
 }
 
-export function ProjectDetail({ projectId, onInvoicePreview }: Props) {
+export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props) {
   const [specItems, setSpecItems] = useState<SpecItem[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,6 +188,16 @@ export function ProjectDetail({ projectId, onInvoicePreview }: Props) {
           </table>
         )}
       </div>
+
+      {/* Matching section */}
+      {specItems.length > 0 && invoices.length > 0 && (
+        <div className="section">
+          <h2>Сопоставление</h2>
+          <button className="btn btn-primary" onClick={onMatching}>
+            Сопоставить позиции
+          </button>
+        </div>
+      )}
     </div>
   );
 }
