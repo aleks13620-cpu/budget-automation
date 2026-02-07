@@ -224,3 +224,21 @@ tr.match-row-unmatched:hover { background: #f3f4f6; }
   margin-bottom: 1.5rem;
   flex-wrap: wrap;
 }
+
+/* Section summary */
+.section-summary {
+  margin-bottom: 1.5rem;
+}
+.section-summary h3 {
+  margin-bottom: 0.5rem;
+}
+.grand-total-row {
+  background: #f0fdf4;
+  border-top: 2px solid #16a34a;
+}
+
+/* Selected candidate row */
+.match-candidate-row.selected {
+  background: #eff6ff;
+  border-left: 3px solid #2563eb;
+}

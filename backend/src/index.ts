@@ -7,6 +7,7 @@ import specificationRoutes from './routes/specifications';
 import invoiceRoutes from './routes/invoices';
 import supplierRoutes from './routes/suppliers';
 import matchingRoutes from './routes/matching';
+import exportRoutes from './routes/export';
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ app.use(specificationRoutes);
 app.use(invoiceRoutes);
 app.use(supplierRoutes);
 app.use(matchingRoutes);
+app.use(exportRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

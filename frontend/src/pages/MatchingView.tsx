@@ -40,6 +40,13 @@ interface Summary {
   unmatched: number;
 }
 
+interface SectionSummary {
+  name: string;
+  itemCount: number;
+  matchedCount: number;
+  subtotal: number;
+}
+
 interface Props {
   projectId: number;
   onBack: () => void;
@@ -50,8 +57,11 @@ type FilterStatus = 'all' | 'confirmed' | 'pending' | 'unmatched';
 export function MatchingView({ projectId, onBack }: Props) {
   const [items, setItems] = useState<MatchRow[]>([]);
   const [summary, setSummary] = useState<Summary>({ total: 0, matched: 0, confirmed: 0, unmatched: 0 });
+  const [sections, setSections] = useState<SectionSummary[]>([]);
+  const [grandTotal, setGrandTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
 
@@ -68,7 +78,47 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
-  useEffect(() => { loadMatching(); }, [projectId]);
+  const loadSummary = async () => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/summary`);
+      setSections(data.sections || []);
+      setGrandTotal(data.grandTotal || 0);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => { loadMatching(); loadSummary(); }, [projectId]);
+
+  const handleRefresh = () => {
+    loadMatching();
+    loadSummary();
+  };
+
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const response = await api.get(`/projects/${projectId}/export`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      const disposition = response.headers['content-disposition'];
+      let fileName = 'specification.xlsx';
+      if (disposition) {
+        const match = disposition.match(/filename\*=UTF-8''(.+)/);
+        if (match) fileName = decodeURIComponent(match[1]);
+      }
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при экспорте' });
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const handleRun = async () => {
     setRunning(true);
@@ -80,6 +130,7 @@ export function MatchingView({ projectId, onBack }: Props) {
         text: `Сопоставление завершено: ${data.matched} из ${data.total} позиций найдены`,
       });
       await loadMatching();
+      await loadSummary();
     } catch (err: any) {
       setMessage({
         type: 'error',
@@ -111,6 +162,9 @@ export function MatchingView({ projectId, onBack }: Props) {
           <button className="btn btn-secondary" onClick={onBack}>Назад</button>
           <button className="btn btn-primary" onClick={handleRun} disabled={running}>
             {running ? 'Сопоставление...' : 'Запустить сопоставление'}
+          </button>
+          <button className="btn btn-secondary" onClick={handleExport} disabled={exporting || items.length === 0}>
+            {exporting ? 'Экспорт...' : 'Экспорт в Excel'}
           </button>
         </div>
       </div>
@@ -175,12 +229,43 @@ export function MatchingView({ projectId, onBack }: Props) {
         </div>
       </div>
 
+      {/* Section totals */}
+      {sections.length > 0 && (
+        <div className="section-summary">
+          <h3>Итоги по разделам</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Раздел</th>
+                <th style={{ width: '80px' }}>Позиций</th>
+                <th style={{ width: '100px' }}>С ценой</th>
+                <th style={{ width: '140px' }}>Сумма</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sections.map(sec => (
+                <tr key={sec.name}>
+                  <td>{sec.name}</td>
+                  <td>{sec.itemCount}</td>
+                  <td>{sec.matchedCount}</td>
+                  <td style={{ fontWeight: 600 }}>{sec.subtotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
+                </tr>
+              ))}
+              <tr className="grand-total-row">
+                <td colSpan={3} style={{ fontWeight: 700, textAlign: 'right' }}>ОБЩИЙ ИТОГ:</td>
+                <td style={{ fontWeight: 700 }}>{grandTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {items.length === 0 ? (
         <p className="muted">Нет данных для сопоставления. Загрузите спецификацию и счета, затем запустите сопоставление.</p>
       ) : filteredItems.length === 0 ? (
         <p className="muted">По выбранному фильтру позиций не найдено.</p>
       ) : (
-        <MatchTable items={filteredItems} onRefresh={loadMatching} />
+        <MatchTable items={filteredItems} onRefresh={handleRefresh} />
       )}
     </div>
   );

@@ -84,6 +84,18 @@ export function MatchTable({ items, onRefresh }: Props) {
     }
   };
 
+  const handleSelect = async (matchId: number) => {
+    setLoading(matchId);
+    try {
+      await api.put(`/matching/select/${matchId}`);
+      onRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setLoading(null);
+    }
+  };
+
   const toggleExpand = (specId: number) => {
     setExpandedId(prev => prev === specId ? null : specId);
   };
@@ -201,7 +213,7 @@ export function MatchTable({ items, onRefresh }: Props) {
                 {isExpanded && (
                   <div className="match-candidates">
                     {row.matches.map(m => (
-                      <div key={m.id} className={`match-candidate-row ${m.isConfirmed ? 'confirmed' : ''}`}>
+                      <div key={m.id} className={`match-candidate-row ${m.isConfirmed ? 'confirmed' : ''} ${m.isSelected ? 'selected' : ''}`}>
                         <div style={{ flex: '0 0 30%' }}></div>
                         <div style={{ flex: '0 0 25%', paddingRight: '0.75rem' }}>
                           {m.invoiceName}
@@ -216,6 +228,10 @@ export function MatchTable({ items, onRefresh }: Props) {
                           </span>
                         </div>
                         <div style={{ flex: '0 0 150px', display: 'flex', gap: '0.25rem' }}>
+                          {!m.isSelected && (
+                            <button className="btn btn-secondary btn-sm" onClick={() => handleSelect(m.id)} disabled={loading === m.id} title="Выбрать эту цену">&#9679;</button>
+                          )}
+                          {m.isSelected && <span style={{ fontSize: '0.7rem', color: '#16a34a', fontWeight: 600 }}>&#10003; выбран</span>}
                           {!m.isConfirmed && (
                             <>
                               <button className="btn btn-primary btn-sm" onClick={() => handleConfirm(m.id)} disabled={loading === m.id} title="Точное совпадение">✓</button>

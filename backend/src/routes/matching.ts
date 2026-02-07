@@ -306,4 +306,133 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
   }
 });
 
+// PUT /api/matching/select/:id — manually select a match (best price override)
+router.put('/api/matching/select/:id', (req: Request, res: Response) => {
+  try {
+    const matchId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const match = db.prepare(
+      'SELECT id, specification_item_id FROM matched_items WHERE id = ?'
+    ).get(matchId) as { id: number; specification_item_id: number } | undefined;
+
+    if (!match) {
+      return res.status(404).json({ error: 'Матч не найден' });
+    }
+
+    db.transaction(() => {
+      db.prepare(
+        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
+      ).run(match.specification_item_id);
+
+      db.prepare(
+        'UPDATE matched_items SET is_selected = 1 WHERE id = ?'
+      ).run(matchId);
+    })();
+
+    res.json({ selected: true });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при выборе матча',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/summary — section totals and grand total
+router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id, name FROM projects WHERE id = ?').get(projectId) as { id: number; name: string } | undefined;
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    // Get all spec items with their selected match
+    const rows = db.prepare(`
+      SELECT si.id, si.name, si.unit, si.quantity, si.section,
+             ii.price, ii.name as invoice_name, ii.article,
+             s.name as supplier_name,
+             m.id as match_id, m.is_confirmed
+      FROM specification_items si
+      LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
+      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      LEFT JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN suppliers s ON i.supplier_id = s.id
+      WHERE si.project_id = ?
+      ORDER BY si.section, si.id
+    `).all(projectId) as Array<{
+      id: number; name: string; unit: string | null; quantity: number | null;
+      section: string | null; price: number | null; invoice_name: string | null;
+      article: string | null; supplier_name: string | null;
+      match_id: number | null; is_confirmed: number | null;
+    }>;
+
+    // Group by section
+    const sectionMap = new Map<string, {
+      items: Array<{
+        specId: number; name: string; unit: string | null; quantity: number | null;
+        price: number | null; amount: number | null;
+        invoiceName: string | null; article: string | null; supplierName: string | null;
+        isConfirmed: boolean; hasMatch: boolean;
+      }>;
+      subtotal: number;
+    }>();
+
+    let grandTotal = 0;
+
+    for (const row of rows) {
+      const sectionName = row.section || 'Без раздела';
+      if (!sectionMap.has(sectionName)) {
+        sectionMap.set(sectionName, { items: [], subtotal: 0 });
+      }
+      const section = sectionMap.get(sectionName)!;
+
+      const price = row.price;
+      const qty = row.quantity || 0;
+      const amount = price != null ? price * qty : null;
+
+      if (amount != null) {
+        section.subtotal += amount;
+        grandTotal += amount;
+      }
+
+      section.items.push({
+        specId: row.id,
+        name: row.name,
+        unit: row.unit,
+        quantity: row.quantity,
+        price,
+        amount,
+        invoiceName: row.invoice_name,
+        article: row.article,
+        supplierName: row.supplier_name,
+        isConfirmed: row.is_confirmed === 1,
+        hasMatch: row.match_id != null,
+      });
+    }
+
+    const sections = Array.from(sectionMap.entries()).map(([name, data]) => ({
+      name,
+      itemCount: data.items.length,
+      matchedCount: data.items.filter(i => i.hasMatch).length,
+      subtotal: Math.round(data.subtotal * 100) / 100,
+      items: data.items,
+    }));
+
+    res.json({
+      projectName: project.name,
+      sections,
+      grandTotal: Math.round(grandTotal * 100) / 100,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при расчёте итогов',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;
