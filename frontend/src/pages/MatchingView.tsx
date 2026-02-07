@@ -45,12 +45,15 @@ interface Props {
   onBack: () => void;
 }
 
+type FilterStatus = 'all' | 'confirmed' | 'pending' | 'unmatched';
+
 export function MatchingView({ projectId, onBack }: Props) {
   const [items, setItems] = useState<MatchRow[]>([]);
   const [summary, setSummary] = useState<Summary>({ total: 0, matched: 0, confirmed: 0, unmatched: 0 });
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
 
   const loadMatching = async () => {
     setLoading(true);
@@ -89,6 +92,17 @@ export function MatchingView({ projectId, onBack }: Props) {
 
   if (loading) return <p className="loading">Загрузка...</p>;
 
+  // Filter items based on status
+  const filteredItems = items.filter(row => {
+    const hasConfirmed = row.matches.some(m => m.isConfirmed);
+    const hasMatches = row.matches.length > 0;
+
+    if (filterStatus === 'confirmed') return hasConfirmed;
+    if (filterStatus === 'pending') return hasMatches && !hasConfirmed;
+    if (filterStatus === 'unmatched') return !hasMatches;
+    return true; // 'all'
+  });
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
@@ -99,6 +113,40 @@ export function MatchingView({ projectId, onBack }: Props) {
             {running ? 'Сопоставление...' : 'Запустить сопоставление'}
           </button>
         </div>
+      </div>
+
+      {message && (
+        <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
+          {message.text}
+        </p>
+      )}
+
+      {/* Filters */}
+      <div className="matching-filters">
+        <button
+          className={`btn ${filterStatus === 'all' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilterStatus('all')}
+        >
+          📋 Все ({items.length})
+        </button>
+        <button
+          className={`btn ${filterStatus === 'confirmed' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilterStatus('confirmed')}
+        >
+          ✅ Подтверждённые ({summary.confirmed})
+        </button>
+        <button
+          className={`btn ${filterStatus === 'pending' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilterStatus('pending')}
+        >
+          ⚠️ Требуют проверки ({summary.matched - summary.confirmed})
+        </button>
+        <button
+          className={`btn ${filterStatus === 'unmatched' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          onClick={() => setFilterStatus('unmatched')}
+        >
+          ❌ Не найдены ({summary.unmatched})
+        </button>
       </div>
 
       {message && (
@@ -129,8 +177,10 @@ export function MatchingView({ projectId, onBack }: Props) {
 
       {items.length === 0 ? (
         <p className="muted">Нет данных для сопоставления. Загрузите спецификацию и счета, затем запустите сопоставление.</p>
+      ) : filteredItems.length === 0 ? (
+        <p className="muted">По выбранному фильтру позиций не найдено.</p>
       ) : (
-        <MatchTable items={items} onRefresh={loadMatching} />
+        <MatchTable items={filteredItems} onRefresh={loadMatching} />
       )}
     </div>
   );

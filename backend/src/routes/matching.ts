@@ -243,4 +243,67 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/matching/:id/confirm-analog — confirm as analog/similar item
+router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) => {
+  try {
+    const matchId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const match = db.prepare(`
+      SELECT m.id, m.specification_item_id, m.invoice_item_id,
+             si.name as spec_name, ii.name as invoice_name
+      FROM matched_items m
+      JOIN specification_items si ON m.specification_item_id = si.id
+      JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      WHERE m.id = ?
+    `).get(matchId) as {
+      id: number; specification_item_id: number; invoice_item_id: number;
+      spec_name: string; invoice_name: string;
+    } | undefined;
+
+    if (!match) {
+      return res.status(404).json({ error: 'Матч не найден' });
+    }
+
+    db.transaction(() => {
+      // Deselect all matches for this spec item
+      db.prepare(
+        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
+      ).run(match.specification_item_id);
+
+      // Confirm and select this match (but mark as analog-like)
+      db.prepare(
+        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
+      ).run(matchId);
+
+      // Create or update matching rule with lower confidence (analog = 0.75)
+      const specPattern = normalizeForMatching(match.spec_name);
+      const invoicePattern = normalizeForMatching(match.invoice_name);
+
+      const existingRule = db.prepare(
+        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ?'
+      ).get(specPattern, invoicePattern) as { id: number; times_used: number } | undefined;
+
+      if (existingRule) {
+        // If already exists, keep confidence but increment times_used
+        db.prepare(
+          'UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).run(existingRule.id);
+      } else {
+        // Create new rule with lower confidence for analog
+        db.prepare(
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used) VALUES (?, ?, 0.75, 1)'
+        ).run(specPattern, invoicePattern);
+      }
+    })();
+
+    res.json({ confirmed: true, type: 'analog' });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при подтверждении аналога',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;

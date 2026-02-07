@@ -72,6 +72,18 @@ export function MatchTable({ items, onRefresh }: Props) {
     }
   };
 
+  const handleConfirmAnalog = async (matchId: number) => {
+    setLoading(matchId);
+    try {
+      await api.post(`/matching/${matchId}/confirm-analog`);
+      onRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setLoading(null);
+    }
+  };
+
   const toggleExpand = (specId: number) => {
     setExpandedId(prev => prev === specId ? null : specId);
   };
@@ -93,7 +105,8 @@ export function MatchTable({ items, onRefresh }: Props) {
           <th style={{ width: '30%' }}>Спецификация</th>
           <th style={{ width: '25%' }}>Лучший матч</th>
           <th>Поставщик</th>
-          <th>Цена</th>
+          <th style={{ width: '70px' }}>Цена</th>
+          <th style={{ width: '70px' }}>Сумма</th>
           <th style={{ width: '80px' }}>Точность</th>
           <th style={{ width: '150px' }}>Действия</th>
         </tr>
@@ -131,6 +144,9 @@ export function MatchTable({ items, onRefresh }: Props) {
                   <div style={{ flex: 1, paddingRight: '0.75rem' }}>
                     {best?.price != null ? best.price.toLocaleString('ru-RU') : '—'}
                   </div>
+                  <div style={{ flex: 1, paddingRight: '0.75rem' }}>
+                    {best?.amount != null ? best.amount.toLocaleString('ru-RU') : '—'}
+                  </div>
                   <div style={{ flex: '0 0 80px', paddingRight: '0.75rem' }}>
                     {best && (
                       <span className="confidence-badge" title={MATCH_TYPE_LABELS[best.matchType] || best.matchType}>
@@ -140,22 +156,32 @@ export function MatchTable({ items, onRefresh }: Props) {
                   </div>
                   <div style={{ flex: '0 0 150px', display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                     {best && !best.isConfirmed && (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        onClick={() => handleConfirm(best.id)}
-                        disabled={loading === best.id}
-                      >
-                        OK
-                      </button>
-                    )}
-                    {best && !best.isConfirmed && (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => handleReject(best.id)}
-                        disabled={loading === best.id}
-                      >
-                        X
-                      </button>
+                      <>
+                        <button
+                          className="btn btn-primary btn-sm"
+                          onClick={() => handleConfirm(best.id)}
+                          disabled={loading === best.id}
+                          title="Точное совпадение"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleConfirmAnalog(best.id)}
+                          disabled={loading === best.id}
+                          title="Аналог"
+                        >
+                          ≈
+                        </button>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleReject(best.id)}
+                          disabled={loading === best.id}
+                          title="Отклонить"
+                        >
+                          ✕
+                        </button>
+                      </>
                     )}
                     {best?.isConfirmed && (
                       <span className="muted" style={{ fontSize: '0.75rem' }}>Подтверждено</span>
@@ -183,6 +209,7 @@ export function MatchTable({ items, onRefresh }: Props) {
                         </div>
                         <div style={{ flex: 1 }}>{m.supplierName || '—'}</div>
                         <div style={{ flex: 1 }}>{m.price != null ? m.price.toLocaleString('ru-RU') : '—'}</div>
+                        <div style={{ flex: 1 }}>{m.amount != null ? m.amount.toLocaleString('ru-RU') : '—'}</div>
                         <div style={{ flex: '0 0 80px' }}>
                           <span className="confidence-badge" title={MATCH_TYPE_LABELS[m.matchType] || m.matchType}>
                             {Math.round(m.confidence * 100)}%
@@ -191,8 +218,9 @@ export function MatchTable({ items, onRefresh }: Props) {
                         <div style={{ flex: '0 0 150px', display: 'flex', gap: '0.25rem' }}>
                           {!m.isConfirmed && (
                             <>
-                              <button className="btn btn-primary btn-sm" onClick={() => handleConfirm(m.id)} disabled={loading === m.id}>OK</button>
-                              <button className="btn btn-secondary btn-sm" onClick={() => handleReject(m.id)} disabled={loading === m.id}>X</button>
+                              <button className="btn btn-primary btn-sm" onClick={() => handleConfirm(m.id)} disabled={loading === m.id} title="Точное совпадение">✓</button>
+                              <button className="btn btn-secondary btn-sm" onClick={() => handleConfirmAnalog(m.id)} disabled={loading === m.id} title="Аналог">≈</button>
+                              <button className="btn btn-secondary btn-sm" onClick={() => handleReject(m.id)} disabled={loading === m.id} title="Отклонить">✕</button>
                             </>
                           )}
                           {m.isConfirmed && <span className="muted" style={{ fontSize: '0.75rem' }}>Подтверждено</span>}

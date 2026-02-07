@@ -216,3 +216,11 @@ tr.match-row-unmatched:hover { background: #f3f4f6; }
 .match-candidate-row.confirmed {
   background: #ecfdf5;
 }
+
+/* Matching filters */
+.matching-filters {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
