@@ -18,14 +18,16 @@ export function ProjectList({ onSelect }: Props) {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
       const { data } = await api.get('/projects');
       setProjects(data);
+      setError(null);
     } catch {
-      // ignore
+      setError('Не удалось загрузить список проектов');
     } finally {
       setLoading(false);
     }
@@ -36,13 +38,14 @@ export function ProjectList({ onSelect }: Props) {
   const handleCreate = async () => {
     if (!newName.trim()) return;
     setCreating(true);
+    setError(null);
     try {
       await api.post('/projects', { name: newName.trim(), description: newDesc.trim() || null });
       setNewName('');
       setNewDesc('');
       await load();
-    } catch {
-      // ignore
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Ошибка при создании проекта');
     } finally {
       setCreating(false);
     }
@@ -51,6 +54,8 @@ export function ProjectList({ onSelect }: Props) {
   return (
     <div>
       <h1>Проекты</h1>
+
+      {error && <p className="error-msg">{error}</p>}
 
       <div className="inline-form">
         <div className="field">

@@ -151,10 +151,45 @@ label {
 }
 
 /* Status & loading */
-.loading { color: #666; font-style: italic; }
-.error-msg { color: #dc2626; font-size: 0.85rem; margin: 0.5rem 0; }
-.success-msg { color: #16a34a; font-size: 0.85rem; margin: 0.5rem 0; }
+.loading {
+  color: #666;
+  font-style: italic;
+}
+.loading::after {
+  content: '';
+  animation: dots 1.5s steps(3, end) infinite;
+}
+@keyframes dots {
+  0% { content: ''; }
+  33% { content: '.'; }
+  66% { content: '..'; }
+  100% { content: '...'; }
+}
+.error-msg {
+  color: #dc2626;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #fef2f2;
+  border-left: 3px solid #dc2626;
+  border-radius: 4px;
+}
+.success-msg {
+  color: #16a34a;
+  font-size: 0.85rem;
+  margin: 0.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #f0fdf4;
+  border-left: 3px solid #16a34a;
+  border-radius: 4px;
+}
 .muted { color: #888; font-size: 0.85rem; }
+
+/* Disabled button state */
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 
 /* Matching summary cards */
 .matching-summary {

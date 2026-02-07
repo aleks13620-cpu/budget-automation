@@ -47,54 +47,32 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
 export function MatchTable({ items, onRefresh }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const handleConfirm = async (matchId: number) => {
+  const handleAction = async (matchId: number, action: () => Promise<void>) => {
     setLoading(matchId);
+    setActionError(null);
     try {
-      await api.put(`/matching/${matchId}/confirm`);
+      await action();
       onRefresh();
     } catch {
-      // ignore
+      setActionError('Ошибка при выполнении действия');
     } finally {
       setLoading(null);
     }
   };
 
-  const handleReject = async (matchId: number) => {
-    setLoading(matchId);
-    try {
-      await api.delete(`/matching/${matchId}`);
-      onRefresh();
-    } catch {
-      // ignore
-    } finally {
-      setLoading(null);
-    }
-  };
+  const handleConfirm = (matchId: number) =>
+    handleAction(matchId, () => api.put(`/matching/${matchId}/confirm`));
 
-  const handleConfirmAnalog = async (matchId: number) => {
-    setLoading(matchId);
-    try {
-      await api.post(`/matching/${matchId}/confirm-analog`);
-      onRefresh();
-    } catch {
-      // ignore
-    } finally {
-      setLoading(null);
-    }
-  };
+  const handleReject = (matchId: number) =>
+    handleAction(matchId, () => api.delete(`/matching/${matchId}`));
 
-  const handleSelect = async (matchId: number) => {
-    setLoading(matchId);
-    try {
-      await api.put(`/matching/select/${matchId}`);
-      onRefresh();
-    } catch {
-      // ignore
-    } finally {
-      setLoading(null);
-    }
-  };
+  const handleConfirmAnalog = (matchId: number) =>
+    handleAction(matchId, () => api.post(`/matching/${matchId}/confirm-analog`));
+
+  const handleSelect = (matchId: number) =>
+    handleAction(matchId, () => api.put(`/matching/select/${matchId}`));
 
   const toggleExpand = (specId: number) => {
     setExpandedId(prev => prev === specId ? null : specId);
@@ -111,6 +89,8 @@ export function MatchTable({ items, onRefresh }: Props) {
   };
 
   return (
+    <>
+    {actionError && <p className="error-msg">{actionError}</p>}
     <table>
       <thead>
         <tr>
@@ -251,5 +231,6 @@ export function MatchTable({ items, onRefresh }: Props) {
         })}
       </tbody>
     </table>
+    </>
   );
 }

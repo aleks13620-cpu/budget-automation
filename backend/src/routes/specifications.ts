@@ -109,6 +109,7 @@ router.post('/api/projects/:id/specification', upload.single('file'), (req: Requ
       items,
     });
   } catch (error) {
+    console.error('POST /api/projects/:id/specification error:', error);
     res.status(500).json({
       error: 'Ошибка при импорте спецификации',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -133,6 +134,7 @@ router.get('/api/projects/:id/specification', (req: Request, res: Response) => {
 
     res.json({ items, total: items.length });
   } catch (error) {
+    console.error('GET /api/projects/:id/specification error:', error);
     res.status(500).json({ error: 'Ошибка при получении спецификации' });
   }
 });
@@ -152,6 +154,7 @@ router.delete('/api/projects/:id/specification', (req: Request, res: Response) =
 
     res.json({ deleted: result.changes });
   } catch (error) {
+    console.error('DELETE /api/projects/:id/specification error:', error);
     res.status(500).json({ error: 'Ошибка при удалении спецификации' });
   }
 });

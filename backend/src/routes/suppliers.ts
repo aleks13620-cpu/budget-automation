@@ -10,6 +10,7 @@ router.get('/api/suppliers', (_req: Request, res: Response) => {
     const suppliers = db.prepare('SELECT * FROM suppliers ORDER BY name').all();
     res.json({ suppliers });
   } catch (error) {
+    console.error('GET /api/suppliers error:', error);
     res.status(500).json({ error: 'Ошибка при получении поставщиков' });
   }
 });
@@ -35,6 +36,7 @@ router.get('/api/suppliers/:id/parser-config', (req: Request, res: Response) => 
 
     res.json({ config: JSON.parse(row.config) });
   } catch (error) {
+    console.error('GET /api/suppliers/:id/parser-config error:', error);
     res.status(500).json({ error: 'Ошибка при получении конфигурации парсера' });
   }
 });
@@ -67,6 +69,7 @@ router.put('/api/suppliers/:id/parser-config', (req: Request, res: Response) => 
 
     res.json({ saved: true, config });
   } catch (error) {
+    console.error('PUT /api/suppliers/:id/parser-config error:', error);
     res.status(500).json({ error: 'Ошибка при сохранении конфигурации парсера' });
   }
 });

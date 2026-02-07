@@ -53,7 +53,8 @@ app.get('/api/projects', (req, res) => {
     const projects = db.prepare('SELECT * FROM projects ORDER BY created_at DESC').all();
     res.json(projects);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch projects' });
+    console.error('GET /api/projects error:', error);
+    res.status(500).json({ error: 'Ошибка при получении проектов' });
   }
 });
 
@@ -61,7 +62,7 @@ app.post('/api/projects', (req, res) => {
   try {
     const { name, description } = req.body;
     if (!name) {
-      return res.status(400).json({ error: 'Project name is required' });
+      return res.status(400).json({ error: 'Название проекта обязательно' });
     }
 
     const db = getDatabase();
@@ -72,7 +73,8 @@ app.post('/api/projects', (req, res) => {
     const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(result.lastInsertRowid);
     res.status(201).json(project);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to create project' });
+    console.error('POST /api/projects error:', error);
+    res.status(500).json({ error: 'Ошибка при создании проекта' });
   }
 });
 
@@ -82,12 +84,13 @@ app.get('/api/projects/:id', (req, res) => {
     const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(req.params.id);
 
     if (!project) {
-      return res.status(404).json({ error: 'Project not found' });
+      return res.status(404).json({ error: 'Проект не найден' });
     }
 
     res.json(project);
   } catch (error) {
-    res.status(500).json({ error: 'Failed to fetch project' });
+    console.error('GET /api/projects/:id error:', error);
+    res.status(500).json({ error: 'Ошибка при получении проекта' });
   }
 });
 

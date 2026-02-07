@@ -47,7 +47,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       setSpecItems(specRes.data.items || []);
       setInvoices(invRes.data.invoices || []);
     } catch {
-      // ignore
+      setMessage({ type: 'error', text: 'Не удалось загрузить данные проекта' });
     } finally {
       setLoading(false);
     }

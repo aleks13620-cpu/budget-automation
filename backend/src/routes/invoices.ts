@@ -163,6 +163,7 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       items: result.items,
     });
   } catch (error) {
+    console.error('POST /api/projects/:id/invoices error:', error);
     res.status(500).json({
       error: 'Ошибка при импорте счёта',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -222,6 +223,7 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
       supplierConfig,
     });
   } catch (error) {
+    console.error('GET /api/invoices/:id/preview error:', error);
     res.status(500).json({
       error: 'Ошибка при предпросмотре счёта',
       details: error instanceof Error ? error.message : 'Unknown error',
@@ -251,6 +253,7 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
 
     res.json({ invoices, total: invoices.length });
   } catch (error) {
+    console.error('GET /api/projects/:id/invoices error:', error);
     res.status(500).json({ error: 'Ошибка при получении счетов' });
   }
 });
@@ -278,6 +281,7 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
 
     res.json({ invoice, items });
   } catch (error) {
+    console.error('GET /api/invoices/:id error:', error);
     res.status(500).json({ error: 'Ошибка при получении счёта' });
   }
 });
@@ -304,6 +308,7 @@ router.delete('/api/invoices/:id', (req: Request, res: Response) => {
 
     res.json({ deleted: true });
   } catch (error) {
+    console.error('DELETE /api/invoices/:id error:', error);
     res.status(500).json({ error: 'Ошибка при удалении счёта' });
   }
 });

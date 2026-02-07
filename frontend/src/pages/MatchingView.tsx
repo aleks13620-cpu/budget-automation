@@ -203,12 +203,6 @@ export function MatchingView({ projectId, onBack }: Props) {
         </button>
       </div>
 
-      {message && (
-        <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
-          {message.text}
-        </p>
-      )}
-
       {/* Summary */}
       <div className="matching-summary">
         <div className="summary-card">
