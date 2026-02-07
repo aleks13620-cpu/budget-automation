@@ -3,8 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parsePdfFile } from '../services/pdfParser';
-import { parseExcelInvoice } from '../services/excelInvoiceParser';
+import { parsePdfFile, extractRawRows, detectColumns, SavedMapping } from '../services/pdfParser';
+import { parseExcelInvoice, extractExcelRawRows } from '../services/excelInvoiceParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -38,7 +38,27 @@ const upload = multer({
 
 const router = Router();
 
-// POST /api/projects/:id/invoices — upload and parse PDF invoice
+// Helper: load saved parser config for a supplier
+function loadSavedMapping(supplierId: number): SavedMapping | undefined {
+  const db = getDatabase();
+  const row = db.prepare(
+    'SELECT config FROM supplier_parser_configs WHERE supplier_id = ?'
+  ).get(supplierId) as { config: string } | undefined;
+
+  if (!row) return undefined;
+
+  try {
+    const config = JSON.parse(row.config);
+    if (typeof config.headerRow === 'number' && config.name !== undefined) {
+      return config as SavedMapping;
+    }
+  } catch {
+    // invalid JSON, ignore
+  }
+  return undefined;
+}
+
+// POST /api/projects/:id/invoices — upload and parse invoice (PDF/Excel)
 router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
@@ -53,29 +73,41 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       return res.status(400).json({ error: 'Файл не загружен' });
     }
 
-    // Determine file type and parse
     const ext = path.extname(req.file.originalname).toLowerCase();
-    const parseResult = ext === '.pdf'
+
+    // First pass: parse without saved config to get supplier name
+    const initialResult = ext === '.pdf'
       ? await parsePdfFile(req.file.path)
       : parseExcelInvoice(req.file.path);
+
+    // Find or create supplier
+    let supplierId: number | null = null;
+    if (initialResult.supplierName) {
+      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(initialResult.supplierName) as { id: number } | undefined;
+      if (existing) {
+        supplierId = existing.id;
+      } else {
+        const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(initialResult.supplierName);
+        supplierId = Number(result.lastInsertRowid);
+      }
+    }
+
+    // Check for saved parser config and re-parse if available
+    let parseResult = initialResult;
+    if (supplierId) {
+      const savedMapping = loadSavedMapping(supplierId);
+      if (savedMapping) {
+        parseResult = ext === '.pdf'
+          ? await parsePdfFile(req.file.path, savedMapping)
+          : parseExcelInvoice(req.file.path, savedMapping);
+      }
+    }
 
     if (parseResult.items.length === 0) {
       return res.status(400).json({
         error: 'Не удалось извлечь данные из файла',
         details: parseResult.errors,
       });
-    }
-
-    // Find or create supplier
-    let supplierId: number | null = null;
-    if (parseResult.supplierName) {
-      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(parseResult.supplierName) as { id: number } | undefined;
-      if (existing) {
-        supplierId = existing.id;
-      } else {
-        const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(parseResult.supplierName);
-        supplierId = Number(result.lastInsertRowid);
-      }
     }
 
     // Insert invoice and items in a transaction
@@ -138,6 +170,65 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
   }
 });
 
+// GET /api/invoices/:id/preview — preview raw rows + detected/saved mapping
+router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл счёта не найден на диске' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    let rows: string[][];
+
+    if (ext === '.pdf') {
+      const result = await extractRawRows(invoice.file_path);
+      rows = result.rows;
+    } else {
+      rows = extractExcelRawRows(invoice.file_path);
+    }
+
+    // Limit to first 20 rows for preview
+    const previewRows = rows.slice(0, 20);
+
+    // Auto-detect column mapping
+    const detected = detectColumns(rows);
+    const detectedMapping = detected ? {
+      ...detected.mapping,
+      headerRow: detected.headerRowIndex,
+    } : null;
+
+    // Check for saved supplier config
+    let supplierConfig: SavedMapping | null = null;
+    if (invoice.supplier_id) {
+      const saved = loadSavedMapping(invoice.supplier_id);
+      if (saved) supplierConfig = saved;
+    }
+
+    res.json({
+      rows: previewRows,
+      totalRows: rows.length,
+      detectedMapping,
+      supplierConfig,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при предпросмотре счёта',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // GET /api/projects/:id/invoices — list invoices for project
 router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
   try {
@@ -150,7 +241,8 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
     }
 
     const invoices = db.prepare(`
-      SELECT i.*, s.name as supplier_name
+      SELECT i.*, s.name as supplier_name,
+        (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.project_id = ?

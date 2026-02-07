@@ -186,34 +186,39 @@ function textTo2DArray(text: string): string[][] {
   return rows;
 }
 
-export async function parsePdfFile(filePath: string): Promise<InvoiceParseResult> {
+export interface SavedMapping {
+  article: number | null;
+  name: number | null;
+  unit: number | null;
+  quantity: number | null;
+  price: number | null;
+  amount: number | null;
+  headerRow: number;
+}
+
+/**
+ * Extract raw rows (string[][]) from a PDF file.
+ * Used by preview endpoint and internally by parsePdfFile.
+ */
+export async function extractRawRows(filePath: string): Promise<{ rows: string[][]; fullText: string }> {
   const buffer = fs.readFileSync(filePath);
   const data = new Uint8Array(buffer);
 
   const parser = new PDFParse({ data });
-  const errors: string[] = [];
-  let items: InvoiceRow[] = [];
-  let totalRows = 0;
-  let skippedRows = 0;
 
   try {
-    // 1. Extract text for metadata
     const textResult = await parser.getText();
     const fullText = textResult.text || '';
-    const metadata = extractMetadata(fullText);
 
-    // 2. Try getTable() for structured tables
-    let tableFound = false;
+    // Try getTable() first for structured tables
     try {
       const tableResult = await parser.getTable();
-
-      // Check mergedTables first (cross-page tables)
       const allTables: string[][][] = [];
+
       if (tableResult.mergedTables && tableResult.mergedTables.length > 0) {
         allTables.push(...tableResult.mergedTables);
       }
 
-      // Then check per-page tables
       if (allTables.length === 0 && tableResult.pages) {
         for (const page of tableResult.pages) {
           if (page.tables && page.tables.length > 0) {
@@ -222,65 +227,100 @@ export async function parsePdfFile(filePath: string): Promise<InvoiceParseResult
         }
       }
 
-      // Parse each table
-      for (const table of allTables) {
-        if (table.length < 2) continue; // Need at least header + 1 data row
-
-        const detected = detectColumns(table);
-        if (!detected) continue;
-
-        tableFound = true;
-        const { mapping, headerRowIndex } = detected;
-        const result = parseTableData(table, mapping, headerRowIndex + 1);
-
-        totalRows += table.length - headerRowIndex - 1;
-        skippedRows += result.skipped;
-        items.push(...result.items);
-        errors.push(...result.errors);
-      }
-    } catch (tableError) {
-      errors.push(`Ошибка при извлечении таблиц: ${tableError instanceof Error ? tableError.message : 'Unknown'}`);
-    }
-
-    // 3. Fallback: parse text as 2D array
-    if (!tableFound) {
-      const rows = textTo2DArray(fullText);
-      if (rows.length >= 2) {
-        const detected = detectColumns(rows);
-        if (detected) {
-          const { mapping, headerRowIndex } = detected;
-          const result = parseTableData(rows, mapping, headerRowIndex + 1);
-
-          totalRows = rows.length - headerRowIndex - 1;
-          skippedRows = result.skipped;
-          items = result.items;
-          errors.push(...result.errors);
-        } else {
-          errors.push('Не удалось определить колонки таблицы в тексте PDF');
+      // Return the largest table found
+      if (allTables.length > 0) {
+        let largest = allTables[0];
+        for (const t of allTables) {
+          if (t.length > largest.length) largest = t;
         }
-      } else {
-        errors.push('Не удалось найти таблицу в PDF');
+        return { rows: largest, fullText };
       }
+    } catch {
+      // fall through to text fallback
     }
 
-    // Use parsed total if we found it and our items don't have amounts
-    let totalAmount = metadata.totalAmount;
-    if (!totalAmount && items.length > 0) {
-      const sum = items.reduce((acc, item) => acc + (item.amount || 0), 0);
-      if (sum > 0) totalAmount = sum;
-    }
-
-    return {
-      items,
-      errors,
-      totalRows,
-      skippedRows,
-      invoiceNumber: metadata.invoiceNumber,
-      invoiceDate: metadata.invoiceDate,
-      supplierName: metadata.supplierName,
-      totalAmount,
-    };
+    // Fallback: parse text as 2D array
+    return { rows: textTo2DArray(fullText), fullText };
   } finally {
     await parser.destroy();
   }
+}
+
+export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
+  const { rows, fullText } = await extractRawRows(filePath);
+  const errors: string[] = [];
+  let items: InvoiceRow[] = [];
+  let totalRows = 0;
+  let skippedRows = 0;
+
+  const metadata = extractMetadata(fullText);
+
+  if (rows.length < 2) {
+    return {
+      items: [],
+      errors: ['Не удалось найти таблицу в PDF'],
+      totalRows: 0,
+      skippedRows: 0,
+      invoiceNumber: metadata.invoiceNumber,
+      invoiceDate: metadata.invoiceDate,
+      supplierName: metadata.supplierName,
+      totalAmount: metadata.totalAmount,
+    };
+  }
+
+  // Use saved mapping or auto-detect
+  let mapping: ColumnMapping;
+  let headerRowIndex: number;
+
+  if (savedMapping) {
+    mapping = {
+      article: savedMapping.article,
+      name: savedMapping.name,
+      unit: savedMapping.unit,
+      quantity: savedMapping.quantity,
+      price: savedMapping.price,
+      amount: savedMapping.amount,
+    };
+    headerRowIndex = savedMapping.headerRow;
+  } else {
+    const detected = detectColumns(rows);
+    if (!detected) {
+      return {
+        items: [],
+        errors: ['Не удалось определить колонки таблицы в PDF'],
+        totalRows: rows.length,
+        skippedRows: 0,
+        invoiceNumber: metadata.invoiceNumber,
+        invoiceDate: metadata.invoiceDate,
+        supplierName: metadata.supplierName,
+        totalAmount: metadata.totalAmount,
+      };
+    }
+    mapping = detected.mapping;
+    headerRowIndex = detected.headerRowIndex;
+  }
+
+  const result = parseTableData(rows, mapping, headerRowIndex + 1);
+  totalRows = rows.length - headerRowIndex - 1;
+  skippedRows = result.skipped;
+  items = result.items;
+  errors.push(...result.errors);
+
+  // Use parsed total if we found it and our items don't have amounts
+  let totalAmount = metadata.totalAmount;
+  if (!totalAmount && items.length > 0) {
+    const sum = items.reduce((acc, item) => acc + (item.amount || 0), 0);
+    if (sum > 0) totalAmount = sum;
+  }
+
+  return {
+    items,
+    errors,
+    totalRows,
+    skippedRows,
+    invoiceNumber: metadata.invoiceNumber,
+    invoiceDate: metadata.invoiceDate,
+    supplierName: metadata.supplierName,
+    totalAmount,
+  };
 }

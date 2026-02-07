@@ -1,35 +1,74 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { useState } from 'react';
+import './App.css';
+import { ProjectList } from './pages/ProjectList';
+import { ProjectDetail } from './pages/ProjectDetail';
+import { InvoicePreview } from './pages/InvoicePreview';
+
+type Page = 'projects' | 'project' | 'invoice-preview';
 
 function App() {
-  const [count, setCount] = useState(0)
+  const [page, setPage] = useState<Page>('projects');
+  const [projectId, setProjectId] = useState<number | null>(null);
+  const [projectName, setProjectName] = useState('');
+  const [invoiceId, setInvoiceId] = useState<number | null>(null);
+
+  const goToProjects = () => {
+    setPage('projects');
+    setProjectId(null);
+    setInvoiceId(null);
+  };
+
+  const goToProject = (id: number, name: string) => {
+    setProjectId(id);
+    setProjectName(name);
+    setInvoiceId(null);
+    setPage('project');
+  };
+
+  const goToInvoicePreview = (id: number) => {
+    setInvoiceId(id);
+    setPage('invoice-preview');
+  };
 
   return (
     <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
+      {/* Breadcrumbs */}
+      <div className="breadcrumbs">
+        <button onClick={goToProjects}>Проекты</button>
+        {page !== 'projects' && (
+          <>
+            <span>/</span>
+            <button onClick={() => goToProject(projectId!, projectName)}>{projectName}</button>
+          </>
+        )}
+        {page === 'invoice-preview' && (
+          <>
+            <span>/</span>
+            <span>Предпросмотр счёта</span>
+          </>
+        )}
       </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
+
+      {page === 'projects' && (
+        <ProjectList onSelect={goToProject} />
+      )}
+
+      {page === 'project' && projectId && (
+        <ProjectDetail
+          projectId={projectId}
+          onBack={goToProjects}
+          onInvoicePreview={goToInvoicePreview}
+        />
+      )}
+
+      {page === 'invoice-preview' && invoiceId && (
+        <InvoicePreview
+          invoiceId={invoiceId}
+          onBack={() => goToProject(projectId!, projectName)}
+        />
+      )}
     </>
-  )
+  );
 }
 
-export default App
+export default App;

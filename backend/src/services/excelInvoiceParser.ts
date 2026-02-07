@@ -1,6 +1,6 @@
 import XLSX from 'xlsx';
 import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
-import { detectColumns, parseTableData, parsePrice } from './pdfParser';
+import { detectColumns, parseTableData, parsePrice, SavedMapping } from './pdfParser';
 
 function extractMetadataFromRows(rows: string[][]): {
   invoiceNumber: string | null;
@@ -64,7 +64,23 @@ function extractMetadataFromRows(rows: string[][]): {
   return { invoiceNumber, invoiceDate, supplierName, totalAmount };
 }
 
-export function parseExcelInvoice(filePath: string): InvoiceParseResult {
+/**
+ * Extract raw rows (string[][]) from an Excel file. Used by preview endpoint.
+ */
+export function extractExcelRawRows(filePath: string): string[][] {
+  const workbook = XLSX.readFile(filePath);
+  const sheetName = workbook.SheetNames[0];
+  if (!sheetName) return [];
+
+  const sheet = workbook.Sheets[sheetName];
+  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  return rawRows.map(row =>
+    row.map(cell => (cell === null || cell === undefined) ? '' : String(cell))
+  );
+}
+
+export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping): InvoiceParseResult {
   const errors: string[] = [];
 
   // Read workbook
@@ -109,22 +125,38 @@ export function parseExcelInvoice(filePath: string): InvoiceParseResult {
   // Extract metadata from header area
   const metadata = extractMetadataFromRows(rows);
 
-  // Detect columns and parse table data
-  const detected = detectColumns(rows);
-  if (!detected) {
-    return {
-      items: [],
-      errors: ['Не удалось определить колонки таблицы в Excel-файле'],
-      totalRows: rows.length,
-      skippedRows: 0,
-      invoiceNumber: metadata.invoiceNumber,
-      invoiceDate: metadata.invoiceDate,
-      supplierName: metadata.supplierName,
-      totalAmount: metadata.totalAmount,
+  // Use saved mapping or auto-detect columns
+  let mapping;
+  let headerRowIndex;
+
+  if (savedMapping) {
+    mapping = {
+      article: savedMapping.article,
+      name: savedMapping.name,
+      unit: savedMapping.unit,
+      quantity: savedMapping.quantity,
+      price: savedMapping.price,
+      amount: savedMapping.amount,
     };
+    headerRowIndex = savedMapping.headerRow;
+  } else {
+    const detected = detectColumns(rows);
+    if (!detected) {
+      return {
+        items: [],
+        errors: ['Не удалось определить колонки таблицы в Excel-файле'],
+        totalRows: rows.length,
+        skippedRows: 0,
+        invoiceNumber: metadata.invoiceNumber,
+        invoiceDate: metadata.invoiceDate,
+        supplierName: metadata.supplierName,
+        totalAmount: metadata.totalAmount,
+      };
+    }
+    mapping = detected.mapping;
+    headerRowIndex = detected.headerRowIndex;
   }
 
-  const { mapping, headerRowIndex } = detected;
   const result = parseTableData(rows, mapping, headerRowIndex + 1);
 
   const totalRows = rows.length - headerRowIndex - 1;
