@@ -17,6 +17,7 @@ interface Invoice {
   total_amount: number | null;
   item_count: number;
   file_name: string;
+  status: string;
   created_at: string;
 }
 
@@ -64,11 +65,17 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     formData.append('file', file);
     try {
       const { data } = await api.post(`/projects/${projectId}/invoices`, formData);
-      setMessage({ type: 'success', text: `Импортировано ${data.imported} позиций` });
+      if (data.needsMapping) {
+        setMessage({ type: 'error', text: `Счёт сохранён, но не удалось определить колонки (${data.errors?.length || 0} ошибок). Откройте "Предпросмотр" и настройте колонки вручную.` });
+      } else {
+        setMessage({ type: 'success', text: `Импортировано ${data.imported} позиций` });
+      }
       if (invoiceFileRef.current) invoiceFileRef.current.value = '';
       await loadData();
     } catch (err: any) {
-      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка загрузки' });
+      const details = err.response?.data?.details;
+      const errorMsg = err.response?.data?.error || 'Ошибка загрузки';
+      setMessage({ type: 'error', text: details ? `${errorMsg}: ${typeof details === 'string' ? details : JSON.stringify(details)}` : errorMsg });
     } finally {
       setUploading(false);
     }
@@ -165,6 +172,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                 <th>Сумма</th>
                 <th>Позиций</th>
                 <th>Файл</th>
+                <th>Статус</th>
                 <th></th>
               </tr>
             </thead>
@@ -178,8 +186,15 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                   <td>{inv.item_count}</td>
                   <td>{inv.file_name}</td>
                   <td>
+                    {inv.status === 'needs_mapping' ? (
+                      <span style={{ color: '#d97706', fontWeight: 600 }}>Требует настройки</span>
+                    ) : (
+                      <span style={{ color: '#16a34a' }}>Готов</span>
+                    )}
+                  </td>
+                  <td>
                     <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
-                      Предпросмотр
+                      {inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
                     </button>
                   </td>
                 </tr>

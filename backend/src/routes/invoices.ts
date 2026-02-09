@@ -103,17 +103,14 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       }
     }
 
-    if (parseResult.items.length === 0) {
-      return res.status(400).json({
-        error: 'Не удалось извлечь данные из файла',
-        details: parseResult.errors,
-      });
-    }
+    const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
 
-    // Insert invoice and items in a transaction
+    console.log(`Invoice parse: file=${req.file!.originalname}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
+
+    // Insert invoice and items in a transaction (even if 0 items)
     const insertInvoice = db.prepare(`
       INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'parsed')
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertItem = db.prepare(`
@@ -130,6 +127,7 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
         req.file!.originalname,
         req.file!.path,
         parseResult.totalAmount,
+        status,
       );
       const invoiceId = Number(invoiceResult.lastInsertRowid);
 
@@ -161,6 +159,7 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       imported: result.items.length,
       errors: parseResult.errors,
       items: result.items,
+      needsMapping: status === 'needs_mapping',
     });
   } catch (error) {
     console.error('POST /api/projects/:id/invoices error:', error);
@@ -243,8 +242,10 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
     }
 
     const invoices = db.prepare(`
-      SELECT i.*, s.name as supplier_name,
-        (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
+      SELECT i.id, i.project_id, i.supplier_id, i.invoice_number, i.invoice_date,
+             i.file_name, i.total_amount, i.status, i.created_at,
+             s.name as supplier_name,
+             (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.project_id = ?
@@ -310,6 +311,67 @@ router.delete('/api/invoices/:id', (req: Request, res: Response) => {
   } catch (error) {
     console.error('DELETE /api/invoices/:id error:', error);
     res.status(500).json({ error: 'Ошибка при удалении счёта' });
+  }
+});
+
+// POST /api/invoices/:id/reparse — re-parse invoice with saved supplier mapping
+router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл счёта не найден на диске' });
+    }
+
+    // Load saved mapping
+    let savedMapping: SavedMapping | undefined;
+    if (invoice.supplier_id) {
+      savedMapping = loadSavedMapping(invoice.supplier_id);
+    }
+
+    if (!savedMapping) {
+      return res.status(400).json({ error: 'Нет сохранённых настроек колонок для поставщика' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    const parseResult = ext === '.pdf'
+      ? await parsePdfFile(invoice.file_path, savedMapping)
+      : parseExcelInvoice(invoice.file_path, savedMapping);
+
+    // Replace items in transaction
+    const insertItem = db.prepare(
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      for (const item of parseResult.items) {
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
+      }
+      const newStatus = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+      db.prepare('UPDATE invoices SET status = ?, total_amount = ? WHERE id = ?').run(newStatus, parseResult.totalAmount, invoiceId);
+    })();
+
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);
+
+    res.json({
+      imported: parseResult.items.length,
+      errors: parseResult.errors,
+      items,
+      status: parseResult.items.length > 0 ? 'parsed' : 'needs_mapping',
+    });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/reparse error:', error);
+    res.status(500).json({ error: 'Ошибка при повторном парсинге', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

@@ -14,12 +14,12 @@ export interface ColumnMapping {
 }
 
 export const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
-  article: ['артикул', 'article', 'код', 'арт.', 'арт'],
-  name: ['наименование', 'товар', 'название', 'описание', 'номенклатура'],
+  article: ['артикул', 'article', 'код', 'арт.', 'арт', 'код товара', 'каталожный номер', 'номенклатурный номер'],
+  name: ['наименование', 'товар', 'название', 'описание', 'номенклатура', 'товар/услуга', 'материал', 'продукция', 'товары'],
   quantity: ['количество', 'кол-во', 'qty', 'кол.', 'кол'],
-  price: ['цена', 'price', 'цена за ед'],
-  amount: ['сумма', 'total', 'стоимость', 'итого'],
-  unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм'],
+  price: ['цена', 'price', 'цена за ед', 'цена с ндс', 'цена с учетом ндс', 'стоимость за ед', 'цена за единицу'],
+  amount: ['сумма', 'total', 'стоимость', 'итого', 'сумма с ндс', 'всего с ндс', 'сумма с учётом ндс'],
+  unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм', 'ед. измерения', 'ед.изм.', 'ед.изм'],
 };
 
 export function normalizeText(text: unknown): string {
@@ -145,15 +145,22 @@ function extractMetadata(text: string): { invoiceNumber: string | null; invoiceD
     invoiceDate = dateMatch[1].trim();
   }
 
-  // Supplier: ООО/ОАО/ЗАО/ИП/АО or поставщик/продавец
+  // Supplier: priority 1 — explicit field, priority 2 — org form (filter banks)
   let supplierName: string | null = null;
-  const orgMatch = snippet.match(/(ООО|ОАО|ЗАО|ИП|АО)\s*[«"']?([^»"'\n]{2,50})[»"']?/);
-  if (orgMatch) {
-    supplierName = `${orgMatch[1]} ${orgMatch[2]}`.trim();
-  } else {
-    const supplierMatch = snippet.match(/(?:поставщик|продавец)\s*[:\s]*([^\n]{3,60})/i);
-    if (supplierMatch) {
-      supplierName = supplierMatch[1].trim();
+  const supplierFieldMatch = snippet.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
+  if (supplierFieldMatch) {
+    supplierName = supplierFieldMatch[1].trim();
+  }
+  if (!supplierName) {
+    const orgRegex = /(ООО|ОАО|ЗАО|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/g;
+    let m;
+    while ((m = orgRegex.exec(snippet)) !== null) {
+      const candidate = `${m[1]} ${m[2]}`.trim();
+      const lower = candidate.toLowerCase();
+      // Skip bank names
+      if (lower.includes('банк') || lower.includes('бик') || lower.includes('р/с') || lower.includes('к/с')) continue;
+      supplierName = candidate;
+      break;
     }
   }
 
@@ -175,9 +182,12 @@ function textTo2DArray(text: string): string[][] {
     const trimmed = line.trim();
     if (!trimmed) continue;
 
-    // Split by tab (primary separator from pdf-parse getText)
-    const cells = trimmed.split('\t').map(c => c.trim());
-    // Only include rows with multiple cells (likely tabular data)
+    // Try tab split first
+    let cells = trimmed.split('\t').map(c => c.trim());
+    // Fallback: split by 2+ spaces if tab didn't produce multiple cells
+    if (cells.length < 2) {
+      cells = trimmed.split(/\s{2,}/).map(c => c.trim());
+    }
     if (cells.length >= 2) {
       rows.push(cells);
     }

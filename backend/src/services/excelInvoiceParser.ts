@@ -38,15 +38,19 @@ function extractMetadataFromRows(rows: string[][]): {
         }
       }
 
-      // Supplier
+      // Supplier: priority 1 — explicit field, priority 2 — org form (filter banks)
       if (!supplierName) {
-        const orgMatch = text.match(/(ООО|ОАО|ЗАО|ИП|АО)\s*[«"']?([^»"'\n]{2,50})[»"']?/);
-        if (orgMatch) {
-          supplierName = `${orgMatch[1]} ${orgMatch[2]}`.trim();
+        const supplierFieldMatch = text.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
+        if (supplierFieldMatch) {
+          supplierName = supplierFieldMatch[1].trim();
         } else {
-          const supplierMatch = text.match(/(?:поставщик|продавец)\s*[:\s]*([^\n]{3,60})/i);
-          if (supplierMatch) {
-            supplierName = supplierMatch[1].trim();
+          const orgMatch = text.match(/(ООО|ОАО|ЗАО|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/);
+          if (orgMatch) {
+            const candidate = `${orgMatch[1]} ${orgMatch[2]}`.trim();
+            const lower = candidate.toLowerCase();
+            if (!lower.includes('банк') && !lower.includes('бик') && !lower.includes('р/с')) {
+              supplierName = candidate;
+            }
           }
         }
       }
