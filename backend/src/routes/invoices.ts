@@ -38,6 +38,18 @@ const upload = multer({
 
 const router = Router();
 
+// Fix garbled Cyrillic filenames (multer on Windows may encode as latin1)
+function fixFilename(originalname: string): string {
+  try {
+    const fixed = Buffer.from(originalname, 'latin1').toString('utf8');
+    // If result contains replacement chars, keep original
+    if (fixed.includes('\ufffd')) return originalname;
+    return fixed;
+  } catch {
+    return originalname;
+  }
+}
+
 // Helper: load saved parser config for a supplier
 function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   const db = getDatabase();
@@ -105,7 +117,8 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
 
     const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
 
-    console.log(`Invoice parse: file=${req.file!.originalname}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
+    const fileName = fixFilename(req.file!.originalname);
+    console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
 
     // Insert invoice and items in a transaction (even if 0 items)
     const insertInvoice = db.prepare(`
@@ -124,7 +137,7 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
         supplierId,
         parseResult.invoiceNumber,
         parseResult.invoiceDate,
-        req.file!.originalname,
+        fileName,
         req.file!.path,
         parseResult.totalAmount,
         status,

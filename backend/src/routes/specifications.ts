@@ -38,6 +38,17 @@ const upload = multer({
 
 const router = Router();
 
+// Fix garbled Cyrillic filenames (multer on Windows may encode as latin1)
+function fixFilename(originalname: string): string {
+  try {
+    const fixed = Buffer.from(originalname, 'latin1').toString('utf8');
+    if (fixed.includes('\ufffd')) return originalname;
+    return fixed;
+  } catch {
+    return originalname;
+  }
+}
+
 // POST /api/projects/:id/specification — upload and import Excel
 router.post('/api/projects/:id/specification', upload.single('file'), (req: Request, res: Response) => {
   try {

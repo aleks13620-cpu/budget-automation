@@ -31,6 +31,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   });
   const [headerRow, setHeaderRow] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -79,11 +80,24 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       await api.put(`/suppliers/${invoice.supplier_id}/parser-config`, {
         config: { ...mapping, headerRow },
       });
-      setMessage({ type: 'success', text: 'Настройки парсера сохранены' });
+      setMessage({ type: 'success', text: 'Настройки сохранены. Нажмите «Пересобрать» для применения.' });
     } catch {
       setMessage({ type: 'error', text: 'Ошибка при сохранении настроек' });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleReparse = async () => {
+    setReparsing(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/reparse`);
+      setMessage({ type: 'success', text: `Пересобрано: ${data.imported} позиций` });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
+    } finally {
+      setReparsing(false);
     }
   };
 
@@ -119,6 +133,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving || !invoice.supplier_id}>
           {saving ? 'Сохранение...' : 'Сохранить настройки'}
+        </button>
+        <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing || !invoice.supplier_id}>
+          {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
         </button>
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
