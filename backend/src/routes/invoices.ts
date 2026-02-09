@@ -244,7 +244,7 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
     const invoices = db.prepare(`
       SELECT i.id, i.project_id, i.supplier_id, i.invoice_number, i.invoice_date,
              i.file_name, i.total_amount, i.status, i.created_at,
-             s.name as supplier_name,
+             s.name as supplier_name, s.vat_rate, s.prices_include_vat,
              (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id

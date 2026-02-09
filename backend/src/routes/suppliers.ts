@@ -74,4 +74,31 @@ router.put('/api/suppliers/:id/parser-config', (req: Request, res: Response) => 
   }
 });
 
+// PUT /api/suppliers/:id/vat — save VAT settings
+router.put('/api/suppliers/:id/vat', (req: Request, res: Response) => {
+  try {
+    const supplierId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(supplierId);
+    if (!supplier) {
+      return res.status(404).json({ error: 'Поставщик не найден' });
+    }
+
+    const { vat_rate, prices_include_vat } = req.body;
+    if (vat_rate === undefined) {
+      return res.status(400).json({ error: 'Ставка НДС обязательна' });
+    }
+
+    db.prepare(
+      'UPDATE suppliers SET vat_rate = ?, prices_include_vat = ? WHERE id = ?'
+    ).run(vat_rate, prices_include_vat ? 1 : 0, supplierId);
+
+    res.json({ saved: true });
+  } catch (error) {
+    console.error('PUT /api/suppliers/:id/vat error:', error);
+    res.status(500).json({ error: 'Ошибка при сохранении настроек НДС' });
+  }
+});
+
 export default router;

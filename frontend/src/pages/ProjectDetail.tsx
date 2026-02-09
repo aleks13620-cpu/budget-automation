@@ -11,6 +11,7 @@ interface SpecItem {
 
 interface Invoice {
   id: number;
+  supplier_id: number | null;
   invoice_number: string | null;
   supplier_name: string | null;
   invoice_date: string | null;
@@ -18,8 +19,12 @@ interface Invoice {
   item_count: number;
   file_name: string;
   status: string;
+  vat_rate: number | null;
+  prices_include_vat: number | null;
   created_at: string;
 }
+
+const VAT_OPTIONS = [0, 5, 7, 10, 20, 22];
 
 interface Props {
   projectId: number;
@@ -35,8 +40,19 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   const [uploading, setUploading] = useState(false);
   const [uploadingSpec, setUploadingSpec] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [vatEditing, setVatEditing] = useState<number | null>(null); // supplier_id being edited
   const invoiceFileRef = useRef<HTMLInputElement>(null);
   const specFileRef = useRef<HTMLInputElement>(null);
+
+  const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
+    try {
+      await api.put(`/suppliers/${supplierId}/vat`, { vat_rate: vatRate, prices_include_vat: pricesIncludeVat });
+      setVatEditing(null);
+      await loadData();
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка сохранения НДС' });
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -168,6 +184,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
               <tr>
                 <th>Номер</th>
                 <th>Поставщик</th>
+                <th>НДС</th>
                 <th>Дата</th>
                 <th>Сумма</th>
                 <th>Позиций</th>
@@ -181,6 +198,41 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                 <tr key={inv.id}>
                   <td>{inv.invoice_number || '—'}</td>
                   <td>{inv.supplier_name || '—'}</td>
+                  <td>
+                    {inv.supplier_id && vatEditing === inv.supplier_id ? (
+                      <span style={{ display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                        <select
+                          defaultValue={inv.vat_rate ?? 20}
+                          id={`vat-rate-${inv.supplier_id}`}
+                          style={{ width: '60px' }}
+                        >
+                          {VAT_OPTIONS.map(r => <option key={r} value={r}>{r}%</option>)}
+                        </select>
+                        <label style={{ fontSize: '0.7rem', whiteSpace: 'nowrap' }}>
+                          <input
+                            type="checkbox"
+                            defaultChecked={inv.prices_include_vat === 1}
+                            id={`vat-incl-${inv.supplier_id}`}
+                          /> с НДС
+                        </label>
+                        <button className="btn btn-primary btn-sm" onClick={() => {
+                          const rate = parseInt((document.getElementById(`vat-rate-${inv.supplier_id}`) as HTMLSelectElement).value);
+                          const incl = (document.getElementById(`vat-incl-${inv.supplier_id}`) as HTMLInputElement).checked;
+                          handleSaveVat(inv.supplier_id!, rate, incl);
+                        }}>OK</button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setVatEditing(null)}>X</button>
+                      </span>
+                    ) : (
+                      <span
+                        style={{ cursor: inv.supplier_id ? 'pointer' : 'default', textDecoration: inv.supplier_id ? 'underline dotted' : 'none' }}
+                        onClick={() => inv.supplier_id && setVatEditing(inv.supplier_id)}
+                        title={inv.supplier_id ? 'Нажмите для изменения' : ''}
+                      >
+                        {inv.vat_rate != null ? `${inv.vat_rate}%` : '—'}
+                        {inv.prices_include_vat === 0 && inv.vat_rate ? ' (без)' : ''}
+                      </span>
+                    )}
+                  </td>
                   <td>{inv.invoice_date || '—'}</td>
                   <td>{inv.total_amount != null ? inv.total_amount.toLocaleString('ru-RU') : '—'}</td>
                   <td>{inv.item_count}</td>

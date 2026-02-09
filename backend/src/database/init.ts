@@ -10,6 +10,15 @@ function initializeDatabase(): void {
     db.exec(CREATE_TABLES_SQL);
     console.log('Database tables created successfully!');
 
+    // Migrations (idempotent — ALTER wrapped in try-catch)
+    const migrations = [
+      'ALTER TABLE suppliers ADD COLUMN vat_rate INTEGER DEFAULT 20',
+      'ALTER TABLE suppliers ADD COLUMN prices_include_vat INTEGER DEFAULT 1',
+    ];
+    for (const sql of migrations) {
+      try { db.exec(sql); } catch { /* column already exists */ }
+    }
+
     // Verify tables
     const tables = db.prepare(`
       SELECT name FROM sqlite_master
