@@ -10,10 +10,21 @@ CREATE TABLE IF NOT EXISTS projects (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Спецификации (по разделам)
+CREATE TABLE IF NOT EXISTS specifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  section TEXT NOT NULL,
+  file_name TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
 -- Позиции спецификации (из Excel-файла заказчика)
 CREATE TABLE IF NOT EXISTS specification_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
+  specification_id INTEGER,
   position_number TEXT,
   name TEXT NOT NULL,
   characteristics TEXT,
@@ -23,7 +34,8 @@ CREATE TABLE IF NOT EXISTS specification_items (
   quantity REAL,
   section TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (specification_id) REFERENCES specifications(id) ON DELETE CASCADE
 );
 
 -- Поставщики
@@ -102,7 +114,9 @@ CREATE TABLE IF NOT EXISTS supplier_parser_configs (
 );
 
 -- Индексы для ускорения поиска
+CREATE INDEX IF NOT EXISTS idx_specifications_project ON specifications(project_id);
 CREATE INDEX IF NOT EXISTS idx_spec_items_project ON specification_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_spec_items_spec ON specification_items(specification_id);
 CREATE INDEX IF NOT EXISTS idx_spec_items_name ON specification_items(name);
 CREATE INDEX IF NOT EXISTS idx_invoices_project ON invoices(project_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_supplier ON invoices(supplier_id);

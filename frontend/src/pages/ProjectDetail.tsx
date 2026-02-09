@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { api } from '../api';
 
-interface SpecItem {
+interface Specification {
   id: number;
-  name: string;
-  unit: string | null;
-  quantity: number | null;
-  section: string | null;
+  section: string;
+  file_name: string | null;
+  item_count: number;
+  created_at: string;
 }
 
 interface Invoice {
@@ -34,15 +34,16 @@ interface Props {
 }
 
 export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props) {
-  const [specItems, setSpecItems] = useState<SpecItem[]>([]);
+  const [specifications, setSpecifications] = useState<Specification[]>([]);
+  const [sections, setSections] = useState<string[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [uploadingSpec, setUploadingSpec] = useState(false);
+  const [uploadingSection, setUploadingSection] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [vatEditing, setVatEditing] = useState<number | null>(null); // supplier_id being edited
+  const [vatEditing, setVatEditing] = useState<number | null>(null);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
-  const specFileRef = useRef<HTMLInputElement>(null);
+  const specFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
     try {
@@ -58,10 +59,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     setLoading(true);
     try {
       const [specRes, invRes] = await Promise.all([
-        api.get(`/projects/${projectId}/specification`),
+        api.get(`/projects/${projectId}/specifications`),
         api.get(`/projects/${projectId}/invoices`),
       ]);
-      setSpecItems(specRes.data.items || []);
+      setSpecifications(specRes.data.specifications || []);
+      setSections(specRes.data.sections || []);
       setInvoices(invRes.data.invoices || []);
     } catch {
       setMessage({ type: 'error', text: 'Не удалось загрузить данные проекта' });
@@ -97,26 +99,48 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     }
   };
 
-  const handleUploadSpec = async () => {
-    const file = specFileRef.current?.files?.[0];
+  const handleUploadSpec = async (section: string) => {
+    const input = specFileRefs.current[section];
+    const file = input?.files?.[0];
     if (!file) return;
-    setUploadingSpec(true);
+    setUploadingSection(section);
     setMessage(null);
     const formData = new FormData();
     formData.append('file', file);
+    formData.append('section', section);
     try {
-      const { data } = await api.post(`/projects/${projectId}/specification`, formData);
-      setMessage({ type: 'success', text: `Импортировано ${data.imported} позиций спецификации` });
-      if (specFileRef.current) specFileRef.current.value = '';
+      const { data } = await api.post(`/projects/${projectId}/specifications`, formData);
+      setMessage({ type: 'success', text: `${section}: импортировано ${data.imported} позиций` });
+      if (input) input.value = '';
       await loadData();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка загрузки' });
     } finally {
-      setUploadingSpec(false);
+      setUploadingSection(null);
+    }
+  };
+
+  const handleDeleteSpec = async (specId: number, section: string) => {
+    if (!confirm(`Удалить спецификацию «${section}»?`)) return;
+    setMessage(null);
+    try {
+      await api.delete(`/specifications/${specId}`);
+      setMessage({ type: 'success', text: `Раздел «${section}» удалён` });
+      await loadData();
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при удалении' });
     }
   };
 
   if (loading) return <p className="loading">Загрузка...</p>;
+
+  // Map section -> specification for quick lookup
+  const specBySection: Record<string, Specification> = {};
+  for (const spec of specifications) {
+    specBySection[spec.section] = spec;
+  }
+
+  const totalSpecItems = specifications.reduce((sum, s) => sum + s.item_count, 0);
 
   return (
     <div>
@@ -128,41 +152,66 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
 
       {/* Specification section */}
       <div className="section">
-        <h2>Спецификация</h2>
-        {specItems.length === 0 ? (
-          <>
-            <p className="muted">Спецификация не загружена.</p>
-            <div className="upload-area">
-              <input type="file" accept=".xlsx,.xls" ref={specFileRef} />
-              <button className="btn btn-primary btn-sm" onClick={handleUploadSpec} disabled={uploadingSpec}>
-                {uploadingSpec ? 'Загрузка...' : 'Загрузить'}
-              </button>
-            </div>
-          </>
-        ) : (
-          <table>
-            <thead>
-              <tr>
-                <th>Наименование</th>
-                <th>Ед.</th>
-                <th>Кол-во</th>
-                <th>Раздел</th>
-              </tr>
-            </thead>
-            <tbody>
-              {specItems.slice(0, 50).map(item => (
-                <tr key={item.id}>
-                  <td>{item.name}</td>
-                  <td>{item.unit || '—'}</td>
-                  <td>{item.quantity ?? '—'}</td>
-                  <td>{item.section || '—'}</td>
+        <h2>Спецификации по разделам</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Раздел</th>
+              <th>Файл</th>
+              <th>Позиций</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {sections.map(section => {
+              const spec = specBySection[section];
+              return (
+                <tr key={section}>
+                  <td style={{ fontWeight: 500 }}>{section}</td>
+                  {spec ? (
+                    <>
+                      <td>{spec.file_name || '—'}</td>
+                      <td>{spec.item_count}</td>
+                      <td>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleDeleteSpec(spec.id, section)}
+                        >
+                          Удалить
+                        </button>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td colSpan={2}>
+                        <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input
+                            type="file"
+                            accept=".xlsx,.xls"
+                            ref={el => { specFileRefs.current[section] = el; }}
+                            style={{ maxWidth: '220px', fontSize: '0.8rem' }}
+                          />
+                          <button
+                            className="btn btn-primary btn-sm"
+                            onClick={() => handleUploadSpec(section)}
+                            disabled={uploadingSection === section}
+                          >
+                            {uploadingSection === section ? 'Загрузка...' : 'Загрузить'}
+                          </button>
+                        </span>
+                      </td>
+                      <td></td>
+                    </>
+                  )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        {specItems.length > 50 && (
-          <p className="muted">Показано 50 из {specItems.length} позиций</p>
+              );
+            })}
+          </tbody>
+        </table>
+        {totalSpecItems > 0 && (
+          <p className="muted" style={{ marginTop: '0.5rem' }}>
+            Всего позиций: {totalSpecItems} в {specifications.length} разделах
+          </p>
         )}
       </div>
 
@@ -257,7 +306,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       </div>
 
       {/* Matching section */}
-      {specItems.length > 0 && invoices.length > 0 && (
+      {specifications.length > 0 && invoices.length > 0 && (
         <div className="section">
           <h2>Сопоставление</h2>
           <button className="btn btn-primary" onClick={onMatching}>

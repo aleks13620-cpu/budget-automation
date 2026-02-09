@@ -14,6 +14,7 @@ function initializeDatabase(): void {
     const migrations = [
       'ALTER TABLE suppliers ADD COLUMN vat_rate INTEGER DEFAULT 20',
       'ALTER TABLE suppliers ADD COLUMN prices_include_vat INTEGER DEFAULT 1',
+      'ALTER TABLE specification_items ADD COLUMN specification_id INTEGER REFERENCES specifications(id) ON DELETE CASCADE',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
