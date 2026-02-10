@@ -1,5 +1,5 @@
 import { getDatabase, closeDatabase } from './connection';
-import { CREATE_TABLES_SQL } from './schema';
+import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
 
 function initializeDatabase(): void {
   console.log('Initializing database...');
@@ -15,10 +15,15 @@ function initializeDatabase(): void {
       'ALTER TABLE suppliers ADD COLUMN vat_rate INTEGER DEFAULT 20',
       'ALTER TABLE suppliers ADD COLUMN prices_include_vat INTEGER DEFAULT 1',
       'ALTER TABLE specification_items ADD COLUMN specification_id INTEGER REFERENCES specifications(id) ON DELETE CASCADE',
+      'ALTER TABLE matching_rules ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
     }
+
+    // Create indexes after migrations (some indexes depend on migrated columns)
+    db.exec(CREATE_INDEXES_SQL);
+    console.log('Indexes created successfully!');
 
     // Verify tables
     const tables = db.prepare(`

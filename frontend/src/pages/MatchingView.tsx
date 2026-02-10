@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { MatchTable } from '../components/MatchTable';
+import { ManualMatchFromSpec } from '../components/ManualMatchFromSpec';
+import { ManualMatchModal } from '../components/ManualMatchModal';
 
 interface MatchItem {
   id: number;
@@ -52,6 +54,17 @@ interface Props {
   onBack: () => void;
 }
 
+interface UnmatchedInvoiceItem {
+  id: number;
+  name: string;
+  article: string | null;
+  unit: string | null;
+  quantity: number | null;
+  price: number | null;
+  amount: number | null;
+  supplier_name: string | null;
+}
+
 type FilterStatus = 'all' | 'confirmed' | 'pending' | 'unmatched';
 
 export function MatchingView({ projectId, onBack }: Props) {
@@ -64,6 +77,14 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
+
+  // Manual matching state
+  const [manualMatchSpec, setManualMatchSpec] = useState<SpecItem | null>(null);
+  const [unmatchedInvoiceItems, setUnmatchedInvoiceItems] = useState<UnmatchedInvoiceItem[]>([]);
+  const [showUnmatched, setShowUnmatched] = useState(false);
+  const [selectedInvoiceItem, setSelectedInvoiceItem] = useState<UnmatchedInvoiceItem | null>(null);
+  const [unmatchedSearch, setUnmatchedSearch] = useState('');
+  const [unmatchedSupplierFilter, setUnmatchedSupplierFilter] = useState<string>('all');
 
   const loadMatching = async () => {
     setLoading(true);
@@ -88,11 +109,21 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
+  const loadUnmatchedInvoices = async () => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/unmatched-invoice-items`);
+      setUnmatchedInvoiceItems(data.items || []);
+    } catch {
+      // ignore
+    }
+  };
+
   useEffect(() => { loadMatching(); loadSummary(); }, [projectId]);
 
   const handleRefresh = () => {
     loadMatching();
     loadSummary();
+    if (showUnmatched) loadUnmatchedInvoices();
   };
 
   const handleExport = async () => {
@@ -259,7 +290,136 @@ export function MatchingView({ projectId, onBack }: Props) {
       ) : filteredItems.length === 0 ? (
         <p className="muted">По выбранному фильтру позиций не найдено.</p>
       ) : (
-        <MatchTable items={filteredItems} onRefresh={handleRefresh} />
+        <MatchTable items={filteredItems} onRefresh={handleRefresh} onManualMatch={setManualMatchSpec} />
+      )}
+
+      {/* Unmatched invoice items section */}
+      <div style={{ marginTop: '2rem' }}>
+        <button
+          className="btn btn-secondary"
+          onClick={() => {
+            if (!showUnmatched) loadUnmatchedInvoices();
+            setShowUnmatched(!showUnmatched);
+          }}
+        >
+          {showUnmatched ? 'Скрыть несопоставленные счета' : 'Несопоставленные счета'}
+        </button>
+
+        {showUnmatched && (() => {
+          const suppliers = [...new Set(unmatchedInvoiceItems.map(i => i.supplier_name || '—'))].sort();
+          const filtered = unmatchedInvoiceItems.filter(item => {
+            const matchesSearch = !unmatchedSearch ||
+              item.name.toLowerCase().includes(unmatchedSearch.toLowerCase()) ||
+              (item.article && item.article.toLowerCase().includes(unmatchedSearch.toLowerCase()));
+            const matchesSupplier = unmatchedSupplierFilter === 'all' ||
+              (item.supplier_name || '—') === unmatchedSupplierFilter;
+            return matchesSearch && matchesSupplier;
+          });
+
+          return (
+            <div style={{ marginTop: '1rem' }}>
+              <h3>Позиции счетов без сопоставления ({unmatchedInvoiceItems.length})</h3>
+              {unmatchedInvoiceItems.length === 0 ? (
+                <p className="muted">Все позиции счетов сопоставлены.</p>
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                    <input
+                      type="text"
+                      placeholder="Поиск по названию..."
+                      value={unmatchedSearch}
+                      onChange={e => setUnmatchedSearch(e.target.value)}
+                      style={{ flex: 1, padding: '0.4rem 0.6rem' }}
+                    />
+                    <select
+                      value={unmatchedSupplierFilter}
+                      onChange={e => setUnmatchedSupplierFilter(e.target.value)}
+                      style={{ padding: '0.4rem 0.6rem' }}
+                    >
+                      <option value="all">Все поставщики ({unmatchedInvoiceItems.length})</option>
+                      {suppliers.map(s => (
+                        <option key={s} value={s}>
+                          {s} ({unmatchedInvoiceItems.filter(i => (i.supplier_name || '—') === s).length})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="muted" style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                    Показано: {filtered.length} из {unmatchedInvoiceItems.length}
+                  </p>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Наименование</th>
+                        <th style={{ width: '120px' }}>Поставщик</th>
+                        <th style={{ width: '60px' }}>Ед.</th>
+                        <th style={{ width: '70px' }}>Цена</th>
+                        <th style={{ width: '90px' }}>Сумма</th>
+                        <th style={{ width: '100px' }}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map(item => (
+                        <tr key={item.id}>
+                          <td>
+                            {item.name}
+                            {item.article && <div className="muted" style={{ fontSize: '0.75rem' }}>Арт: {item.article}</div>}
+                          </td>
+                          <td>{item.supplier_name || '—'}</td>
+                          <td>{item.unit || '—'}</td>
+                          <td>{item.price != null ? item.price.toLocaleString('ru-RU') : '—'}</td>
+                          <td>{item.amount != null ? item.amount.toLocaleString('ru-RU') : '—'}</td>
+                          <td>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => setSelectedInvoiceItem(item)}
+                            >
+                              Сопоставить
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+            </div>
+          );
+        })()}
+      </div>
+
+      {/* Modal: spec item -> search invoice items */}
+      {manualMatchSpec && (
+        <ManualMatchFromSpec
+          projectId={projectId}
+          specItem={manualMatchSpec}
+          onClose={() => setManualMatchSpec(null)}
+          onMatched={() => {
+            setManualMatchSpec(null);
+            handleRefresh();
+          }}
+        />
+      )}
+
+      {/* Modal: invoice item -> search spec items */}
+      {selectedInvoiceItem && (
+        <ManualMatchModal
+          projectId={projectId}
+          invoiceItem={{
+            id: selectedInvoiceItem.id,
+            name: selectedInvoiceItem.name,
+            article: selectedInvoiceItem.article,
+            unit: selectedInvoiceItem.unit,
+            quantity: selectedInvoiceItem.quantity,
+            price: selectedInvoiceItem.price,
+            supplierName: selectedInvoiceItem.supplier_name,
+          }}
+          onClose={() => setSelectedInvoiceItem(null)}
+          onMatched={() => {
+            setSelectedInvoiceItem(null);
+            handleRefresh();
+          }}
+        />
       )}
     </div>
   );

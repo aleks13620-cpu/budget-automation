@@ -113,7 +113,9 @@ CREATE TABLE IF NOT EXISTS supplier_parser_configs (
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
 );
 
--- Индексы для ускорения поиска
+`;
+
+export const CREATE_INDEXES_SQL = `
 CREATE INDEX IF NOT EXISTS idx_specifications_project ON specifications(project_id);
 CREATE INDEX IF NOT EXISTS idx_spec_items_project ON specification_items(project_id);
 CREATE INDEX IF NOT EXISTS idx_spec_items_spec ON specification_items(specification_id);

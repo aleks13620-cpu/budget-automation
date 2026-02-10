@@ -35,6 +35,7 @@ interface MatchRow {
 interface Props {
   items: MatchRow[];
   onRefresh: () => void;
+  onManualMatch?: (specItem: SpecItem) => void;
 }
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -44,7 +45,7 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
   name_characteristics: 'Название+хар.',
 };
 
-export function MatchTable({ items, onRefresh }: Props) {
+export function MatchTable({ items, onRefresh, onManualMatch }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -174,6 +175,15 @@ export function MatchTable({ items, onRefresh }: Props) {
                           ✕
                         </button>
                       </>
+                    )}
+                    {!best && onManualMatch && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => onManualMatch(row.specItem)}
+                        title="Сопоставить вручную"
+                      >
+                        Сопоставить
+                      </button>
                     )}
                     {best?.isConfirmed && (
                       <span className="muted" style={{ fontSize: '0.75rem' }}>Подтверждено</span>

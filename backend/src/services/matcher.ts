@@ -27,6 +27,7 @@ interface InvoiceItemRow {
   quantity: number | null;
   price: number | null;
   amount: number | null;
+  supplier_id: number | null;
 }
 
 interface MatchingRule {
@@ -35,6 +36,7 @@ interface MatchingRule {
   invoice_pattern: string;
   confidence: number;
   times_used: number;
+  supplier_id: number | null;
 }
 
 // Stop words to remove during normalization (Russian units, articles, etc.)
@@ -73,9 +75,10 @@ export function runMatching(projectId: number): MatchCandidate[] {
     'SELECT id, name, characteristics, equipment_code, unit, quantity, section FROM specification_items WHERE project_id = ?'
   ).all(projectId) as SpecItemRow[];
 
-  // Load all invoice items for the project (join through invoices)
+  // Load all invoice items for the project (join through invoices, include supplier_id)
   const invoiceItems = db.prepare(`
-    SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount
+    SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
+           i.supplier_id
     FROM invoice_items ii
     JOIN invoices i ON ii.invoice_id = i.id
     WHERE i.project_id = ?
@@ -85,9 +88,9 @@ export function runMatching(projectId: number): MatchCandidate[] {
     return [];
   }
 
-  // Load learned matching rules
+  // Load learned matching rules (including supplier_id for scoping)
   const rules = db.prepare(
-    'SELECT id, specification_pattern, invoice_pattern, confidence, times_used FROM matching_rules'
+    'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id FROM matching_rules'
   ).all() as MatchingRule[];
 
   // Pre-normalize invoice items
@@ -127,13 +130,21 @@ export function runMatching(projectId: number): MatchCandidate[] {
         }
       }
 
-      // 2. Learned rule match
+      // 2. Learned rule match (supplier-scoped: same supplier first, then global, skip other suppliers)
       if (bestConfidence < 0.95) {
         for (const rule of normalizedRules) {
+          // Skip rules from a different supplier
+          if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) {
+            continue;
+          }
           const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
           const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
           if (specMatch >= 0.8 && invMatch >= 0.8) {
-            const ruleConfidence = Math.min(rule.confidence, 0.95);
+            let ruleConfidence = Math.min(rule.confidence, 0.95);
+            // Boost confidence for supplier-specific rules
+            if (rule.supplier_id !== null && rule.supplier_id === inv.supplier_id) {
+              ruleConfidence = Math.min(ruleConfidence + 0.02, 0.95);
+            }
             if (ruleConfidence > bestConfidence) {
               bestConfidence = ruleConfidence;
               bestType = 'learned_rule';

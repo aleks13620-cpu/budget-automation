@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import stringSimilarity from 'string-similarity';
 import { getDatabase } from '../database';
 import { runMatching, normalizeForMatching } from '../services/matcher';
 
@@ -169,14 +170,16 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
 
     const match = db.prepare(`
       SELECT m.id, m.specification_item_id, m.invoice_item_id,
-             si.name as spec_name, ii.name as invoice_name
+             si.name as spec_name, ii.name as invoice_name,
+             i.supplier_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
       id: number; specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string;
+      spec_name: string; invoice_name: string; supplier_id: number | null;
     } | undefined;
 
     if (!match) {
@@ -184,23 +187,21 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     }
 
     db.transaction(() => {
-      // Deselect all matches for this spec item
       db.prepare(
         'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
       ).run(match.specification_item_id);
 
-      // Confirm and select this match
       db.prepare(
         'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
       ).run(matchId);
 
-      // Create or update matching rule
+      // Create or update matching rule (with supplier_id)
       const specPattern = normalizeForMatching(match.spec_name);
       const invoicePattern = normalizeForMatching(match.invoice_name);
 
       const existingRule = db.prepare(
-        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ?'
-      ).get(specPattern, invoicePattern) as { id: number; times_used: number } | undefined;
+        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+      ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
 
       if (existingRule) {
         db.prepare(
@@ -208,8 +209,8 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
         ).run(existingRule.id);
       } else {
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used) VALUES (?, ?, 0.9, 1)'
-        ).run(specPattern, invoicePattern);
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.9, 1, ?)'
+        ).run(specPattern, invoicePattern, match.supplier_id);
       }
     })();
 
@@ -251,14 +252,16 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
 
     const match = db.prepare(`
       SELECT m.id, m.specification_item_id, m.invoice_item_id,
-             si.name as spec_name, ii.name as invoice_name
+             si.name as spec_name, ii.name as invoice_name,
+             i.supplier_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
       id: number; specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string;
+      spec_name: string; invoice_name: string; supplier_id: number | null;
     } | undefined;
 
     if (!match) {
@@ -266,34 +269,30 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
     }
 
     db.transaction(() => {
-      // Deselect all matches for this spec item
       db.prepare(
         'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
       ).run(match.specification_item_id);
 
-      // Confirm and select this match (but mark as analog-like)
       db.prepare(
         'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
       ).run(matchId);
 
-      // Create or update matching rule with lower confidence (analog = 0.75)
+      // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
       const specPattern = normalizeForMatching(match.spec_name);
       const invoicePattern = normalizeForMatching(match.invoice_name);
 
       const existingRule = db.prepare(
-        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ?'
-      ).get(specPattern, invoicePattern) as { id: number; times_used: number } | undefined;
+        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+      ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
 
       if (existingRule) {
-        // If already exists, keep confidence but increment times_used
         db.prepare(
           'UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).run(existingRule.id);
       } else {
-        // Create new rule with lower confidence for analog
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used) VALUES (?, ?, 0.75, 1)'
-        ).run(specPattern, invoicePattern);
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.75, 1, ?)'
+        ).run(specPattern, invoicePattern, match.supplier_id);
       }
     })();
 
@@ -334,6 +333,217 @@ router.put('/api/matching/select/:id', (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при выборе матча',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// POST /api/projects/:id/manual-match — manually match invoice item to spec item
+router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const specItemId = parseInt(String(req.body.specItemId), 10);
+    const invoiceItemId = parseInt(String(req.body.invoiceItemId), 10);
+    if (!specItemId || !invoiceItemId || isNaN(specItemId) || isNaN(invoiceItemId)) {
+      return res.status(400).json({ error: 'specItemId и invoiceItemId обязательны' });
+    }
+
+    // Validate spec item belongs to project
+    const specItem = db.prepare(
+      'SELECT id, name FROM specification_items WHERE id = ? AND project_id = ?'
+    ).get(specItemId, projectId) as { id: number; name: string } | undefined;
+
+    if (!specItem) {
+      return res.status(404).json({ error: 'Позиция спецификации не найдена' });
+    }
+
+    // Validate invoice item belongs to project
+    const invoiceItem = db.prepare(`
+      SELECT ii.id, ii.name, i.supplier_id
+      FROM invoice_items ii
+      JOIN invoices i ON ii.invoice_id = i.id
+      WHERE ii.id = ? AND i.project_id = ?
+    `).get(invoiceItemId, projectId) as { id: number; name: string; supplier_id: number | null } | undefined;
+
+    if (!invoiceItem) {
+      return res.status(404).json({ error: 'Позиция счёта не найдена' });
+    }
+
+    // Check for existing match with this exact pair
+    const existingMatch = db.prepare(
+      'SELECT id FROM matched_items WHERE specification_item_id = ? AND invoice_item_id = ?'
+    ).get(specItemId, invoiceItemId) as { id: number } | undefined;
+
+    if (existingMatch) {
+      // Activate existing match instead of creating duplicate
+      db.transaction(() => {
+        db.prepare(
+          'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
+        ).run(specItemId);
+        db.prepare(
+          'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
+        ).run(existingMatch.id);
+      })();
+      return res.json({ matchId: existingMatch.id, confirmed: true, reused: true });
+    }
+
+    // Check if invoice item is already confirmed with another spec item
+    const otherMatch = db.prepare(
+      'SELECT m.id, si.name as spec_name FROM matched_items m JOIN specification_items si ON m.specification_item_id = si.id WHERE m.invoice_item_id = ? AND m.is_confirmed = 1'
+    ).get(invoiceItemId) as { id: number; spec_name: string } | undefined;
+
+    const result = db.transaction(() => {
+      // Deselect existing matches for this spec item
+      db.prepare(
+        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
+      ).run(specItemId);
+
+      // Insert new confirmed match
+      const insertResult = db.prepare(
+        'INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected) VALUES (?, ?, 1.0, ?, 1, 1)'
+      ).run(specItemId, invoiceItemId, 'manual');
+
+      // Create matching rule with supplier_id (avoid duplicate rules)
+      const specPattern = normalizeForMatching(specItem.name);
+      const invoicePattern = normalizeForMatching(invoiceItem.name);
+
+      const existingRule = db.prepare(
+        'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+      ).get(specPattern, invoicePattern, invoiceItem.supplier_id, invoiceItem.supplier_id) as { id: number } | undefined;
+
+      if (existingRule) {
+        db.prepare(
+          'UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+        ).run(existingRule.id);
+      } else {
+        db.prepare(
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.95, 1, ?)'
+        ).run(specPattern, invoicePattern, invoiceItem.supplier_id);
+      }
+
+      return Number(insertResult.lastInsertRowid);
+    })();
+
+    res.json({
+      matchId: result,
+      confirmed: true,
+      warning: otherMatch ? `Эта позиция счёта уже привязана к: ${otherMatch.spec_name}` : undefined,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при ручном сопоставлении',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/spec-items/search?q=... — fuzzy search spec items
+router.get('/api/projects/:id/spec-items/search', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const q = String(req.query.q || '').trim();
+    const db = getDatabase();
+
+    if (!q || q.length < 2) {
+      return res.status(400).json({ error: 'Минимум 2 символа для поиска' });
+    }
+
+    const specItems = db.prepare(
+      'SELECT id, name, characteristics, unit, quantity, section FROM specification_items WHERE project_id = ? ORDER BY id'
+    ).all(projectId) as Array<{
+      id: number; name: string; characteristics: string | null;
+      unit: string | null; quantity: number | null; section: string | null;
+    }>;
+
+    const normalizedQ = normalizeForMatching(q);
+
+    const scored = specItems.map(item => {
+      const normalizedName = normalizeForMatching(item.name);
+      const score = stringSimilarity.compareTwoStrings(normalizedQ, normalizedName);
+      return { ...item, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, 10).filter(s => s.score > 0.15);
+
+    res.json({ results: top });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при поиске',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/unmatched-invoice-items — invoice items without matches
+router.get('/api/projects/:id/unmatched-invoice-items', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const items = db.prepare(`
+      SELECT ii.id, ii.name, ii.article, ii.unit, ii.quantity, ii.price, ii.amount,
+             s.name as supplier_name
+      FROM invoice_items ii
+      JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN suppliers s ON i.supplier_id = s.id
+      LEFT JOIN matched_items m ON m.invoice_item_id = ii.id
+      WHERE i.project_id = ? AND m.id IS NULL
+      ORDER BY ii.name
+    `).all(projectId);
+
+    res.json({ items, total: items.length });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при получении несопоставленных позиций',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/invoice-items/search?q=... — fuzzy search invoice items
+router.get('/api/projects/:id/invoice-items/search', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const q = String(req.query.q || '').trim();
+    const db = getDatabase();
+
+    if (!q || q.length < 2) {
+      return res.status(400).json({ error: 'Минимум 2 символа для поиска' });
+    }
+
+    const invoiceItems = db.prepare(`
+      SELECT ii.id, ii.name, ii.article, ii.unit, ii.quantity, ii.price, ii.amount,
+             s.name as supplier_name, i.supplier_id
+      FROM invoice_items ii
+      JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN suppliers s ON i.supplier_id = s.id
+      WHERE i.project_id = ?
+      ORDER BY ii.id
+    `).all(projectId) as Array<{
+      id: number; name: string; article: string | null;
+      unit: string | null; quantity: number | null;
+      price: number | null; amount: number | null;
+      supplier_name: string | null; supplier_id: number | null;
+    }>;
+
+    const normalizedQ = normalizeForMatching(q);
+
+    const scored = invoiceItems.map(item => {
+      const normalizedName = normalizeForMatching(item.name);
+      const score = stringSimilarity.compareTwoStrings(normalizedQ, normalizedName);
+      return { ...item, score };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    const top = scored.slice(0, 15).filter(s => s.score > 0.15);
+
+    res.json({ results: top });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при поиске',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
