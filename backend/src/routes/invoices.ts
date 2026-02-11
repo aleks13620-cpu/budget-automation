@@ -347,7 +347,56 @@ router.delete('/api/invoices/:id', (req: Request, res: Response) => {
   }
 });
 
-// POST /api/invoices/:id/reparse — re-parse invoice with saved supplier mapping
+// POST /api/invoices/:id/ensure-supplier — auto-create supplier if missing
+router.post('/api/invoices/:id/ensure-supplier', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, supplier_id, file_name FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; supplier_id: number | null; file_name: string } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    // Already has supplier
+    if (invoice.supplier_id) {
+      const supplier = db.prepare('SELECT id, name FROM suppliers WHERE id = ?').get(invoice.supplier_id) as { id: number; name: string };
+      return res.json({ supplier_id: supplier.id, supplier_name: supplier.name });
+    }
+
+    // Extract name from filename
+    const baseName = path.basename(invoice.file_name, path.extname(invoice.file_name));
+    const firstWordMatch = baseName.match(/^[+\s]*([A-Za-zА-Яа-яёЁ]{3,})/);
+    const supplierName = firstWordMatch ? firstWordMatch[1] : 'Неизвестный поставщик';
+
+    // Find or create supplier
+    const existing = db.prepare('SELECT id, name FROM suppliers WHERE name = ?').get(supplierName) as { id: number; name: string } | undefined;
+    let supplierId: number;
+    let finalName: string;
+
+    if (existing) {
+      supplierId = existing.id;
+      finalName = existing.name;
+    } else {
+      const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
+      supplierId = Number(result.lastInsertRowid);
+      finalName = supplierName;
+    }
+
+    // Link supplier to invoice
+    db.prepare('UPDATE invoices SET supplier_id = ? WHERE id = ?').run(supplierId, invoiceId);
+
+    res.json({ supplier_id: supplierId, supplier_name: finalName });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/ensure-supplier error:', error);
+    res.status(500).json({ error: 'Ошибка при создании поставщика' });
+  }
+});
+
+// POST /api/invoices/:id/reparse — re-parse invoice with mapping (from body or saved config)
 router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => {
   try {
     const invoiceId = parseInt(String(req.params.id), 10);
@@ -365,14 +414,16 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
 
-    // Load saved mapping
+    // Priority: mapping from request body > saved supplier config
     let savedMapping: SavedMapping | undefined;
-    if (invoice.supplier_id) {
+    if (req.body && req.body.mapping && typeof req.body.mapping.headerRow === 'number') {
+      savedMapping = req.body.mapping as SavedMapping;
+    } else if (invoice.supplier_id) {
       savedMapping = loadSavedMapping(invoice.supplier_id);
     }
 
     if (!savedMapping) {
-      return res.status(400).json({ error: 'Нет сохранённых настроек колонок для поставщика' });
+      return res.status(400).json({ error: 'Нет настроек колонок — сохраните mapping или укажите в запросе' });
     }
 
     const ext = path.extname(invoice.file_name).toLowerCase();

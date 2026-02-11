@@ -69,19 +69,31 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     load();
   }, [invoiceId]);
 
-  const handleSave = async () => {
-    if (!invoice?.supplier_id) {
-      setMessage({ type: 'error', text: 'Поставщик не определён, сохранение невозможно' });
-      return;
+  const ensureSupplier = async (): Promise<{ supplier_id: number; supplier_name: string } | null> => {
+    if (invoice?.supplier_id) {
+      return { supplier_id: invoice.supplier_id, supplier_name: invoice.supplier_name || '' };
     }
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/ensure-supplier`);
+      setInvoice(prev => prev ? { ...prev, supplier_id: data.supplier_id, supplier_name: data.supplier_name } : prev);
+      return data;
+    } catch {
+      setMessage({ type: 'error', text: 'Не удалось создать поставщика' });
+      return null;
+    }
+  };
+
+  const handleSave = async () => {
     setSaving(true);
     setMessage(null);
     try {
-      await api.put(`/suppliers/${invoice.supplier_id}/parser-config`, {
+      const supplier = await ensureSupplier();
+      if (!supplier) { setSaving(false); return; }
+
+      await api.put(`/suppliers/${supplier.supplier_id}/parser-config`, {
         config: { ...mapping, headerRow },
       });
-      const name = invoice.supplier_name || 'поставщика';
-      setMessage({ type: 'success', text: `Настройки сохранены для ${name}. Нажмите «Пересобрать» для применения.` });
+      setMessage({ type: 'success', text: `Настройки сохранены для ${supplier.supplier_name}. Нажмите «Пересобрать» для применения.` });
     } catch {
       setMessage({ type: 'error', text: 'Ошибка при сохранении настроек' });
     } finally {
@@ -93,7 +105,12 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     setReparsing(true);
     setMessage(null);
     try {
-      const { data } = await api.post(`/invoices/${invoiceId}/reparse`);
+      // Ensure supplier exists before reparse
+      await ensureSupplier();
+
+      const { data } = await api.post(`/invoices/${invoiceId}/reparse`, {
+        mapping: { ...mapping, headerRow },
+      });
 
       // Build result message with validation
       const msgs: string[] = [];
@@ -152,10 +169,10 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       />
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving || !invoice.supplier_id}>
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Сохранение...' : 'Сохранить настройки'}
         </button>
-        <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing || !invoice.supplier_id}>
+        <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing}>
           {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
         </button>
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>

@@ -83,6 +83,31 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
   return null;
 }
 
+const SKIP_ROW_KEYWORDS = [
+  'получатель', 'плательщик', 'поставщик', 'продавец',
+  'адрес', 'телефон', 'e-mail', 'email', 'факс',
+  'инн', 'кпп', 'бик', 'р/с', 'к/с',
+  'коммерческое предложение', 'реквизит',
+  'банк', 'назначение платежа', 'примечан',
+  'основание', 'договор', 'счёт на оплату', 'счет на оплату',
+];
+
+function isMetadataRow(name: string): boolean {
+  const lower = name.toLowerCase();
+  // Skip long text (likely a paragraph, not a product name)
+  if (lower.length > 120) return true;
+  // Count how many metadata keywords appear
+  let hits = 0;
+  for (const kw of SKIP_ROW_KEYWORDS) {
+    if (lower.includes(kw)) hits++;
+  }
+  // If starts with a keyword — single hit is enough
+  for (const kw of SKIP_ROW_KEYWORDS) {
+    if (lower.startsWith(kw)) return true;
+  }
+  return hits >= 2;
+}
+
 export function parseTableData(rows: string[][], mapping: ColumnMapping, startRow: number): { items: InvoiceRow[]; errors: string[]; skipped: number } {
   const items: InvoiceRow[] = [];
   const errors: string[] = [];
@@ -105,6 +130,12 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
     // Skip rows that look like subtotals/totals
     const nameLower = name.toLowerCase();
     if (nameLower.startsWith('итого') || nameLower.startsWith('всего') || nameLower === 'total') {
+      continue;
+    }
+
+    // Skip metadata/requisite rows (addresses, INN, bank details, etc.)
+    if (isMetadataRow(name)) {
+      skipped++;
       continue;
     }
 
