@@ -210,6 +210,21 @@ export interface SavedMapping {
  * Extract raw rows (string[][]) from a PDF file.
  * Used by preview endpoint and internally by parsePdfFile.
  */
+/**
+ * Normalize all rows to have the same number of columns (pad shorter rows with empty strings).
+ */
+function normalizeRowWidths(rows: string[][]): string[][] {
+  if (rows.length === 0) return rows;
+  const maxCols = Math.max(...rows.map(r => r.length));
+  if (maxCols === 0) return rows;
+  return rows.map(row => {
+    if (row.length < maxCols) {
+      return [...row, ...Array(maxCols - row.length).fill('')];
+    }
+    return row;
+  });
+}
+
 export async function extractRawRows(filePath: string): Promise<{ rows: string[][]; fullText: string }> {
   const buffer = fs.readFileSync(filePath);
   const data = new Uint8Array(buffer);
@@ -243,14 +258,14 @@ export async function extractRawRows(filePath: string): Promise<{ rows: string[]
         for (const t of allTables) {
           if (t.length > largest.length) largest = t;
         }
-        return { rows: largest, fullText };
+        return { rows: normalizeRowWidths(largest), fullText };
       }
     } catch {
       // fall through to text fallback
     }
 
     // Fallback: parse text as 2D array
-    return { rows: textTo2DArray(fullText), fullText };
+    return { rows: normalizeRowWidths(textTo2DArray(fullText)), fullText };
   } finally {
     await parser.destroy();
   }

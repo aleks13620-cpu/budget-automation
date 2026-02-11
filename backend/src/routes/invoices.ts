@@ -211,8 +211,7 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
       rows = extractExcelRawRows(invoice.file_path);
     }
 
-    // Limit to first 20 rows for preview
-    const previewRows = rows.slice(0, 20);
+    const previewRows = rows;
 
     // Auto-detect column mapping
     const detected = detectColumns(rows);

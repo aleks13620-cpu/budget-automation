@@ -69,6 +69,21 @@ function extractMetadataFromRows(rows: string[][]): {
 }
 
 /**
+ * Normalize all rows to have the same number of columns (pad shorter rows with empty strings).
+ */
+function normalizeRowWidths(rows: string[][]): string[][] {
+  if (rows.length === 0) return rows;
+  const maxCols = Math.max(...rows.map(r => r.length));
+  if (maxCols === 0) return rows;
+  return rows.map(row => {
+    if (row.length < maxCols) {
+      return [...row, ...Array(maxCols - row.length).fill('')];
+    }
+    return row;
+  });
+}
+
+/**
  * Extract raw rows (string[][]) from an Excel file. Used by preview endpoint.
  */
 export function extractExcelRawRows(filePath: string): string[][] {
@@ -79,9 +94,11 @@ export function extractExcelRawRows(filePath: string): string[][] {
   const sheet = workbook.Sheets[sheetName];
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-  return rawRows.map(row =>
+  const rows = rawRows.map(row =>
     row.map(cell => (cell === null || cell === undefined) ? '' : String(cell))
   );
+
+  return normalizeRowWidths(rows);
 }
 
 export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping): InvoiceParseResult {

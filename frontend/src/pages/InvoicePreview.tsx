@@ -140,8 +140,8 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
 
-      <h3>Данные файла ({preview.totalRows} строк всего, показано {preview.rows.length})</h3>
-      <div className="preview-table-wrap">
+      <h3>Данные файла ({preview.totalRows} строк)</h3>
+      <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
         <table>
           <tbody>
             {preview.rows.map((row, rowIdx) => (
