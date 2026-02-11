@@ -246,6 +246,8 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
       if (saved) supplierConfig = saved;
     }
 
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
     res.json({
       rows: previewRows,
       totalRows: rows.length,

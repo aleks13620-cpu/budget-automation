@@ -134,7 +134,70 @@ const MONTH_NAMES: Record<string, string> = {
   'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12',
 };
 
-function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null } {
+/**
+ * Check text quality: returns ratio of "garbage" characters (replacement chars, control chars, etc.)
+ * A ratio > 0.3 means the text is likely garbled/unreadable.
+ */
+export function checkTextQuality(text: string): { ratio: number; isGarbled: boolean } {
+  if (!text || text.length === 0) return { ratio: 1, isGarbled: true };
+
+  let garbageCount = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    // U+FFFD replacement character
+    if (code === 0xFFFD) { garbageCount++; continue; }
+    // Control chars (except \n, \r, \t)
+    if (code < 0x20 && code !== 0x0A && code !== 0x0D && code !== 0x09) { garbageCount++; continue; }
+    // Private use area
+    if (code >= 0xE000 && code <= 0xF8FF) { garbageCount++; continue; }
+    // Surrogate halves (shouldn't appear in JS strings normally, but sometimes do in garbled text)
+    if (code >= 0xD800 && code <= 0xDFFF) { garbageCount++; continue; }
+  }
+
+  const ratio = garbageCount / text.length;
+  return { ratio, isGarbled: ratio > 0.3 };
+}
+
+const SUPPLIER_BAD_WORDS = [
+  'условия', 'самовывоз', 'паспорт', 'доставка', 'отгрузка',
+  'оплат', 'гарантия', 'возврат', 'примечан', 'внимание',
+];
+
+/**
+ * Validate and clean supplier name extracted from text.
+ * Returns null if the name looks like garbage/conditions text.
+ */
+function cleanSupplierName(raw: string | null): string | null {
+  if (!raw) return null;
+  // Take part before first comma (e.g. "ООО Дюкс, условия..." → "ООО Дюкс")
+  let name = raw.split(',')[0].trim();
+  // Remove trailing punctuation
+  name = name.replace(/[.;:]+$/, '').trim();
+  if (name.length < 2) return null;
+  const lower = name.toLowerCase();
+  for (const bad of SUPPLIER_BAD_WORDS) {
+    if (lower.includes(bad)) return null;
+  }
+  return name;
+}
+
+/**
+ * Extract BIK (9 digits) and correspondent account from raw text.
+ * Handles cases where BIK is concatenated with cor.account.
+ */
+function extractBikAndCorAccount(text: string): { bik: string | null; corrAccount: string | null } {
+  const bikMatch = text.match(/БИК\s*[:\s.]*(\d{9,})/i);
+  if (!bikMatch) return { bik: null, corrAccount: null };
+
+  const digits = bikMatch[1];
+  const bik = digits.substring(0, 9);
+  // Remaining digits may be correspondent account (20 digits)
+  const rest = digits.substring(9);
+  const corrAccount = rest.length >= 20 ? rest.substring(0, 20) : (rest.length > 0 ? rest : null);
+  return { bik, corrAccount };
+}
+
+function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null; bik: string | null; corrAccount: string | null } {
   const snippet = text.substring(0, 3000);
 
   // === Invoice number ===
@@ -193,7 +256,7 @@ function extractMetadata(text: string): { invoiceNumber: string | null; invoiceD
   // Priority 1: explicit field
   const supplierFieldMatch = snippet.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
   if (supplierFieldMatch) {
-    supplierName = supplierFieldMatch[1].trim();
+    supplierName = cleanSupplierName(supplierFieldMatch[1]);
   }
   // Priority 2: org form (ООО, ЗАО, etc.)
   if (!supplierName) {
@@ -202,12 +265,14 @@ function extractMetadata(text: string): { invoiceNumber: string | null; invoiceD
     while ((m = orgRegex.exec(snippet)) !== null) {
       const candidate = `${m[1]} ${m[2]}`.trim();
       const lower = candidate.toLowerCase();
-      // Skip bank names and buyer references
       if (lower.includes('банк') || lower.includes('бик') || lower.includes('р/с') || lower.includes('к/с')) continue;
-      supplierName = candidate;
-      break;
+      const cleaned = cleanSupplierName(candidate);
+      if (cleaned) { supplierName = cleaned; break; }
     }
   }
+
+  // === BIK + correspondent account ===
+  const { bik, corrAccount } = extractBikAndCorAccount(snippet);
 
   // Total amount from text
   let totalAmount: number | null = null;
@@ -216,12 +281,124 @@ function extractMetadata(text: string): { invoiceNumber: string | null; invoiceD
     totalAmount = parsePrice(totalMatch[1]);
   }
 
-  return { invoiceNumber, invoiceDate, supplierName, totalAmount };
+  return { invoiceNumber, invoiceDate, supplierName, totalAmount, bik, corrAccount };
+}
+
+/**
+ * Extract metadata from 2D table rows (used for Excel and as fallback for garbled PDF text).
+ */
+export function extractMetadataFromRows(rows: string[][]): {
+  invoiceNumber: string | null;
+  invoiceDate: string | null;
+  supplierName: string | null;
+  totalAmount: number | null;
+  bik: string | null;
+  corrAccount: string | null;
+} {
+  let invoiceNumber: string | null = null;
+  let invoiceDate: string | null = null;
+  let supplierName: string | null = null;
+  let totalAmount: number | null = null;
+  let bik: string | null = null;
+  let corrAccount: string | null = null;
+
+  const searchLimit = Math.min(rows.length, 30);
+
+  for (let i = 0; i < searchLimit; i++) {
+    const row = rows[i];
+    for (const cell of row) {
+      if (!cell) continue;
+      const text = String(cell);
+
+      // === Invoice number ===
+      if (!invoiceNumber) {
+        const numMatch = text.match(/(?:счёт|счет|invoice)\s*[№#:]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
+        if (numMatch) {
+          invoiceNumber = numMatch[1].trim();
+        }
+      }
+      if (!invoiceNumber) {
+        const altNumMatch = text.match(/(?:заказ\s+клиента|КП|коммерческое\s+предложение)\s*(?:[^№#]*?)[№#]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
+        if (altNumMatch) {
+          invoiceNumber = altNumMatch[1].trim();
+        }
+      }
+      if (!invoiceNumber) {
+        const standaloneNum = text.match(/№\s*([A-Za-zА-Яа-я0-9\-\/]{2,})/);
+        if (standaloneNum) {
+          invoiceNumber = standaloneNum[1].trim();
+        }
+      }
+
+      // === Date ===
+      if (!invoiceDate) {
+        const dateMatch = text.match(/(?:от|date|дата)\s*[:\s]*(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4})/i);
+        if (dateMatch) {
+          invoiceDate = dateMatch[1].trim();
+        }
+      }
+      if (!invoiceDate) {
+        const monthNames = Object.keys(MONTH_NAMES).join('|');
+        const writtenDateRegex = new RegExp(`(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})`, 'i');
+        const writtenMatch = text.match(writtenDateRegex);
+        if (writtenMatch) {
+          const day = writtenMatch[1].padStart(2, '0');
+          const month = MONTH_NAMES[writtenMatch[2].toLowerCase()];
+          const year = writtenMatch[3];
+          if (month) {
+            invoiceDate = `${day}.${month}.${year}`;
+          }
+        }
+      }
+      if (!invoiceDate) {
+        const standaloneDate = text.match(/(\d{2}[.\-/]\d{2}[.\-/]\d{4})/);
+        if (standaloneDate) {
+          invoiceDate = standaloneDate[1].trim();
+        }
+      }
+
+      // === Supplier ===
+      if (!supplierName) {
+        const supplierFieldMatch = text.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
+        if (supplierFieldMatch) {
+          supplierName = cleanSupplierName(supplierFieldMatch[1]);
+        } else {
+          const orgMatch = text.match(/(ООО|ОАО|ЗАО|ПАО|НАО|ФГУП|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/);
+          if (orgMatch) {
+            const candidate = `${orgMatch[1]} ${orgMatch[2]}`.trim();
+            const lower = candidate.toLowerCase();
+            if (!lower.includes('банк') && !lower.includes('бик') && !lower.includes('р/с') && !lower.includes('к/с')) {
+              supplierName = cleanSupplierName(candidate);
+            }
+          }
+        }
+      }
+
+      // === BIK ===
+      if (!bik) {
+        const bikResult = extractBikAndCorAccount(text);
+        if (bikResult.bik) {
+          bik = bikResult.bik;
+          corrAccount = bikResult.corrAccount;
+        }
+      }
+
+      // Total amount
+      if (!totalAmount) {
+        const totalMatch = text.match(/(?:итого|всего|total)\s*[:\s]*([0-9\s]+[.,]\d{2})/i);
+        if (totalMatch) {
+          totalAmount = parsePrice(totalMatch[1]);
+        }
+      }
+    }
+  }
+
+  return { invoiceNumber, invoiceDate, supplierName, totalAmount, bik, corrAccount };
 }
 
 function textTo2DArray(text: string): string[][] {
   const lines = text.split('\n');
-  const rows: string[][] = [];
+  const allRows: string[][] = [];
 
   for (const line of lines) {
     const trimmed = line.trim();
@@ -233,12 +410,40 @@ function textTo2DArray(text: string): string[][] {
     if (cells.length < 2) {
       cells = trimmed.split(/\s{2,}/).map(c => c.trim());
     }
-    if (cells.length >= 2) {
-      rows.push(cells);
+    // Keep all rows (including single-cell ones)
+    allRows.push(cells);
+  }
+
+  if (allRows.length === 0) return [];
+
+  // Find the most common column count (the "table" width) among multi-cell rows
+  const colCounts = new Map<number, number>();
+  for (const row of allRows) {
+    if (row.length >= 2) {
+      colCounts.set(row.length, (colCounts.get(row.length) || 0) + 1);
     }
   }
 
-  return rows;
+  // If no multi-cell rows exist, return all rows as-is
+  if (colCounts.size === 0) return allRows;
+
+  // Find the dominant column count
+  let dominantCols = 0;
+  let dominantCount = 0;
+  for (const [cols, count] of colCounts) {
+    if (count > dominantCount) {
+      dominantCount = count;
+      dominantCols = cols;
+    }
+  }
+
+  // Filter: keep rows that have the dominant column count (± 1 tolerance)
+  // This filters out metadata/header lines that have a very different structure
+  const filtered = allRows.filter(row =>
+    row.length >= dominantCols - 1 && row.length <= dominantCols + 1
+  );
+
+  return filtered.length > 0 ? filtered : allRows;
 }
 
 export interface SavedMapping {
@@ -252,9 +457,42 @@ export interface SavedMapping {
 }
 
 /**
- * Extract raw rows (string[][]) from a PDF file.
- * Used by preview endpoint and internally by parsePdfFile.
+ * Check if a table looks like bank requisites (not product items).
+ * Returns true if >= 3 negative markers found.
  */
+function isRequisitesTable(rows: string[][]): boolean {
+  const BAD_KEYWORDS = [
+    'бик', 'к/с', 'р/с', 'банк', 'получатель', 'плательщик',
+    'инн', 'кпп', 'назначение платежа', 'срок', 'очер', 'корресп',
+  ];
+  // Check first 5 rows
+  const sample = rows.slice(0, 5).map(r => r.join(' ')).join(' ').toLowerCase();
+  let badCount = 0;
+  for (const kw of BAD_KEYWORDS) {
+    if (sample.includes(kw)) badCount++;
+  }
+  return badCount >= 3;
+}
+
+/**
+ * Score how likely a table contains product items.
+ * Higher score = more likely a product table.
+ */
+function scoreProductTable(rows: string[][]): number {
+  const GOOD_KEYWORDS = [
+    'товар', 'работ', 'услуг', 'наименован', 'артикул',
+    'колич', 'кол-во', 'цена', 'сумма', 'ед.', 'стоимость',
+    'количество', 'название', 'номенклатура',
+  ];
+  // Check first 3 rows (likely headers)
+  const sample = rows.slice(0, 3).map(r => r.join(' ')).join(' ').toLowerCase();
+  let score = 0;
+  for (const kw of GOOD_KEYWORDS) {
+    if (sample.includes(kw)) score++;
+  }
+  return score;
+}
+
 /**
  * Normalize all rows to have the same number of columns (pad shorter rows with empty strings).
  */
@@ -289,7 +527,8 @@ export async function extractRawRows(filePath: string): Promise<{ rows: string[]
         allTables.push(...tableResult.mergedTables);
       }
 
-      if (allTables.length === 0 && tableResult.pages) {
+      // Also collect per-page tables (multi-page PDFs may have separate tables per page)
+      if (tableResult.pages) {
         for (const page of tableResult.pages) {
           if (page.tables && page.tables.length > 0) {
             allTables.push(...page.tables);
@@ -297,13 +536,57 @@ export async function extractRawRows(filePath: string): Promise<{ rows: string[]
         }
       }
 
-      // Return the largest table found
+      // Filter and score tables to find the product table
       if (allTables.length > 0) {
-        let largest = allTables[0];
-        for (const t of allTables) {
-          if (t.length > largest.length) largest = t;
+        // Group tables by their column count (mode of row lengths in each table)
+        const groups = new Map<number, string[][]>();
+        for (const table of allTables) {
+          if (table.length === 0) continue;
+          const lengthCounts = new Map<number, number>();
+          for (const row of table) {
+            const len = row.length;
+            lengthCounts.set(len, (lengthCounts.get(len) || 0) + 1);
+          }
+          let colCount = 0;
+          let maxCnt = 0;
+          for (const [len, count] of lengthCounts) {
+            if (count > maxCnt) { maxCnt = count; colCount = len; }
+          }
+          const existing = groups.get(colCount) || [];
+          existing.push(...table);
+          groups.set(colCount, existing);
         }
-        return { rows: normalizeRowWidths(largest), fullText };
+
+        // Score each group: prefer product tables, exclude requisites
+        let bestRows: string[][] = [];
+        let bestScore = -1;
+        let bestRowCount = 0;
+        for (const [, groupRows] of groups) {
+          if (groupRows.length === 0) continue;
+          // Skip requisites tables
+          if (isRequisitesTable(groupRows)) continue;
+          const score = scoreProductTable(groupRows);
+          // Prefer higher score; on tie prefer more rows
+          if (score > bestScore || (score === bestScore && groupRows.length > bestRowCount)) {
+            bestScore = score;
+            bestRows = groupRows;
+            bestRowCount = groupRows.length;
+          }
+        }
+
+        // Fallback: if all filtered out, pick group with most rows (original logic)
+        if (bestRows.length === 0) {
+          for (const [, groupRows] of groups) {
+            if (groupRows.length > bestRowCount) {
+              bestRowCount = groupRows.length;
+              bestRows = groupRows;
+            }
+          }
+        }
+
+        if (bestRows.length > 0) {
+          return { rows: normalizeRowWidths(bestRows), fullText };
+        }
       }
     } catch {
       // fall through to text fallback
@@ -323,7 +606,15 @@ export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping
   let totalRows = 0;
   let skippedRows = 0;
 
-  const metadata = extractMetadata(fullText);
+  // Check text quality — if garbled, use table rows for metadata instead
+  const textQuality = checkTextQuality(fullText);
+  let metadata;
+  if (textQuality.isGarbled) {
+    errors.push(`PDF текст нечитаем (${Math.round(textQuality.ratio * 100)}% мусора), метаданные извлекаются из таблицы`);
+    metadata = extractMetadataFromRows(rows);
+  } else {
+    metadata = extractMetadata(fullText);
+  }
 
   if (rows.length < 2) {
     return {

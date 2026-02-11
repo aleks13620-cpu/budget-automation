@@ -80,7 +80,8 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       await api.put(`/suppliers/${invoice.supplier_id}/parser-config`, {
         config: { ...mapping, headerRow },
       });
-      setMessage({ type: 'success', text: 'Настройки сохранены. Нажмите «Пересобрать» для применения.' });
+      const name = invoice.supplier_name || 'поставщика';
+      setMessage({ type: 'success', text: `Настройки сохранены для ${name}. Нажмите «Пересобрать» для применения.` });
     } catch {
       setMessage({ type: 'error', text: 'Ошибка при сохранении настроек' });
     } finally {
@@ -93,7 +94,27 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     setMessage(null);
     try {
       const { data } = await api.post(`/invoices/${invoiceId}/reparse`);
-      setMessage({ type: 'success', text: `Пересобрано: ${data.imported} позиций` });
+
+      // Build result message with validation
+      const msgs: string[] = [];
+      if (data.imported === 0) {
+        msgs.push('Позиции не найдены');
+      } else {
+        msgs.push(`Пересобрано: ${data.imported} позиций`);
+      }
+      if (data.errors && data.errors.length > 0) {
+        msgs.push(`Предупреждения: ${data.errors.length}`);
+      }
+      const msgType = data.imported === 0 ? 'error' : 'success';
+      setMessage({ type: msgType as 'success' | 'error', text: msgs.join('. ') });
+
+      // Refetch preview and invoice data so UI updates
+      const [previewRes, invoiceRes] = await Promise.all([
+        api.get(`/invoices/${invoiceId}/preview`),
+        api.get(`/invoices/${invoiceId}`),
+      ]);
+      setPreview(previewRes.data);
+      setInvoice(invoiceRes.data.invoice);
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
     } finally {
@@ -139,6 +160,27 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         </button>
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
+
+      {(() => {
+        const FIELD_LABELS: Record<string, string> = {
+          article: 'Артикул', name: 'Наименование', unit: 'Ед. изм.',
+          quantity: 'Количество', price: 'Цена', amount: 'Сумма',
+        };
+        const entries = Object.entries(mapping).filter(([, v]) => v !== null) as [string, number][];
+        if (entries.length === 0) return null;
+        return (
+          <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: 4, padding: '0.5rem 0.75rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
+            <strong>Активное сопоставление</strong> (строка заголовка: {headerRow + 1})
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.25rem' }}>
+              {entries.map(([field, colIdx]) => (
+                <span key={field} style={{ background: '#e0e7ff', padding: '2px 6px', borderRadius: 3 }}>
+                  {FIELD_LABELS[field] || field} &larr; кол. {colIdx + 1}{headerCols[colIdx] ? ` (${headerCols[colIdx]})` : ''}
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       <h3>Данные файла ({preview.totalRows} строк)</h3>
       <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
