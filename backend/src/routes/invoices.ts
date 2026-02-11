@@ -93,13 +93,32 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       : parseExcelInvoice(req.file.path);
 
     // Find or create supplier
+    let supplierName = initialResult.supplierName;
+
+    // Fallback: try to match supplier from filename (e.g. "НЗВЗ Заказ..." → search for "НЗВЗ")
+    if (!supplierName) {
+      const fileName = fixFilename(req.file!.originalname);
+      const baseName = path.basename(fileName, path.extname(fileName));
+      // Extract first word (at least 3 chars, Cyrillic or Latin)
+      const firstWordMatch = baseName.match(/^[+\s]*([A-Za-zА-Яа-яёЁ]{3,})/);
+      if (firstWordMatch) {
+        const keyword = firstWordMatch[1];
+        const found = db.prepare(
+          'SELECT id, name FROM suppliers WHERE name LIKE ? LIMIT 1'
+        ).get(`%${keyword}%`) as { id: number; name: string } | undefined;
+        if (found) {
+          supplierName = found.name;
+        }
+      }
+    }
+
     let supplierId: number | null = null;
-    if (initialResult.supplierName) {
-      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(initialResult.supplierName) as { id: number } | undefined;
+    if (supplierName) {
+      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierName) as { id: number } | undefined;
       if (existing) {
         supplierId = existing.id;
       } else {
-        const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(initialResult.supplierName);
+        const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
         supplierId = Number(result.lastInsertRowid);
       }
     }

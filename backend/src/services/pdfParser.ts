@@ -128,36 +128,81 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
   return { items, errors, skipped };
 }
 
-function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null } {
-  const snippet = text.substring(0, 2000);
+const MONTH_NAMES: Record<string, string> = {
+  'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
+  'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
+  'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12',
+};
 
-  // Invoice number: счёт/счет/invoice + №/#/number
+function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null } {
+  const snippet = text.substring(0, 3000);
+
+  // === Invoice number ===
   let invoiceNumber: string | null = null;
+  // Priority 1: счёт/счет/invoice + №/#
   const numMatch = snippet.match(/(?:счёт|счет|invoice)\s*[№#:]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
   if (numMatch) {
     invoiceNumber = numMatch[1].trim();
   }
+  // Priority 2: заказ клиента/КП/коммерческое предложение — require № or # before the number
+  if (!invoiceNumber) {
+    const altNumMatch = snippet.match(/(?:заказ\s+клиента|КП|коммерческое\s+предложение)\s*(?:[^№#]*?)[№#]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
+    if (altNumMatch) {
+      invoiceNumber = altNumMatch[1].trim();
+    }
+  }
+  // Priority 3: № followed by alphanumeric (standalone)
+  if (!invoiceNumber) {
+    const standaloneNum = snippet.match(/№\s*([A-Za-zА-Яа-я0-9\-\/]{2,})/);
+    if (standaloneNum) {
+      invoiceNumber = standaloneNum[1].trim();
+    }
+  }
 
-  // Date: от/date/дата + dd.mm.yyyy
+  // === Invoice date ===
   let invoiceDate: string | null = null;
-  const dateMatch = snippet.match(/(?:от|date|дата)\s*[:\s]*(\d{2}[.\-/]\d{2}[.\-/]\d{4})/i);
+  // Priority 1: от/date/дата + dd.mm.yyyy
+  const dateMatch = snippet.match(/(?:от|date|дата)\s*[:\s]*(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4})/i);
   if (dateMatch) {
     invoiceDate = dateMatch[1].trim();
   }
+  // Priority 2: "14 января 2026 г." — written month
+  if (!invoiceDate) {
+    const monthNames = Object.keys(MONTH_NAMES).join('|');
+    const writtenDateRegex = new RegExp(`(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})`, 'i');
+    const writtenMatch = snippet.match(writtenDateRegex);
+    if (writtenMatch) {
+      const day = writtenMatch[1].padStart(2, '0');
+      const month = MONTH_NAMES[writtenMatch[2].toLowerCase()];
+      const year = writtenMatch[3];
+      if (month) {
+        invoiceDate = `${day}.${month}.${year}`;
+      }
+    }
+  }
+  // Priority 3: standalone dd.mm.yyyy (first occurrence)
+  if (!invoiceDate) {
+    const standaloneDate = snippet.match(/(\d{2}[.\-/]\d{2}[.\-/]\d{4})/);
+    if (standaloneDate) {
+      invoiceDate = standaloneDate[1].trim();
+    }
+  }
 
-  // Supplier: priority 1 — explicit field, priority 2 — org form (filter banks)
+  // === Supplier name ===
   let supplierName: string | null = null;
+  // Priority 1: explicit field
   const supplierFieldMatch = snippet.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
   if (supplierFieldMatch) {
     supplierName = supplierFieldMatch[1].trim();
   }
+  // Priority 2: org form (ООО, ЗАО, etc.)
   if (!supplierName) {
-    const orgRegex = /(ООО|ОАО|ЗАО|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/g;
+    const orgRegex = /(ООО|ОАО|ЗАО|ПАО|НАО|ФГУП|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/g;
     let m;
     while ((m = orgRegex.exec(snippet)) !== null) {
       const candidate = `${m[1]} ${m[2]}`.trim();
       const lower = candidate.toLowerCase();
-      // Skip bank names
+      // Skip bank names and buyer references
       if (lower.includes('банк') || lower.includes('бик') || lower.includes('р/с') || lower.includes('к/с')) continue;
       supplierName = candidate;
       break;

@@ -2,7 +2,13 @@ import XLSX from 'xlsx';
 import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
 import { detectColumns, parseTableData, parsePrice, SavedMapping } from './pdfParser';
 
-function extractMetadataFromRows(rows: string[][]): {
+const MONTH_NAMES: Record<string, string> = {
+  'января': '01', 'февраля': '02', 'марта': '03', 'апреля': '04',
+  'мая': '05', 'июня': '06', 'июля': '07', 'августа': '08',
+  'сентября': '09', 'октября': '10', 'ноября': '11', 'декабря': '12',
+};
+
+export function extractMetadataFromRows(rows: string[][]): {
   invoiceNumber: string | null;
   invoiceDate: string | null;
   supplierName: string | null;
@@ -22,33 +28,70 @@ function extractMetadataFromRows(rows: string[][]): {
       if (!cell) continue;
       const text = String(cell);
 
-      // Invoice number
+      // === Invoice number ===
       if (!invoiceNumber) {
+        // Priority 1: счёт/счет/invoice
         const numMatch = text.match(/(?:счёт|счет|invoice)\s*[№#:]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
         if (numMatch) {
           invoiceNumber = numMatch[1].trim();
         }
       }
+      if (!invoiceNumber) {
+        // Priority 2: заказ клиента/КП — require № or # before the number
+        const altNumMatch = text.match(/(?:заказ\s+клиента|КП|коммерческое\s+предложение)\s*(?:[^№#]*?)[№#]\s*([A-Za-zА-Яа-я0-9\-\/]+)/i);
+        if (altNumMatch) {
+          invoiceNumber = altNumMatch[1].trim();
+        }
+      }
+      if (!invoiceNumber) {
+        // Priority 3: standalone №
+        const standaloneNum = text.match(/№\s*([A-Za-zА-Яа-я0-9\-\/]{2,})/);
+        if (standaloneNum) {
+          invoiceNumber = standaloneNum[1].trim();
+        }
+      }
 
-      // Date
+      // === Date ===
       if (!invoiceDate) {
-        const dateMatch = text.match(/(?:от|date|дата)\s*[:\s]*(\d{2}[.\-/]\d{2}[.\-/]\d{4})/i);
+        // Priority 1: от/date/дата + dd.mm.yyyy
+        const dateMatch = text.match(/(?:от|date|дата)\s*[:\s]*(\d{1,2}[.\-/]\d{1,2}[.\-/]\d{4})/i);
         if (dateMatch) {
           invoiceDate = dateMatch[1].trim();
         }
       }
+      if (!invoiceDate) {
+        // Priority 2: "14 января 2026 г."
+        const monthNames = Object.keys(MONTH_NAMES).join('|');
+        const writtenDateRegex = new RegExp(`(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})`, 'i');
+        const writtenMatch = text.match(writtenDateRegex);
+        if (writtenMatch) {
+          const day = writtenMatch[1].padStart(2, '0');
+          const month = MONTH_NAMES[writtenMatch[2].toLowerCase()];
+          const year = writtenMatch[3];
+          if (month) {
+            invoiceDate = `${day}.${month}.${year}`;
+          }
+        }
+      }
+      if (!invoiceDate) {
+        // Priority 3: standalone dd.mm.yyyy
+        const standaloneDate = text.match(/(\d{2}[.\-/]\d{2}[.\-/]\d{4})/);
+        if (standaloneDate) {
+          invoiceDate = standaloneDate[1].trim();
+        }
+      }
 
-      // Supplier: priority 1 — explicit field, priority 2 — org form (filter banks)
+      // === Supplier ===
       if (!supplierName) {
         const supplierFieldMatch = text.match(/(?:поставщик|продавец|исполнитель)\s*[:\s]*([^\n]{3,60})/i);
         if (supplierFieldMatch) {
           supplierName = supplierFieldMatch[1].trim();
         } else {
-          const orgMatch = text.match(/(ООО|ОАО|ЗАО|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/);
+          const orgMatch = text.match(/(ООО|ОАО|ЗАО|ПАО|НАО|ФГУП|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/);
           if (orgMatch) {
             const candidate = `${orgMatch[1]} ${orgMatch[2]}`.trim();
             const lower = candidate.toLowerCase();
-            if (!lower.includes('банк') && !lower.includes('бик') && !lower.includes('р/с')) {
+            if (!lower.includes('банк') && !lower.includes('бик') && !lower.includes('р/с') && !lower.includes('к/с')) {
               supplierName = candidate;
             }
           }
