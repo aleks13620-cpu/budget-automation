@@ -3,8 +3,9 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parsePdfFile, extractRawRows, detectColumns, SavedMapping } from '../services/pdfParser';
+import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows } from '../services/excelInvoiceParser';
+import { categorizeParsingResult } from '../services/invoiceCategorizer';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -87,10 +88,20 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
 
     const ext = path.extname(req.file.originalname).toLowerCase();
 
+    // For PDF: extract raw data once, reuse for parsing and categorization
+    let pdfRawRows: string[][] | null = null;
+    let pdfFullText: string | null = null;
+
     // First pass: parse without saved config to get supplier name
-    const initialResult = ext === '.pdf'
-      ? await parsePdfFile(req.file.path)
-      : parseExcelInvoice(req.file.path);
+    let initialResult;
+    if (ext === '.pdf') {
+      const rawExtraction = await extractRawRows(req.file.path);
+      pdfRawRows = rawExtraction.rows;
+      pdfFullText = rawExtraction.fullText;
+      initialResult = parsePdfFromExtracted(pdfRawRows, pdfFullText);
+    } else {
+      initialResult = parseExcelInvoice(req.file.path);
+    }
 
     // Find or create supplier
     let supplierName = initialResult.supplierName;
@@ -128,9 +139,30 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
     if (supplierId) {
       const savedMapping = loadSavedMapping(supplierId);
       if (savedMapping) {
-        parseResult = ext === '.pdf'
-          ? await parsePdfFile(req.file.path, savedMapping)
-          : parseExcelInvoice(req.file.path, savedMapping);
+        if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
+          parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
+        } else {
+          parseResult = parseExcelInvoice(req.file.path, savedMapping);
+        }
+      }
+    }
+
+    // Categorize parsing result
+    let parsingCategory: string;
+    let parsingCategoryReason: string;
+
+    if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
+      const cat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
+      parsingCategory = cat.category;
+      parsingCategoryReason = cat.reason;
+    } else {
+      // Excel: always readable, A if items found, B if not
+      if (parseResult.items.length > 0) {
+        parsingCategory = 'A';
+        parsingCategoryReason = `Успешно: ${parseResult.items.length} позиций`;
+      } else {
+        parsingCategory = 'B';
+        parsingCategoryReason = 'Колонки не распознаны';
       }
     }
 
@@ -141,8 +173,8 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
 
     // Insert invoice and items in a transaction (even if 0 items)
     const insertInvoice = db.prepare(`
-      INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertItem = db.prepare(`
@@ -160,6 +192,8 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
         req.file!.path,
         parseResult.totalAmount,
         status,
+        parsingCategory,
+        parsingCategoryReason,
       );
       const invoiceId = Number(invoiceResult.lastInsertRowid);
 
@@ -192,6 +226,8 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       errors: parseResult.errors,
       items: result.items,
       needsMapping: status === 'needs_mapping',
+      parsingCategory,
+      parsingCategoryReason,
     });
   } catch (error) {
     console.error('POST /api/projects/:id/invoices error:', error);
@@ -277,6 +313,7 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
     const invoices = db.prepare(`
       SELECT i.id, i.project_id, i.supplier_id, i.invoice_number, i.invoice_date,
              i.file_name, i.total_amount, i.status, i.created_at,
+             i.parsing_category, i.parsing_category_reason,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
              (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
@@ -442,7 +479,12 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
         insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
       }
       const newStatus = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
-      db.prepare('UPDATE invoices SET status = ?, total_amount = ? WHERE id = ?').run(newStatus, parseResult.totalAmount, invoiceId);
+      const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
+      const newCategoryReason = parseResult.items.length > 0
+        ? `Пересобрано: ${parseResult.items.length} позиций`
+        : 'Колонки не распознаны после пересборки';
+      db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
+        .run(newStatus, parseResult.totalAmount, newCategory, newCategoryReason, invoiceId);
     })();
 
     const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);

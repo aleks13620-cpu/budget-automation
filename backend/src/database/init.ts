@@ -16,6 +16,8 @@ function initializeDatabase(): void {
       'ALTER TABLE suppliers ADD COLUMN prices_include_vat INTEGER DEFAULT 1',
       'ALTER TABLE specification_items ADD COLUMN specification_id INTEGER REFERENCES specifications(id) ON DELETE CASCADE',
       'ALTER TABLE matching_rules ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)',
+      'ALTER TABLE invoices ADD COLUMN parsing_category TEXT',
+      'ALTER TABLE invoices ADD COLUMN parsing_category_reason TEXT',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

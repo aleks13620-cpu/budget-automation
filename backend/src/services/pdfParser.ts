@@ -630,8 +630,10 @@ export async function extractRawRows(filePath: string): Promise<{ rows: string[]
   }
 }
 
-export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
-  const { rows, fullText } = await extractRawRows(filePath);
+/**
+ * Parse PDF from already-extracted rows + fullText (avoids re-reading the file).
+ */
+export function parsePdfFromExtracted(rows: string[][], fullText: string, savedMapping?: SavedMapping): InvoiceParseResult {
   const errors: string[] = [];
   let items: InvoiceRow[] = [];
   let totalRows = 0;
@@ -715,4 +717,12 @@ export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping
     supplierName: metadata.supplierName,
     totalAmount,
   };
+}
+
+/**
+ * Main entry: reads PDF file, extracts rows, and parses.
+ */
+export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
+  const { rows, fullText } = await extractRawRows(filePath);
+  return parsePdfFromExtracted(rows, fullText, savedMapping);
 }
