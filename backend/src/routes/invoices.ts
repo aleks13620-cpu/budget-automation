@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult } from '../services/pdfParser';
+import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows } from '../services/excelInvoiceParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -139,7 +139,33 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       const savedMapping = loadSavedMapping(supplierId);
       if (savedMapping) {
         if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
-          parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
+          // If separator config is saved, apply it instead of standard parsing
+          if (savedMapping.separatorMethod) {
+            const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
+            const colMapping = {
+              article: savedMapping.article, name: savedMapping.name, unit: savedMapping.unit,
+              quantity: savedMapping.quantity, price: savedMapping.price, amount: savedMapping.amount,
+            };
+            const tableResult = parseTableData(splitRows, colMapping, savedMapping.headerRow + 1);
+            let totalAmount: number | null = null;
+            if (tableResult.items.length > 0) {
+              const sum = tableResult.items.reduce((acc, item) => acc + (item.amount || 0), 0);
+              if (sum > 0) totalAmount = sum;
+            }
+            const metadata = extractMetadata(pdfFullText);
+            parseResult = {
+              items: tableResult.items,
+              errors: tableResult.errors,
+              totalRows: splitRows.length - savedMapping.headerRow - 1,
+              skippedRows: tableResult.skipped,
+              invoiceNumber: metadata.invoiceNumber,
+              invoiceDate: metadata.invoiceDate,
+              supplierName: metadata.supplierName,
+              totalAmount: totalAmount || metadata.totalAmount,
+            };
+          } else {
+            parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
+          }
         } else {
           parseResult = parseExcelInvoice(req.file.path, savedMapping);
         }
@@ -507,6 +533,145 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse error:', error);
     res.status(500).json({ error: 'Ошибка при повторном парсинге', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// POST /api/invoices/:id/preview-split — preview text split with a separator method (no save)
+router.post('/api/invoices/:id/preview-split', async (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл счёта не найден на диске' });
+    }
+
+    const { separatorMethod, separatorValue } = req.body;
+    if (!separatorMethod) {
+      return res.status(400).json({ error: 'Не указан метод разделения (separatorMethod)' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    let fullText: string;
+
+    if (ext === '.pdf') {
+      const result = await extractRawRows(invoice.file_path);
+      fullText = result.fullText;
+    } else {
+      return res.status(400).json({ error: 'Разделение текста доступно только для PDF' });
+    }
+
+    const rows = splitTextWithSeparator(fullText, separatorMethod as SeparatorMethod, separatorValue);
+
+    // Auto-detect columns on split result
+    const detected = detectColumns(rows);
+    const detectedMapping = detected ? {
+      ...detected.mapping,
+      headerRow: detected.headerRowIndex,
+    } : null;
+
+    res.json({ rows, totalRows: rows.length, detectedMapping });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/preview-split error:', error);
+    res.status(500).json({ error: 'Ошибка при предпросмотре разделения', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// POST /api/invoices/:id/reparse-with-separator — apply separator + mapping, replace items
+router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл счёта не найден на диске' });
+    }
+
+    const { separatorMethod, separatorValue, mapping } = req.body;
+    if (!separatorMethod || !mapping || typeof mapping.headerRow !== 'number') {
+      return res.status(400).json({ error: 'Не указаны separatorMethod и/или mapping с headerRow' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    if (ext !== '.pdf') {
+      return res.status(400).json({ error: 'Разделение текста доступно только для PDF' });
+    }
+
+    const rawResult = await extractRawRows(invoice.file_path);
+    const rows = splitTextWithSeparator(rawResult.fullText, separatorMethod as SeparatorMethod, separatorValue);
+
+    const colMapping = {
+      article: mapping.article ?? null,
+      name: mapping.name ?? null,
+      unit: mapping.unit ?? null,
+      quantity: mapping.quantity ?? null,
+      price: mapping.price ?? null,
+      amount: mapping.amount ?? null,
+    };
+
+    const parseResult = parseTableData(rows, colMapping, mapping.headerRow + 1);
+
+    // Compute total
+    let totalAmount: number | null = null;
+    if (parseResult.items.length > 0) {
+      const sum = parseResult.items.reduce((acc, item) => acc + (item.amount || 0), 0);
+      if (sum > 0) totalAmount = sum;
+    }
+
+    const insertItem = db.prepare(
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    );
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      for (const item of parseResult.items) {
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
+      }
+      const newStatus = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+      const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
+      const newCategoryReason = parseResult.items.length > 0
+        ? `Пересобрано с разделителем: ${parseResult.items.length} позиций`
+        : 'Колонки не распознаны после разделения';
+      db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
+        .run(newStatus, totalAmount, newCategory, newCategoryReason, invoiceId);
+    })();
+
+    // Optionally save separator config for supplier
+    if (invoice.supplier_id && parseResult.items.length > 0) {
+      const fullConfig = { ...colMapping, headerRow: mapping.headerRow, separatorMethod, separatorValue };
+      db.prepare(`
+        INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?)
+        ON CONFLICT(supplier_id) DO UPDATE SET config = excluded.config, updated_at = CURRENT_TIMESTAMP
+      `).run(invoice.supplier_id, JSON.stringify(fullConfig));
+    }
+
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);
+
+    res.json({
+      imported: parseResult.items.length,
+      errors: parseResult.errors,
+      items,
+      status: parseResult.items.length > 0 ? 'parsed' : 'needs_mapping',
+    });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/reparse-with-separator error:', error);
+    res.status(500).json({ error: 'Ошибка при пересборке с разделителем', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

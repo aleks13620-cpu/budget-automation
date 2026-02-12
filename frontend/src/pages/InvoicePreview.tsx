@@ -28,6 +28,200 @@ interface Props {
   onBack: () => void;
 }
 
+type SeparatorMethod = 'tab' | 'spaces' | 'custom';
+
+const SEPARATOR_OPTIONS: { value: SeparatorMethod; label: string; description: string }[] = [
+  { value: 'tab', label: 'Табуляция', description: 'Разделение по символу табуляции (\\t)' },
+  { value: 'spaces', label: 'Пробелы (2+)', description: 'Разделение по двум и более пробелам подряд' },
+  { value: 'custom', label: 'Свой разделитель', description: 'Указать произвольный символ или строку' },
+];
+
+function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
+  invoice: InvoiceInfo;
+  preview: PreviewData;
+  invoiceId: number;
+  onBack: () => void;
+}) {
+  const [sepMethod, setSepMethod] = useState<SeparatorMethod>('spaces');
+  const [customSep, setCustomSep] = useState(';');
+  const [splitRows, setSplitRows] = useState<string[][] | null>(null);
+  const [splitMapping, setSplitMapping] = useState<ColumnMapping>({
+    article: null, name: null, unit: null, quantity: null, price: null, amount: null,
+  });
+  const [splitHeaderRow, setSplitHeaderRow] = useState(0);
+  const [previewing, setPreviewing] = useState(false);
+  const [reparsing, setReparsing] = useState(false);
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showRawText, setShowRawText] = useState(true);
+
+  const handlePreviewSplit = async () => {
+    setPreviewing(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/preview-split`, {
+        separatorMethod: sepMethod,
+        separatorValue: sepMethod === 'custom' ? customSep : undefined,
+      });
+      setSplitRows(data.rows);
+      if (data.detectedMapping) {
+        setSplitMapping({
+          article: data.detectedMapping.article,
+          name: data.detectedMapping.name,
+          unit: data.detectedMapping.unit,
+          quantity: data.detectedMapping.quantity,
+          price: data.detectedMapping.price,
+          amount: data.detectedMapping.amount,
+        });
+        setSplitHeaderRow(data.detectedMapping.headerRow);
+      }
+      setShowRawText(false);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при предпросмотре разделения' });
+    } finally {
+      setPreviewing(false);
+    }
+  };
+
+  const handleReparseWithSep = async () => {
+    setReparsing(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/reparse-with-separator`, {
+        separatorMethod: sepMethod,
+        separatorValue: sepMethod === 'custom' ? customSep : undefined,
+        mapping: { ...splitMapping, headerRow: splitHeaderRow },
+      });
+
+      if (data.imported === 0) {
+        setMessage({ type: 'error', text: 'Позиции не найдены. Попробуйте другой разделитель или настройте колонки.' });
+      } else {
+        setMessage({ type: 'success', text: `Пересобрано: ${data.imported} позиций` });
+      }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
+    } finally {
+      setReparsing(false);
+    }
+  };
+
+  const splitHeaderCols = splitRows ? (splitRows[splitHeaderRow] || []) : [];
+
+  return (
+    <div>
+      <h1>Настройка: {invoice.file_name}</h1>
+      {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
+
+      <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
+        <strong>Требуется настройка разделителей</strong>
+        <p style={{ margin: '0.5rem 0 0' }}>
+          {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст извлечён, но таблица не разделена на колонки.'}
+        </p>
+      </div>
+
+      {message && (
+        <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
+          {message.text}
+        </p>
+      )}
+
+      {/* Raw text toggle */}
+      {preview.fullText && (
+        <div style={{ marginBottom: '1rem' }}>
+          <h3 style={{ cursor: 'pointer' }} onClick={() => setShowRawText(!showRawText)}>
+            {showRawText ? '▼' : '▶'} Извлечённый текст (первые 30 строк)
+          </h3>
+          {showRawText && (
+            <pre style={{ maxHeight: 250, overflow: 'auto', background: '#f8f9fa', padding: '0.75rem', fontSize: '0.8rem', border: '1px solid #dee2e6', borderRadius: 4, whiteSpace: 'pre-wrap' }}>
+              {preview.fullText.split('\n').slice(0, 30).join('\n')}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Separator method selection */}
+      <h3>Метод разделения</h3>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem' }}>
+        {SEPARATOR_OPTIONS.map(opt => (
+          <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }}>
+            <input
+              type="radio"
+              name="separator"
+              value={opt.value}
+              checked={sepMethod === opt.value}
+              onChange={() => setSepMethod(opt.value)}
+            />
+            <span><strong>{opt.label}</strong> — {opt.description}</span>
+          </label>
+        ))}
+      </div>
+
+      {sepMethod === 'custom' && (
+        <div style={{ marginBottom: '1rem' }}>
+          <label>
+            Разделитель:{' '}
+            <input
+              type="text"
+              value={customSep}
+              onChange={e => setCustomSep(e.target.value)}
+              style={{ width: 120, padding: '4px 8px' }}
+              placeholder="напр. ; или |"
+            />
+          </label>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <button className="btn btn-primary" onClick={handlePreviewSplit} disabled={previewing}>
+          {previewing ? 'Разделение...' : 'Предпросмотр разделения'}
+        </button>
+        <button className="btn btn-secondary" onClick={onBack}>Назад</button>
+      </div>
+
+      {/* Split result: ColumnMapper + table */}
+      {splitRows && (
+        <>
+          <h3>Результат разделения ({splitRows.length} строк, {splitHeaderCols.length} колонок)</h3>
+
+          <ColumnMapper
+            columns={splitHeaderCols}
+            mapping={splitMapping}
+            headerRow={splitHeaderRow}
+            totalRows={splitRows.length}
+            onChange={setSplitMapping}
+            onHeaderRowChange={setSplitHeaderRow}
+          />
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+            <button className="btn btn-primary" onClick={handleReparseWithSep} disabled={reparsing}>
+              {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
+            </button>
+          </div>
+
+          <div className="preview-table-wrap" style={{ maxHeight: '500px', overflowY: 'auto' }}>
+            <table>
+              <tbody>
+                {splitRows.map((row, rowIdx) => (
+                  <tr key={rowIdx} className={rowIdx === splitHeaderRow ? 'highlight' : ''}>
+                    <td style={{ color: '#999', fontSize: '0.75rem' }}>{rowIdx + 1}</td>
+                    {row.map((cell, colIdx) => {
+                      const isMapped = Object.values(splitMapping).includes(colIdx);
+                      return (
+                        <td key={colIdx} style={isMapped ? { background: '#e0e7ff' } : undefined}>
+                          {cell || ''}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [invoice, setInvoice] = useState<InvoiceInfo | null>(null);
@@ -184,33 +378,12 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   // --- Category B: text readable but no column structure ---
   if (category === 'B') {
     return (
-      <div>
-        <h1>Настройка: {invoice.file_name}</h1>
-        {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
-
-        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
-          <strong>Требуется настройка разделителей</strong>
-          <p style={{ margin: '0.5rem 0 0' }}>
-            {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст извлечён, но таблица не разделена на колонки.'}
-          </p>
-        </div>
-
-        {preview.fullText && (
-          <>
-            <h3>Извлечённый текст (первые 30 строк)</h3>
-            <pre style={{ maxHeight: 300, overflow: 'auto', background: '#f8f9fa', padding: '0.75rem', fontSize: '0.8rem', border: '1px solid #dee2e6', borderRadius: 4 }}>
-              {preview.fullText.split('\n').slice(0, 30).join('\n')}
-            </pre>
-          </>
-        )}
-
-        <h3>Метод разделения</h3>
-        <p className="muted">Настройка разделителей будет реализована в следующем этапе.</p>
-
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-secondary" onClick={onBack}>Назад</button>
-        </div>
-      </div>
+      <CategoryBPanel
+        invoice={invoice}
+        preview={preview}
+        invoiceId={invoiceId}
+        onBack={onBack}
+      />
     );
   }
 

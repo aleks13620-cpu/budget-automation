@@ -228,7 +228,7 @@ function extractBikAndCorAccount(text: string): { bik: string | null; corrAccoun
   return { bik, corrAccount };
 }
 
-function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null; bik: string | null; corrAccount: string | null } {
+export function extractMetadata(text: string): { invoiceNumber: string | null; invoiceDate: string | null; supplierName: string | null; totalAmount: number | null; bik: string | null; corrAccount: string | null } {
   const snippet = text.substring(0, 3000);
 
   // === Invoice number ===
@@ -485,6 +485,8 @@ export interface SavedMapping {
   price: number | null;
   amount: number | null;
   headerRow: number;
+  separatorMethod?: SeparatorMethod;
+  separatorValue?: string | number[];
 }
 
 /**
@@ -725,6 +727,72 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
 export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
   const { rows, fullText } = await extractRawRows(filePath);
   return parsePdfFromExtracted(rows, fullText, savedMapping);
+}
+
+// --- Text splitting for Category B ---
+
+export type SeparatorMethod = 'tab' | 'spaces' | 'fixed-width' | 'custom';
+
+/**
+ * Split raw text into a 2D array using a specified separator method.
+ * Used for Category B invoices where auto-detection failed.
+ */
+export function splitTextWithSeparator(
+  text: string,
+  method: SeparatorMethod,
+  value?: string | number[],
+): string[][] {
+  const lines = text.split('\n');
+  const rows: string[][] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed.trim()) continue;
+
+    let cells: string[];
+
+    switch (method) {
+      case 'tab':
+        cells = trimmed.split('\t').map(c => c.trim());
+        break;
+
+      case 'spaces':
+        // Split by 2+ consecutive spaces
+        cells = trimmed.split(/\s{2,}/).map(c => c.trim());
+        break;
+
+      case 'fixed-width': {
+        // value = array of column positions (character indices where to cut)
+        const positions = (value as number[]) || [];
+        if (positions.length === 0) {
+          cells = [trimmed.trim()];
+        } else {
+          cells = [];
+          let prev = 0;
+          for (const pos of positions) {
+            cells.push(trimmed.substring(prev, pos).trim());
+            prev = pos;
+          }
+          cells.push(trimmed.substring(prev).trim());
+        }
+        break;
+      }
+
+      case 'custom': {
+        // value = custom delimiter string
+        const delimiter = (value as string) || '\t';
+        cells = trimmed.split(delimiter).map(c => c.trim());
+        break;
+      }
+
+      default:
+        cells = [trimmed.trim()];
+    }
+
+    rows.push(cells);
+  }
+
+  return normalizeRowWidths(rows);
 }
 
 // --- Categorization ---
