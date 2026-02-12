@@ -726,3 +726,86 @@ export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping
   const { rows, fullText } = await extractRawRows(filePath);
   return parsePdfFromExtracted(rows, fullText, savedMapping);
 }
+
+// --- Categorization ---
+
+export type ParsingCategory = 'A' | 'B' | 'C';
+
+export interface CategorizationResult {
+  category: ParsingCategory;
+  reason: string;
+  confidence: number;
+}
+
+function checkRowsQuality(rows: string[][]): boolean {
+  const sampleRows = rows.slice(0, 10);
+  let totalCells = 0;
+  let garbledCells = 0;
+
+  for (const row of sampleRows) {
+    for (const cell of row) {
+      if (!cell || !cell.trim()) continue;
+      totalCells++;
+      const { isGarbled } = checkTextQuality(cell);
+      if (isGarbled) garbledCells++;
+    }
+  }
+
+  if (totalCells === 0) return true;
+  return garbledCells / totalCells > 0.5;
+}
+
+/**
+ * Categorize a parsing result into A/B/C.
+ * A — items extracted with numeric data
+ * B — text readable but no column structure
+ * C — garbled/unreadable PDF
+ */
+export function categorizeParsingResult(
+  result: InvoiceParseResult,
+  rows: string[][],
+  fullText: string,
+): CategorizationResult {
+  // C1: Very little text (scanned image or empty)
+  if (fullText.trim().length < 50) {
+    return { category: 'C', reason: 'Текст PDF слишком короткий (возможно, отсканированный документ)', confidence: 0.95 };
+  }
+
+  // C2: Both text and rows are garbled
+  const textQuality = checkTextQuality(fullText);
+  const rowsGarbled = checkRowsQuality(rows);
+
+  if (textQuality.isGarbled && rowsGarbled) {
+    return { category: 'C', reason: `Нечитаемый текст (${Math.round(textQuality.ratio * 100)}% мусорных символов)`, confidence: 0.9 };
+  }
+
+  // A: items extracted
+  if (result.items.length > 0) {
+    const hasPrice = result.items.some(i => i.price !== null);
+    const hasQuantity = result.items.some(i => i.quantity !== null);
+    const hasAmount = result.items.some(i => i.amount !== null);
+    const numericColumns = [hasPrice, hasQuantity, hasAmount].filter(Boolean).length;
+
+    if (numericColumns >= 1) {
+      return {
+        category: 'A',
+        reason: `Успешно: ${result.items.length} позиций, ${numericColumns + 1} колонок с данными`,
+        confidence: Math.min(0.5 + result.items.length * 0.05 + numericColumns * 0.15, 1.0),
+      };
+    }
+
+    return { category: 'A', reason: `Позиции найдены (${result.items.length}), но без числовых данных`, confidence: 0.4 };
+  }
+
+  // B: text readable but no structure
+  if (!textQuality.isGarbled && fullText.trim().length >= 50) {
+    return { category: 'B', reason: 'Текст извлечён, но структура таблицы не распознана', confidence: 0.7 };
+  }
+
+  // Borderline: text garbled but rows readable
+  if (textQuality.isGarbled && !rowsGarbled && rows.length > 2) {
+    return { category: 'B', reason: 'Текст частично нечитаем, но таблица распознана — требуется настройка', confidence: 0.5 };
+  }
+
+  return { category: 'C', reason: 'Не удалось извлечь данные из документа', confidence: 0.6 };
+}

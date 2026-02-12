@@ -3,9 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping } from '../services/pdfParser';
+import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows } from '../services/excelInvoiceParser';
-import { categorizeParsingResult } from '../services/invoiceCategorizer';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -245,8 +244,8 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
     const db = getDatabase();
 
     const invoice = db.prepare(
-      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
-    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+      'SELECT id, file_name, file_path, supplier_id, parsing_category, parsing_category_reason FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null; parsing_category: string | null; parsing_category_reason: string | null } | undefined;
 
     if (!invoice) {
       return res.status(404).json({ error: 'Счёт не найден' });
@@ -258,15 +257,15 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
 
     const ext = path.extname(invoice.file_name).toLowerCase();
     let rows: string[][];
+    let fullText: string | null = null;
 
     if (ext === '.pdf') {
       const result = await extractRawRows(invoice.file_path);
       rows = result.rows;
+      fullText = result.fullText;
     } else {
       rows = extractExcelRawRows(invoice.file_path);
     }
-
-    const previewRows = rows;
 
     // Auto-detect column mapping
     const detected = detectColumns(rows);
@@ -284,12 +283,22 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
 
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     res.set('Pragma', 'no-cache');
-    res.json({
-      rows: previewRows,
+
+    const response: Record<string, any> = {
+      rows,
       totalRows: rows.length,
       detectedMapping,
       supplierConfig,
-    });
+      parsingCategory: invoice.parsing_category,
+      parsingCategoryReason: invoice.parsing_category_reason,
+    };
+
+    // For Category B: include fullText for raw text display
+    if (invoice.parsing_category === 'B' && fullText !== null) {
+      response.fullText = fullText;
+    }
+
+    res.json(response);
   } catch (error) {
     console.error('GET /api/invoices/:id/preview error:', error);
     res.status(500).json({

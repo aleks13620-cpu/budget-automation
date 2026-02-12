@@ -19,6 +19,8 @@ interface Invoice {
   item_count: number;
   file_name: string;
   status: string;
+  parsing_category: string | null;
+  parsing_category_reason: string | null;
   vat_rate: number | null;
   prices_include_vat: number | null;
   created_at: string;
@@ -287,15 +289,21 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                   <td>{inv.item_count}</td>
                   <td>{inv.file_name}</td>
                   <td>
-                    {inv.status === 'needs_mapping' ? (
-                      <span style={{ color: '#d97706', fontWeight: 600 }}>Требует настройки</span>
+                    {inv.parsing_category === 'C' ? (
+                      <span style={{ color: '#dc2626', fontWeight: 600 }} title={inv.parsing_category_reason || ''}>Не распознан</span>
+                    ) : inv.status === 'awaiting_excel' ? (
+                      <span style={{ color: '#7c3aed', fontWeight: 600 }}>Ожидание Excel</span>
+                    ) : inv.status === 'skipped' ? (
+                      <span style={{ color: '#9ca3af', fontWeight: 600 }}>Пропущен</span>
+                    ) : inv.parsing_category === 'B' || inv.status === 'needs_mapping' ? (
+                      <span style={{ color: '#d97706', fontWeight: 600 }} title={inv.parsing_category_reason || ''}>Требует настройки</span>
                     ) : (
-                      <span style={{ color: '#16a34a' }}>Готов</span>
+                      <span style={{ color: '#16a34a' }}>Готов ({inv.item_count})</span>
                     )}
                   </td>
                   <td>
                     <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
-                      {inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
+                      {inv.parsing_category === 'C' ? 'Действия' : inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
                     </button>
                   </td>
                 </tr>

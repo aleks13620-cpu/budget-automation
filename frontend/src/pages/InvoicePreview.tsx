@@ -8,6 +8,9 @@ interface PreviewData {
   totalRows: number;
   detectedMapping: (ColumnMapping & { headerRow: number }) | null;
   supplierConfig: (ColumnMapping & { headerRow: number }) | null;
+  parsingCategory?: string;
+  parsingCategoryReason?: string;
+  fullText?: string;
 }
 
 interface InvoiceInfo {
@@ -15,6 +18,9 @@ interface InvoiceInfo {
   supplier_id: number | null;
   supplier_name: string | null;
   file_name: string;
+  parsing_category: string | null;
+  parsing_category_reason: string | null;
+  status: string;
 }
 
 interface Props {
@@ -105,14 +111,12 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     setReparsing(true);
     setMessage(null);
     try {
-      // Ensure supplier exists before reparse
       await ensureSupplier();
 
       const { data } = await api.post(`/invoices/${invoiceId}/reparse`, {
         mapping: { ...mapping, headerRow },
       });
 
-      // Build result message with validation
       const msgs: string[] = [];
       if (data.imported === 0) {
         msgs.push('Позиции не найдены');
@@ -125,7 +129,6 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       const msgType = data.imported === 0 ? 'error' : 'success';
       setMessage({ type: msgType as 'success' | 'error', text: msgs.join('. ') });
 
-      // Refetch preview and invoice data so UI updates
       const [previewRes, invoiceRes] = await Promise.all([
         api.get(`/invoices/${invoiceId}/preview`),
         api.get(`/invoices/${invoiceId}`),
@@ -142,7 +145,76 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   if (loading) return <p className="loading">Загрузка предпросмотра...</p>;
   if (!preview || !invoice) return <p className="error-msg">Не удалось загрузить данные</p>;
 
-  // Get column headers from the header row
+  const category = preview.parsingCategory || invoice.parsing_category;
+
+  // --- Category C: unreadable PDF ---
+  if (category === 'C') {
+    return (
+      <div>
+        <h1>Счёт: {invoice.file_name}</h1>
+        {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
+
+        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
+          <strong>PDF не распознан</strong>
+          <p style={{ margin: '0.5rem 0 0' }}>
+            {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст не удалось извлечь из документа.'}
+          </p>
+          <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: '0.85rem' }}>
+            Возможные причины: отсканированный документ, защищённый PDF, нестандартные шрифты.
+          </p>
+        </div>
+
+        <h3>Действия</h3>
+        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button className="btn btn-primary" disabled title="Будет реализовано в следующем этапе">
+            Запросить Excel
+          </button>
+          <button className="btn btn-primary" disabled title="Будет реализовано в следующем этапе">
+            Ввести вручную
+          </button>
+          <button className="btn btn-secondary" disabled title="Будет реализовано в следующем этапе">
+            Пропустить
+          </button>
+          <button className="btn btn-secondary" onClick={onBack}>Назад</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Category B: text readable but no column structure ---
+  if (category === 'B') {
+    return (
+      <div>
+        <h1>Настройка: {invoice.file_name}</h1>
+        {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
+
+        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
+          <strong>Требуется настройка разделителей</strong>
+          <p style={{ margin: '0.5rem 0 0' }}>
+            {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст извлечён, но таблица не разделена на колонки.'}
+          </p>
+        </div>
+
+        {preview.fullText && (
+          <>
+            <h3>Извлечённый текст (первые 30 строк)</h3>
+            <pre style={{ maxHeight: 300, overflow: 'auto', background: '#f8f9fa', padding: '0.75rem', fontSize: '0.8rem', border: '1px solid #dee2e6', borderRadius: 4 }}>
+              {preview.fullText.split('\n').slice(0, 30).join('\n')}
+            </pre>
+          </>
+        )}
+
+        <h3>Метод разделения</h3>
+        <p className="muted">Настройка разделителей будет реализована в следующем этапе.</p>
+
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button className="btn btn-secondary" onClick={onBack}>Назад</button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- Category A (default): normal preview ---
   const headerCols = preview.rows[headerRow] || [];
 
   return (
@@ -207,7 +279,6 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
               <tr key={rowIdx} className={rowIdx === headerRow ? 'highlight' : ''}>
                 <td style={{ color: '#999', fontSize: '0.75rem' }}>{rowIdx + 1}</td>
                 {row.map((cell, colIdx) => {
-                  // Highlight mapped columns
                   const isMapped = Object.values(mapping).includes(colIdx);
                   return (
                     <td
