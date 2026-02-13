@@ -536,6 +536,109 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
   }
 });
 
+// POST /api/invoices/:id/request-excel — mark invoice as awaiting Excel replacement
+router.post('/api/invoices/:id/request-excel', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; supplier_id: number | null } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run('awaiting_excel', invoiceId);
+
+    // Get supplier email if available
+    let supplierEmail: string | null = null;
+    if (invoice.supplier_id) {
+      const supplier = db.prepare('SELECT email FROM suppliers WHERE id = ?').get(invoice.supplier_id) as { email: string | null } | undefined;
+      supplierEmail = supplier?.email || null;
+    }
+
+    res.json({ status: 'awaiting_excel', supplierEmail });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/request-excel error:', error);
+    res.status(500).json({ error: 'Ошибка при запросе Excel' });
+  }
+});
+
+// POST /api/invoices/:id/manual-items — manually enter invoice items
+router.post('/api/invoices/:id/manual-items', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId) as { id: number } | undefined;
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    const { items } = req.body;
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ error: 'Не указаны позиции (items)' });
+    }
+
+    const insertItem = db.prepare(
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_manual) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)'
+    );
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        const amount = (item.quantity && item.price) ? item.quantity * item.price : (item.amount || null);
+        insertItem.run(
+          invoiceId,
+          item.article || null,
+          item.name,
+          item.unit || null,
+          item.quantity || null,
+          item.price || null,
+          amount,
+          i,
+        );
+      }
+      const totalAmount = items.reduce((sum: number, item: any) => {
+        const amt = (item.quantity && item.price) ? item.quantity * item.price : (item.amount || 0);
+        return sum + amt;
+      }, 0);
+      db.prepare('UPDATE invoices SET status = ?, parsing_category = ?, parsing_category_reason = ?, total_amount = ? WHERE id = ?')
+        .run('parsed', 'A', `Введено вручную: ${items.length} позиций`, totalAmount || null, invoiceId);
+    })();
+
+    const savedItems = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);
+
+    res.json({ imported: items.length, items: savedItems });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/manual-items error:', error);
+    res.status(500).json({ error: 'Ошибка при сохранении позиций' });
+  }
+});
+
+// POST /api/invoices/:id/skip — skip unreadable invoice
+router.post('/api/invoices/:id/skip', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId) as { id: number } | undefined;
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run('skipped', invoiceId);
+
+    res.json({ status: 'skipped' });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/skip error:', error);
+    res.status(500).json({ error: 'Ошибка при пропуске счёта' });
+  }
+});
+
 // POST /api/invoices/:id/preview-split — preview text split with a separator method (no save)
 router.post('/api/invoices/:id/preview-split', async (req: Request, res: Response) => {
   try {

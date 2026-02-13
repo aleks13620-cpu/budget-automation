@@ -222,6 +222,191 @@ function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
   );
 }
 
+interface ManualItem {
+  name: string;
+  article: string;
+  unit: string;
+  quantity: string;
+  price: string;
+}
+
+const EMPTY_ITEM: ManualItem = { name: '', article: '', unit: 'шт', quantity: '', price: '' };
+
+function CategoryCPanel({ invoice, preview, invoiceId, onBack }: {
+  invoice: InvoiceInfo;
+  preview: PreviewData;
+  invoiceId: number;
+  onBack: () => void;
+}) {
+  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [items, setItems] = useState<ManualItem[]>([{ ...EMPTY_ITEM }]);
+  const [saving, setSaving] = useState(false);
+  const [skipping, setSkipping] = useState(false);
+  const [requesting, setRequesting] = useState(false);
+
+  const handleRequestExcel = async () => {
+    setRequesting(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/request-excel`);
+      const emailMsg = data.supplierEmail
+        ? `Email поставщика: ${data.supplierEmail}`
+        : 'Email поставщика не указан — свяжитесь напрямую.';
+      setMessage({ type: 'success', text: `Статус изменён на «Ожидание Excel». ${emailMsg}` });
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при запросе Excel' });
+    } finally {
+      setRequesting(false);
+    }
+  };
+
+  const handleSkip = async () => {
+    if (!confirm('Пропустить этот счёт? Его позиции не будут учтены в сопоставлении.')) return;
+    setSkipping(true);
+    setMessage(null);
+    try {
+      await api.post(`/invoices/${invoiceId}/skip`);
+      setMessage({ type: 'success', text: 'Счёт пропущен.' });
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при пропуске счёта' });
+    } finally {
+      setSkipping(false);
+    }
+  };
+
+  const updateItem = (idx: number, field: keyof ManualItem, value: string) => {
+    setItems(prev => prev.map((item, i) => i === idx ? { ...item, [field]: value } : item));
+  };
+
+  const addItem = () => setItems(prev => [...prev, { ...EMPTY_ITEM }]);
+
+  const removeItem = (idx: number) => {
+    if (items.length <= 1) return;
+    setItems(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleSaveManual = async () => {
+    const valid = items.filter(it => it.name.trim());
+    if (valid.length === 0) {
+      setMessage({ type: 'error', text: 'Заполните хотя бы одну позицию (наименование обязательно)' });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      const payload = valid.map(it => ({
+        name: it.name.trim(),
+        article: it.article.trim() || null,
+        unit: it.unit.trim() || null,
+        quantity: it.quantity ? parseFloat(it.quantity.replace(',', '.')) : null,
+        price: it.price ? parseFloat(it.price.replace(',', '.')) : null,
+      }));
+      const { data } = await api.post(`/invoices/${invoiceId}/manual-items`, { items: payload });
+      setMessage({ type: 'success', text: `Сохранено: ${data.imported} позиций` });
+      setShowManual(false);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при сохранении позиций' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div>
+      <h1>Счёт: {invoice.file_name}</h1>
+      {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
+
+      <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
+        <strong>PDF не распознан</strong>
+        <p style={{ margin: '0.5rem 0 0' }}>
+          {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст не удалось извлечь из документа.'}
+        </p>
+        <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: '0.85rem' }}>
+          Возможные причины: отсканированный документ, защищённый PDF, нестандартные шрифты.
+        </p>
+      </div>
+
+      {message && (
+        <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
+          {message.text}
+        </p>
+      )}
+
+      <h3>Действия</h3>
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <button className="btn btn-primary" onClick={handleRequestExcel} disabled={requesting}>
+          {requesting ? 'Запрос...' : 'Запросить Excel'}
+        </button>
+        <button className="btn btn-primary" onClick={() => setShowManual(!showManual)}>
+          {showManual ? 'Скрыть форму' : 'Ввести вручную'}
+        </button>
+        <button className="btn btn-secondary" onClick={handleSkip} disabled={skipping}>
+          {skipping ? 'Пропуск...' : 'Пропустить'}
+        </button>
+        <button className="btn btn-secondary" onClick={onBack}>Назад</button>
+      </div>
+
+      {/* Manual entry form */}
+      {showManual && (
+        <div style={{ border: '1px solid #dee2e6', borderRadius: 4, padding: '1rem', marginBottom: '1rem' }}>
+          <h3>Ручной ввод позиций</h3>
+          <table style={{ width: '100%', fontSize: '0.85rem' }}>
+            <thead>
+              <tr>
+                <th style={{ width: 40 }}>#</th>
+                <th>Наименование *</th>
+                <th style={{ width: 100 }}>Артикул</th>
+                <th style={{ width: 60 }}>Ед.</th>
+                <th style={{ width: 80 }}>Кол-во</th>
+                <th style={{ width: 90 }}>Цена</th>
+                <th style={{ width: 40 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((item, idx) => (
+                <tr key={idx}>
+                  <td style={{ color: '#999' }}>{idx + 1}</td>
+                  <td>
+                    <input type="text" value={item.name} onChange={e => updateItem(idx, 'name', e.target.value)}
+                      style={{ width: '100%', padding: '4px' }} placeholder="Наименование" />
+                  </td>
+                  <td>
+                    <input type="text" value={item.article} onChange={e => updateItem(idx, 'article', e.target.value)}
+                      style={{ width: '100%', padding: '4px' }} placeholder="—" />
+                  </td>
+                  <td>
+                    <input type="text" value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)}
+                      style={{ width: '100%', padding: '4px' }} />
+                  </td>
+                  <td>
+                    <input type="text" value={item.quantity} onChange={e => updateItem(idx, 'quantity', e.target.value)}
+                      style={{ width: '100%', padding: '4px' }} placeholder="0" />
+                  </td>
+                  <td>
+                    <input type="text" value={item.price} onChange={e => updateItem(idx, 'price', e.target.value)}
+                      style={{ width: '100%', padding: '4px' }} placeholder="0.00" />
+                  </td>
+                  <td>
+                    <button className="btn btn-secondary btn-sm" onClick={() => removeItem(idx)}
+                      disabled={items.length <= 1} style={{ padding: '2px 6px' }}>x</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+            <button className="btn btn-secondary btn-sm" onClick={addItem}>+ Добавить позицию</button>
+            <button className="btn btn-primary btn-sm" onClick={handleSaveManual} disabled={saving}>
+              {saving ? 'Сохранение...' : 'Сохранить позиции'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [invoice, setInvoice] = useState<InvoiceInfo | null>(null);
@@ -344,34 +529,12 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   // --- Category C: unreadable PDF ---
   if (category === 'C') {
     return (
-      <div>
-        <h1>Счёт: {invoice.file_name}</h1>
-        {invoice.supplier_name && <p className="muted">Поставщик: {invoice.supplier_name}</p>}
-
-        <div style={{ background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 4, padding: '1rem', margin: '1rem 0' }}>
-          <strong>PDF не распознан</strong>
-          <p style={{ margin: '0.5rem 0 0' }}>
-            {preview.parsingCategoryReason || invoice.parsing_category_reason || 'Текст не удалось извлечь из документа.'}
-          </p>
-          <p style={{ margin: '0.5rem 0 0', color: '#666', fontSize: '0.85rem' }}>
-            Возможные причины: отсканированный документ, защищённый PDF, нестандартные шрифты.
-          </p>
-        </div>
-
-        <h3>Действия</h3>
-        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" disabled title="Будет реализовано в следующем этапе">
-            Запросить Excel
-          </button>
-          <button className="btn btn-primary" disabled title="Будет реализовано в следующем этапе">
-            Ввести вручную
-          </button>
-          <button className="btn btn-secondary" disabled title="Будет реализовано в следующем этапе">
-            Пропустить
-          </button>
-          <button className="btn btn-secondary" onClick={onBack}>Назад</button>
-        </div>
-      </div>
+      <CategoryCPanel
+        invoice={invoice}
+        preview={preview}
+        invoiceId={invoiceId}
+        onBack={onBack}
+      />
     );
   }
 

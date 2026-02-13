@@ -18,6 +18,7 @@ function initializeDatabase(): void {
       'ALTER TABLE matching_rules ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)',
       'ALTER TABLE invoices ADD COLUMN parsing_category TEXT',
       'ALTER TABLE invoices ADD COLUMN parsing_category_reason TEXT',
+      'ALTER TABLE invoice_items ADD COLUMN is_manual INTEGER DEFAULT 0',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
