@@ -50,6 +50,39 @@ export function extractExcelRawRows(filePath: string): string[][] {
   return normalizeRowWidths(rows);
 }
 
+/**
+ * Extract Excel preview data with sheet metadata. Used by preview-excel endpoint.
+ */
+export function extractExcelPreviewData(filePath: string, sheetIndex = 0, maxRows = 200): {
+  rows: string[][];
+  sheetNames: string[];
+  totalRows: number;
+} {
+  const workbook = XLSX.readFile(filePath);
+  const sheetNames = workbook.SheetNames;
+  const sheetName = sheetNames[sheetIndex] || sheetNames[0];
+  if (!sheetName) return { rows: [], sheetNames: [], totalRows: 0 };
+
+  const sheet = workbook.Sheets[sheetName];
+
+  const ref = sheet['!ref'];
+  let totalCols = 0;
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref);
+    totalCols = range.e.c + 1;
+  }
+
+  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  const allRows = rawRows.map(row => {
+    const cells = (row as any[]).map(cell => (cell === null || cell === undefined) ? '' : String(cell));
+    while (cells.length < totalCols) cells.push('');
+    return cells;
+  });
+
+  const rows = normalizeRowWidths(allRows.slice(0, maxRows));
+  return { rows, sheetNames, totalRows: allRows.length };
+}
+
 export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping): InvoiceParseResult {
   const errors: string[] = [];
 

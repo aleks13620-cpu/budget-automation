@@ -192,6 +192,9 @@ export function checkTextQuality(text: string): { ratio: number; isGarbled: bool
 const SUPPLIER_BAD_WORDS = [
   'условия', 'самовывоз', 'паспорт', 'доставка', 'отгрузка',
   'оплат', 'гарантия', 'возврат', 'примечан', 'внимание',
+  'ответственност', 'несет', 'покупатель', 'плательщик',
+  'грузополучатель', 'получатель', 'порядк', 'лицензия',
+  'свидетельство', 'сертификат', 'информац',
 ];
 
 /**
@@ -205,6 +208,8 @@ function cleanSupplierName(raw: string | null): string | null {
   // Remove trailing punctuation
   name = name.replace(/[.;:]+$/, '').trim();
   if (name.length < 2) return null;
+  // Too long — likely a sentence, not a company name
+  if (name.length > 80) return null;
   const lower = name.toLowerCase();
   for (const bad of SUPPLIER_BAD_WORDS) {
     if (lower.includes(bad)) return null;
@@ -289,16 +294,27 @@ export function extractMetadata(text: string): { invoiceNumber: string | null; i
   if (supplierFieldMatch) {
     supplierName = cleanSupplierName(supplierFieldMatch[1]);
   }
-  // Priority 2: org form (ООО, ЗАО, etc.)
+  // Priority 2: org form (ООО, ЗАО, etc.) — collect all candidates, rank by position
   if (!supplierName) {
     const orgRegex = /(ООО|ОАО|ЗАО|ПАО|НАО|ФГУП|ИП|АО)\s*[«"'(]?([^»"')\n]{2,50})[»"')]?/g;
+    const candidates: { name: string; score: number }[] = [];
     let m;
     while ((m = orgRegex.exec(snippet)) !== null) {
       const candidate = `${m[1]} ${m[2]}`.trim();
       const lower = candidate.toLowerCase();
       if (lower.includes('банк') || lower.includes('бик') || lower.includes('р/с') || lower.includes('к/с')) continue;
       const cleaned = cleanSupplierName(candidate);
-      if (cleaned) { supplierName = cleaned; break; }
+      if (!cleaned) continue;
+      // Score: lower position = better; penalize matches deep in the text
+      const lineNumber = snippet.substring(0, m.index).split('\n').length;
+      let score = m.index; // base: character position (lower = better)
+      if (lineNumber > 15) score += 5000; // penalty for late lines (likely bank/legal section)
+      if (cleaned.length > 60) score += 3000; // penalty for long names
+      candidates.push({ name: cleaned, score });
+    }
+    if (candidates.length > 0) {
+      candidates.sort((a, b) => a.score - b.score);
+      supplierName = candidates[0].name;
     }
   }
 

@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata } from '../services/pdfParser';
-import { parseExcelInvoice, extractExcelRawRows } from '../services/excelInvoiceParser';
+import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData } from '../services/excelInvoiceParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -70,6 +70,179 @@ function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   return undefined;
 }
 
+// Helper: process a single invoice file (parse, detect supplier, insert into DB)
+async function processInvoiceFile(
+  file: { originalname: string; path: string },
+  projectId: number,
+  db: ReturnType<typeof getDatabase>,
+): Promise<{
+  invoiceId: number;
+  supplierName: string | null;
+  imported: number;
+  parsingCategory: string;
+  status: string;
+  errors: string[];
+}> {
+  const ext = path.extname(file.originalname).toLowerCase();
+
+  // For PDF: extract raw data once, reuse for parsing and categorization
+  let pdfRawRows: string[][] | null = null;
+  let pdfFullText: string | null = null;
+
+  // First pass: parse without saved config to get supplier name
+  let initialResult;
+  if (ext === '.pdf') {
+    const rawExtraction = await extractRawRows(file.path);
+    pdfRawRows = rawExtraction.rows;
+    pdfFullText = rawExtraction.fullText;
+    initialResult = parsePdfFromExtracted(pdfRawRows, pdfFullText);
+  } else {
+    initialResult = parseExcelInvoice(file.path);
+  }
+
+  // Find or create supplier
+  let supplierName = initialResult.supplierName;
+
+  // Fallback: try to match supplier from filename
+  if (!supplierName) {
+    const fileName = fixFilename(file.originalname);
+    const baseName = path.basename(fileName, path.extname(fileName));
+    const firstWordMatch = baseName.match(/^[+\s]*([A-Za-zА-Яа-яёЁ]{3,})/);
+    if (firstWordMatch) {
+      const keyword = firstWordMatch[1];
+      const found = db.prepare(
+        'SELECT id, name FROM suppliers WHERE name LIKE ? LIMIT 1'
+      ).get(`%${keyword}%`) as { id: number; name: string } | undefined;
+      if (found) {
+        supplierName = found.name;
+      }
+    }
+  }
+
+  let supplierId: number | null = null;
+  if (supplierName) {
+    const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierName) as { id: number } | undefined;
+    if (existing) {
+      supplierId = existing.id;
+    } else {
+      const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
+      supplierId = Number(result.lastInsertRowid);
+    }
+  }
+
+  // Check for saved parser config and re-parse if available
+  let parseResult = initialResult;
+  if (supplierId) {
+    const savedMapping = loadSavedMapping(supplierId);
+    if (savedMapping) {
+      if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
+        if (savedMapping.separatorMethod) {
+          const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
+          const colMapping = {
+            article: savedMapping.article, name: savedMapping.name, unit: savedMapping.unit,
+            quantity: savedMapping.quantity, price: savedMapping.price, amount: savedMapping.amount,
+          };
+          const tableResult = parseTableData(splitRows, colMapping, savedMapping.headerRow + 1);
+          let totalAmount: number | null = null;
+          if (tableResult.items.length > 0) {
+            const sum = tableResult.items.reduce((acc, item) => acc + (item.amount || 0), 0);
+            if (sum > 0) totalAmount = sum;
+          }
+          const metadata = extractMetadata(pdfFullText);
+          parseResult = {
+            items: tableResult.items,
+            errors: tableResult.errors,
+            totalRows: splitRows.length - savedMapping.headerRow - 1,
+            skippedRows: tableResult.skipped,
+            invoiceNumber: metadata.invoiceNumber,
+            invoiceDate: metadata.invoiceDate,
+            supplierName: metadata.supplierName,
+            totalAmount: totalAmount || metadata.totalAmount,
+          };
+        } else {
+          parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
+        }
+      } else {
+        parseResult = parseExcelInvoice(file.path, savedMapping);
+      }
+    }
+  }
+
+  // Categorize parsing result
+  let parsingCategory: string;
+  let parsingCategoryReason: string;
+
+  if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
+    const cat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
+    parsingCategory = cat.category;
+    parsingCategoryReason = cat.reason;
+  } else {
+    if (parseResult.items.length > 0) {
+      parsingCategory = 'A';
+      parsingCategoryReason = `Успешно: ${parseResult.items.length} позиций`;
+    } else {
+      parsingCategory = 'B';
+      parsingCategoryReason = 'Колонки не распознаны';
+    }
+  }
+
+  const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+  const fileName = fixFilename(file.originalname);
+
+  console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
+
+  // Insert invoice and items in a transaction
+  const insertInvoice = db.prepare(`
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertItem = db.prepare(`
+    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const result = db.transaction(() => {
+    const invoiceResult = insertInvoice.run(
+      projectId,
+      supplierId,
+      parseResult.invoiceNumber,
+      parseResult.invoiceDate,
+      fileName,
+      file.path,
+      parseResult.totalAmount,
+      status,
+      parsingCategory,
+      parsingCategoryReason,
+    );
+    const invoiceId = Number(invoiceResult.lastInsertRowid);
+
+    for (const item of parseResult.items) {
+      insertItem.run(
+        invoiceId,
+        item.article,
+        item.name,
+        item.unit,
+        item.quantity,
+        item.price,
+        item.amount,
+        item.row_index,
+      );
+    }
+
+    return invoiceId;
+  })();
+
+  return {
+    invoiceId: result,
+    supplierName,
+    imported: parseResult.items.length,
+    parsingCategory,
+    status,
+    errors: parseResult.errors,
+  };
+}
+
 // POST /api/projects/:id/invoices — upload and parse invoice (PDF/Excel)
 router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Request, res: Response) => {
   try {
@@ -85,179 +258,91 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
       return res.status(400).json({ error: 'Файл не загружен' });
     }
 
-    const ext = path.extname(req.file.originalname).toLowerCase();
-
-    // For PDF: extract raw data once, reuse for parsing and categorization
-    let pdfRawRows: string[][] | null = null;
-    let pdfFullText: string | null = null;
-
-    // First pass: parse without saved config to get supplier name
-    let initialResult;
-    if (ext === '.pdf') {
-      const rawExtraction = await extractRawRows(req.file.path);
-      pdfRawRows = rawExtraction.rows;
-      pdfFullText = rawExtraction.fullText;
-      initialResult = parsePdfFromExtracted(pdfRawRows, pdfFullText);
-    } else {
-      initialResult = parseExcelInvoice(req.file.path);
-    }
-
-    // Find or create supplier
-    let supplierName = initialResult.supplierName;
-
-    // Fallback: try to match supplier from filename (e.g. "НЗВЗ Заказ..." → search for "НЗВЗ")
-    if (!supplierName) {
-      const fileName = fixFilename(req.file!.originalname);
-      const baseName = path.basename(fileName, path.extname(fileName));
-      // Extract first word (at least 3 chars, Cyrillic or Latin)
-      const firstWordMatch = baseName.match(/^[+\s]*([A-Za-zА-Яа-яёЁ]{3,})/);
-      if (firstWordMatch) {
-        const keyword = firstWordMatch[1];
-        const found = db.prepare(
-          'SELECT id, name FROM suppliers WHERE name LIKE ? LIMIT 1'
-        ).get(`%${keyword}%`) as { id: number; name: string } | undefined;
-        if (found) {
-          supplierName = found.name;
-        }
-      }
-    }
-
-    let supplierId: number | null = null;
-    if (supplierName) {
-      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierName) as { id: number } | undefined;
-      if (existing) {
-        supplierId = existing.id;
-      } else {
-        const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
-        supplierId = Number(result.lastInsertRowid);
-      }
-    }
-
-    // Check for saved parser config and re-parse if available
-    let parseResult = initialResult;
-    if (supplierId) {
-      const savedMapping = loadSavedMapping(supplierId);
-      if (savedMapping) {
-        if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
-          // If separator config is saved, apply it instead of standard parsing
-          if (savedMapping.separatorMethod) {
-            const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
-            const colMapping = {
-              article: savedMapping.article, name: savedMapping.name, unit: savedMapping.unit,
-              quantity: savedMapping.quantity, price: savedMapping.price, amount: savedMapping.amount,
-            };
-            const tableResult = parseTableData(splitRows, colMapping, savedMapping.headerRow + 1);
-            let totalAmount: number | null = null;
-            if (tableResult.items.length > 0) {
-              const sum = tableResult.items.reduce((acc, item) => acc + (item.amount || 0), 0);
-              if (sum > 0) totalAmount = sum;
-            }
-            const metadata = extractMetadata(pdfFullText);
-            parseResult = {
-              items: tableResult.items,
-              errors: tableResult.errors,
-              totalRows: splitRows.length - savedMapping.headerRow - 1,
-              skippedRows: tableResult.skipped,
-              invoiceNumber: metadata.invoiceNumber,
-              invoiceDate: metadata.invoiceDate,
-              supplierName: metadata.supplierName,
-              totalAmount: totalAmount || metadata.totalAmount,
-            };
-          } else {
-            parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
-          }
-        } else {
-          parseResult = parseExcelInvoice(req.file.path, savedMapping);
-        }
-      }
-    }
-
-    // Categorize parsing result
-    let parsingCategory: string;
-    let parsingCategoryReason: string;
-
-    if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
-      const cat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
-      parsingCategory = cat.category;
-      parsingCategoryReason = cat.reason;
-    } else {
-      // Excel: always readable, A if items found, B if not
-      if (parseResult.items.length > 0) {
-        parsingCategory = 'A';
-        parsingCategoryReason = `Успешно: ${parseResult.items.length} позиций`;
-      } else {
-        parsingCategory = 'B';
-        parsingCategoryReason = 'Колонки не распознаны';
-      }
-    }
-
-    const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
-
-    const fileName = fixFilename(req.file!.originalname);
-    console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
-
-    // Insert invoice and items in a transaction (even if 0 items)
-    const insertInvoice = db.prepare(`
-      INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const insertItem = db.prepare(`
-      INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const result = db.transaction(() => {
-      const invoiceResult = insertInvoice.run(
-        projectId,
-        supplierId,
-        parseResult.invoiceNumber,
-        parseResult.invoiceDate,
-        fileName,
-        req.file!.path,
-        parseResult.totalAmount,
-        status,
-        parsingCategory,
-        parsingCategoryReason,
-      );
-      const invoiceId = Number(invoiceResult.lastInsertRowid);
-
-      const insertedItems: any[] = [];
-      for (const item of parseResult.items) {
-        const itemResult = insertItem.run(
-          invoiceId,
-          item.article,
-          item.name,
-          item.unit,
-          item.quantity,
-          item.price,
-          item.amount,
-          item.row_index,
-        );
-        insertedItems.push({
-          id: Number(itemResult.lastInsertRowid),
-          invoice_id: invoiceId,
-          ...item,
-        });
-      }
-
-      const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
-      return { invoice, items: insertedItems };
-    })();
+    const result = await processInvoiceFile(req.file, projectId, db);
+    const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(result.invoiceId);
+    const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(result.invoiceId);
 
     res.status(201).json({
-      invoice: result.invoice,
-      imported: result.items.length,
-      errors: parseResult.errors,
-      items: result.items,
-      needsMapping: status === 'needs_mapping',
-      parsingCategory,
-      parsingCategoryReason,
+      invoice,
+      imported: result.imported,
+      errors: result.errors,
+      items,
+      needsMapping: result.status === 'needs_mapping',
+      parsingCategory: result.parsingCategory,
     });
   } catch (error) {
     console.error('POST /api/projects/:id/invoices error:', error);
     res.status(500).json({
       error: 'Ошибка при импорте счёта',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// POST /api/projects/:id/invoices/bulk — bulk upload invoices
+router.post('/api/projects/:id/invoices/bulk', upload.array('files', 100), async (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'Файлы не загружены' });
+    }
+
+    const results: {
+      fileName: string;
+      invoiceId: number | null;
+      supplierName: string | null;
+      imported: number;
+      parsingCategory: string | null;
+      status: string;
+      error?: string;
+    }[] = [];
+
+    for (const file of files) {
+      const fileName = fixFilename(file.originalname);
+      try {
+        const result = await processInvoiceFile(file, projectId, db);
+        results.push({
+          fileName,
+          invoiceId: result.invoiceId,
+          supplierName: result.supplierName,
+          imported: result.imported,
+          parsingCategory: result.parsingCategory,
+          status: result.status === 'needs_mapping' ? 'needs_mapping' : 'ok',
+        });
+      } catch (err) {
+        results.push({
+          fileName,
+          invoiceId: null,
+          supplierName: null,
+          imported: 0,
+          parsingCategory: null,
+          status: 'error',
+          error: err instanceof Error ? err.message : 'Неизвестная ошибка',
+        });
+      }
+    }
+
+    const summary = {
+      total: files.length,
+      ok: results.filter(r => r.status === 'ok').length,
+      needsMapping: results.filter(r => r.status === 'needs_mapping').length,
+      errors: results.filter(r => r.status === 'error').length,
+      totalImported: results.reduce((s, r) => s + r.imported, 0),
+    };
+
+    res.json({ results, summary });
+  } catch (error) {
+    console.error('POST /api/projects/:id/invoices/bulk error:', error);
+    res.status(500).json({
+      error: 'Ошибка при массовой загрузке счетов',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -329,6 +414,69 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
     console.error('GET /api/invoices/:id/preview error:', error);
     res.status(500).json({
       error: 'Ошибка при предпросмотре счёта',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/invoices/:id/preview-excel — Excel preview with sheet selection
+router.get('/api/invoices/:id/preview-excel', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Счёт не найден' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    if (ext !== '.xlsx' && ext !== '.xls') {
+      return res.status(400).json({ error: 'Файл не является Excel' });
+    }
+
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл не найден на диске' });
+    }
+
+    const sheetIndex = parseInt(String(req.query.sheet || '0'), 10);
+    const maxRows = parseInt(String(req.query.maxRows || '200'), 10);
+
+    const { rows, sheetNames, totalRows } = extractExcelPreviewData(invoice.file_path, sheetIndex, maxRows);
+
+    const detected = detectColumns(rows);
+    const detectedMapping = detected ? {
+      ...detected.mapping,
+      headerRow: detected.headerRowIndex,
+    } : null;
+
+    let supplierConfig: SavedMapping | null = null;
+    if (invoice.supplier_id) {
+      const saved = loadSavedMapping(invoice.supplier_id);
+      if (saved) supplierConfig = saved;
+    }
+
+    const detectedHeaderRow = detected?.headerRowIndex ?? 0;
+    const columns = rows[detectedHeaderRow] || [];
+
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+    res.set('Pragma', 'no-cache');
+
+    res.json({
+      rows,
+      totalRows,
+      meta: { sheetNames, detectedHeaderRow, totalRows },
+      columns,
+      detectedMapping,
+      supplierConfig,
+    });
+  } catch (error) {
+    console.error('GET /api/invoices/:id/preview-excel error:', error);
+    res.status(500).json({
+      error: 'Ошибка предпросмотра Excel',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }

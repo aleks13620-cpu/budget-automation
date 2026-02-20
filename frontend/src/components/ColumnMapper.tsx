@@ -37,14 +37,22 @@ export function ColumnMapper({ columns, mapping, headerRow, totalRows, onChange,
     <div className="column-mapper">
       <div className="mapper-item">
         <label>Строка заголовка</label>
-        <select
-          value={headerRow}
-          onChange={e => onHeaderRowChange(parseInt(e.target.value, 10))}
-        >
-          {Array.from({ length: Math.min(totalRows, 20) }, (_, i) => (
-            <option key={i} value={i}>Строка {i + 1}</option>
-          ))}
-        </select>
+        <input
+          type="number"
+          min={1}
+          max={totalRows}
+          value={headerRow + 1}
+          onChange={e => {
+            const val = parseInt(e.target.value, 10);
+            if (!isNaN(val) && val >= 1 && val <= totalRows) {
+              onHeaderRowChange(val - 1);
+            }
+          }}
+          style={{ width: '80px' }}
+        />
+        <span style={{ marginLeft: '0.5rem', fontSize: '0.8rem', color: '#888' }}>
+          (из {totalRows})
+        </span>
       </div>
 
       {(Object.keys(FIELD_LABELS) as (keyof ColumnMapping)[]).map(field => (

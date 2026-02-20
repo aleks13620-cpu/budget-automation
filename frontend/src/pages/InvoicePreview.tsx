@@ -11,6 +11,7 @@ interface PreviewData {
   parsingCategory?: string;
   parsingCategoryReason?: string;
   fullText?: string;
+  meta?: { sheetNames: string[]; detectedHeaderRow: number; totalRows: number };
 }
 
 interface InvoiceInfo {
@@ -418,33 +419,54 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [saving, setSaving] = useState(false);
   const [reparsing, setReparsing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [sheetIndex, setSheetIndex] = useState(0);
+  const [sheetNames, setSheetNames] = useState<string[]>([]);
+
+  const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
+    const currentInvoice = inv || invoice;
+    const currentSheet = sheet ?? sheetIndex;
+    const isExcelFile = currentInvoice && /\.(xlsx?|xls)$/i.test(currentInvoice.file_name);
+
+    const previewUrl = isExcelFile
+      ? `/invoices/${invoiceId}/preview-excel?sheet=${currentSheet}&maxRows=200`
+      : `/invoices/${invoiceId}/preview`;
+
+    const previewRes = await api.get(previewUrl);
+    const data: PreviewData = previewRes.data;
+    setPreview(data);
+
+    if (data.meta?.sheetNames) {
+      setSheetNames(data.meta.sheetNames);
+    }
+
+    return data;
+  };
+
+  const applyMapping = (data: PreviewData) => {
+    const source = data.supplierConfig || data.detectedMapping;
+    if (source) {
+      setMapping({
+        article: source.article,
+        name: source.name,
+        unit: source.unit,
+        quantity: source.quantity,
+        price: source.price,
+        amount: source.amount,
+      });
+      setHeaderRow(source.headerRow);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
       setLoading(true);
       try {
-        const [previewRes, invoiceRes] = await Promise.all([
-          api.get(`/invoices/${invoiceId}/preview`),
-          api.get(`/invoices/${invoiceId}`),
-        ]);
+        const invoiceRes = await api.get(`/invoices/${invoiceId}`);
+        const inv: InvoiceInfo = invoiceRes.data.invoice;
+        setInvoice(inv);
 
-        const data: PreviewData = previewRes.data;
-        setPreview(data);
-        setInvoice(invoiceRes.data.invoice);
-
-        // Initialize mapping: prefer saved config, then detected, then empty
-        const source = data.supplierConfig || data.detectedMapping;
-        if (source) {
-          setMapping({
-            article: source.article,
-            name: source.name,
-            unit: source.unit,
-            quantity: source.quantity,
-            price: source.price,
-            amount: source.amount,
-          });
-          setHeaderRow(source.headerRow);
-        }
+        const data = await loadPreview(inv, 0);
+        applyMapping(data);
       } catch {
         setMessage({ type: 'error', text: 'Ошибка загрузки предпросмотра' });
       } finally {
@@ -453,6 +475,19 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     };
     load();
   }, [invoiceId]);
+
+  const handleSheetChange = async (newSheet: number) => {
+    setSheetIndex(newSheet);
+    setLoading(true);
+    try {
+      const data = await loadPreview(undefined, newSheet);
+      applyMapping(data);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка загрузки листа' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const ensureSupplier = async (): Promise<{ supplier_id: number; supplier_name: string } | null> => {
     if (invoice?.supplier_id) {
@@ -508,12 +543,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       const msgType = data.imported === 0 ? 'error' : 'success';
       setMessage({ type: msgType as 'success' | 'error', text: msgs.join('. ') });
 
-      const [previewRes, invoiceRes] = await Promise.all([
-        api.get(`/invoices/${invoiceId}/preview`),
-        api.get(`/invoices/${invoiceId}`),
-      ]);
-      setPreview(previewRes.data);
+      const invoiceRes = await api.get(`/invoices/${invoiceId}`);
       setInvoice(invoiceRes.data.invoice);
+      await loadPreview(invoiceRes.data.invoice);
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
     } finally {
@@ -566,6 +598,17 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
           {message.text}
         </p>
+      )}
+
+      {isExcel && sheetNames.length > 1 && (
+        <div style={{ marginBottom: '1rem' }}>
+          <label style={{ marginRight: '0.5rem', fontWeight: 'bold' }}>Лист:</label>
+          <select value={sheetIndex} onChange={e => handleSheetChange(parseInt(e.target.value, 10))}>
+            {sheetNames.map((name, idx) => (
+              <option key={idx} value={idx}>{name}</option>
+            ))}
+          </select>
+        </div>
       )}
 
       <h3>Настройка колонок</h3>

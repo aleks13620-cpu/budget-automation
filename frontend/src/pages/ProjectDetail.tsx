@@ -49,8 +49,14 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     fileName: string; section: string | null; imported: number;
     status: 'ok' | 'conflict' | 'no_section' | 'parse_error'; error?: string;
   }[] | null>(null);
+  const [bulkInvUploading, setBulkInvUploading] = useState(false);
+  const [bulkInvResults, setBulkInvResults] = useState<{
+    fileName: string; invoiceId: number | null; supplierName: string | null;
+    imported: number; parsingCategory: string | null; status: string; error?: string;
+  }[] | null>(null);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
   const bulkFileRef = useRef<HTMLInputElement>(null);
+  const bulkInvFileRef = useRef<HTMLInputElement>(null);
   const specFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
@@ -165,6 +171,33 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка массовой загрузки' });
     } finally {
       setBulkUploading(false);
+    }
+  };
+
+  const handleBulkInvoiceUpload = async () => {
+    const files = bulkInvFileRef.current?.files;
+    if (!files || files.length === 0) return;
+    setBulkInvUploading(true);
+    setBulkInvResults(null);
+    setMessage(null);
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    try {
+      const { data } = await api.post(`/projects/${projectId}/invoices/bulk`, formData);
+      setBulkInvResults(data.results);
+      const s = data.summary;
+      setMessage({
+        type: s.ok > 0 || s.needsMapping > 0 ? 'success' : 'error',
+        text: `Загружено: ${s.ok} готовых, ${s.needsMapping} требуют настройки, ${s.errors} ошибок (${s.totalImported} позиций)`,
+      });
+      if (bulkInvFileRef.current) bulkInvFileRef.current.value = '';
+      await loadData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка массовой загрузки' });
+    } finally {
+      setBulkInvUploading(false);
     }
   };
 
@@ -309,11 +342,63 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       {/* Invoices section */}
       <div className="section">
         <h2>Счета</h2>
-        <div className="upload-area">
+        <div className="upload-area" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input type="file" accept=".pdf,.xlsx,.xls" ref={invoiceFileRef} />
           <button className="btn btn-primary btn-sm" onClick={handleUploadInvoice} disabled={uploading}>
             {uploading ? 'Загрузка...' : 'Загрузить счёт'}
           </button>
+        </div>
+
+        <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '6px' }}>
+          <h4 style={{ margin: '0 0 0.5rem' }}>Массовая загрузка счетов</h4>
+          <p className="muted" style={{ marginBottom: '0.5rem', fontSize: '0.85rem' }}>
+            Выберите несколько файлов (PDF, XLSX, XLS). Каждый файл будет обработан отдельно.
+          </p>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="file"
+              accept=".pdf,.xlsx,.xls"
+              multiple
+              ref={bulkInvFileRef}
+              style={{ fontSize: '0.85rem' }}
+            />
+            <button className="btn btn-primary btn-sm" onClick={handleBulkInvoiceUpload} disabled={bulkInvUploading}>
+              {bulkInvUploading ? 'Загрузка...' : 'Загрузить все'}
+            </button>
+          </div>
+
+          {bulkInvResults && (
+            <div style={{ marginTop: '0.75rem' }}>
+              <table style={{ fontSize: '0.85rem' }}>
+                <thead>
+                  <tr>
+                    <th>Файл</th>
+                    <th>Поставщик</th>
+                    <th>Позиций</th>
+                    <th>Статус</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkInvResults.map((r, idx) => (
+                    <tr key={idx}>
+                      <td>{r.fileName}</td>
+                      <td>{r.supplierName || '—'}</td>
+                      <td>{r.imported || '—'}</td>
+                      <td>
+                        {r.status === 'ok' ? (
+                          <span style={{ color: '#16a34a', fontWeight: 600 }}>OK ({r.imported})</span>
+                        ) : r.status === 'needs_mapping' ? (
+                          <span style={{ color: '#d97706', fontWeight: 600 }}>Требует настройки</span>
+                        ) : (
+                          <span style={{ color: '#dc2626' }} title={r.error}>{r.error || 'Ошибка'}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {invoices.length === 0 ? (
