@@ -44,7 +44,13 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   const [uploadingSection, setUploadingSection] = useState<string | null>(null);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [vatEditing, setVatEditing] = useState<number | null>(null);
+  const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkResults, setBulkResults] = useState<{
+    fileName: string; section: string | null; imported: number;
+    status: 'ok' | 'conflict' | 'no_section' | 'parse_error'; error?: string;
+  }[] | null>(null);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
+  const bulkFileRef = useRef<HTMLInputElement>(null);
   const specFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
@@ -134,6 +140,34 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     }
   };
 
+  const handleBulkUpload = async () => {
+    const files = bulkFileRef.current?.files;
+    if (!files || files.length === 0) return;
+    setBulkUploading(true);
+    setBulkResults(null);
+    setMessage(null);
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    try {
+      const { data } = await api.post(`/projects/${projectId}/specifications/bulk`, formData);
+      setBulkResults(data.results);
+      const s = data.summary;
+      if (s.ok > 0) {
+        setMessage({ type: 'success', text: `Загружено ${s.ok} из ${s.total} файлов (${s.totalImported} позиций)` });
+      } else {
+        setMessage({ type: 'error', text: `Не удалось импортировать файлы (${s.total} файлов)` });
+      }
+      if (bulkFileRef.current) bulkFileRef.current.value = '';
+      await loadData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка массовой загрузки' });
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка...</p>;
 
   // Map section -> specification for quick lookup
@@ -151,6 +185,61 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
           {message.text}
         </p>
       )}
+
+      {/* Bulk upload section */}
+      <div className="section">
+        <h2>Массовая загрузка спецификаций</h2>
+        <p className="muted" style={{ marginBottom: '0.5rem' }}>
+          Выберите несколько Excel-файлов (.xlsx/.xls). Раздел определяется автоматически по имени файла или содержимому.
+        </p>
+        <div className="upload-area" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            type="file"
+            accept=".xlsx,.xls"
+            multiple
+            ref={bulkFileRef}
+            style={{ fontSize: '0.85rem' }}
+          />
+          <button className="btn btn-primary btn-sm" onClick={handleBulkUpload} disabled={bulkUploading}>
+            {bulkUploading ? 'Загрузка...' : 'Загрузить все'}
+          </button>
+        </div>
+
+        {bulkResults && (
+          <div style={{ marginTop: '0.75rem' }}>
+            <table style={{ fontSize: '0.85rem' }}>
+              <thead>
+                <tr>
+                  <th>Файл</th>
+                  <th>Раздел</th>
+                  <th>Позиций</th>
+                  <th>Статус</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkResults.map((r, idx) => (
+                  <tr key={idx}>
+                    <td>{r.fileName}</td>
+                    <td>{r.section || '—'}</td>
+                    <td>{r.imported || '—'}</td>
+                    <td>
+                      {r.status === 'ok' ? (
+                        <span style={{ color: '#16a34a', fontWeight: 600 }}>OK</span>
+                      ) : r.status === 'conflict' ? (
+                        <span style={{ color: '#d97706' }} title={r.error}>{r.error}</span>
+                      ) : r.status === 'no_section' ? (
+                        <span style={{ color: '#dc2626' }} title={r.error}>{r.error}</span>
+                      ) : (
+                        <span style={{ color: '#dc2626' }} title={r.error}>{r.error || 'Ошибка'}</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* Specification section */}
       <div className="section">
@@ -301,9 +390,26 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                       <span style={{ color: '#16a34a' }}>Готов ({inv.item_count})</span>
                     )}
                   </td>
-                  <td>
+                  <td style={{ display: 'flex', gap: '0.25rem' }}>
                     <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
                       {inv.parsing_category === 'C' ? 'Действия' : inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ color: '#dc2626' }}
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`Удалить счёт «${inv.file_name}»?`)) return;
+                        try {
+                          await api.delete(`/invoices/${inv.id}`);
+                          setMessage({ type: 'success', text: `Счёт «${inv.file_name}» удалён` });
+                          await loadData();
+                        } catch {
+                          setMessage({ type: 'error', text: 'Ошибка при удалении счёта' });
+                        }
+                      }}
+                    >
+                      Удалить
                     </button>
                   </td>
                 </tr>

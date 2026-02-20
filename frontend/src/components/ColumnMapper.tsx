@@ -57,7 +57,7 @@ export function ColumnMapper({ columns, mapping, headerRow, totalRows, onChange,
             <option value="">— Пропустить —</option>
             {columns.map((col, idx) => (
               <option key={idx} value={idx}>
-                {col || `Колонка ${idx + 1}`}
+                кол.{idx + 1}: {col || '(без названия)'}
               </option>
             ))}
           </select>

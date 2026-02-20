@@ -539,7 +539,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   }
 
   // --- Category B: text readable but no column structure ---
-  if (category === 'B') {
+  // For Excel files, skip separator panel — show normal preview with ColumnMapper instead
+  const isExcel = /\.(xlsx?|xls)$/i.test(invoice.file_name);
+  if (category === 'B' && !isExcel) {
     return (
       <CategoryBPanel
         invoice={invoice}
@@ -593,43 +595,73 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         };
         const entries = Object.entries(mapping).filter(([, v]) => v !== null) as [string, number][];
         if (entries.length === 0) return null;
+        const exampleRow = preview.rows[headerRow + 1];
         return (
           <div style={{ background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: 4, padding: '0.5rem 0.75rem', marginBottom: '1rem', fontSize: '0.85rem' }}>
             <strong>Активное сопоставление</strong> (строка заголовка: {headerRow + 1})
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.25rem' }}>
-              {entries.map(([field, colIdx]) => (
-                <span key={field} style={{ background: '#e0e7ff', padding: '2px 6px', borderRadius: 3 }}>
-                  {FIELD_LABELS[field] || field} &larr; кол. {colIdx + 1}{headerCols[colIdx] ? ` (${headerCols[colIdx]})` : ''}
-                </span>
-              ))}
+              {entries.map(([field, colIdx]) => {
+                const example = exampleRow?.[colIdx] || '';
+                const exampleStr = example ? ` · пр: ${String(example).substring(0, 30)}` : '';
+                return (
+                  <span key={field} style={{ background: '#e0e7ff', padding: '2px 6px', borderRadius: 3 }}>
+                    {FIELD_LABELS[field] || field} &larr; кол.{colIdx + 1}{headerCols[colIdx] ? ` (${headerCols[colIdx]})` : ''}{exampleStr}
+                  </span>
+                );
+              })}
             </div>
           </div>
         );
       })()}
 
       <h3>Данные файла ({preview.totalRows} строк)</h3>
-      <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
-        <table>
-          <tbody>
-            {preview.rows.map((row, rowIdx) => (
-              <tr key={rowIdx} className={rowIdx === headerRow ? 'highlight' : ''}>
-                <td style={{ color: '#999', fontSize: '0.75rem' }}>{rowIdx + 1}</td>
-                {row.map((cell, colIdx) => {
-                  const isMapped = Object.values(mapping).includes(colIdx);
-                  return (
-                    <td
-                      key={colIdx}
-                      style={isMapped ? { background: '#e0e7ff' } : undefined}
-                    >
-                      {cell || ''}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {(() => {
+        const maxCols = Math.max(...preview.rows.map(r => r.length), 0);
+        return (
+          <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
+            <table>
+              <thead>
+                <tr style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 1 }}>
+                  <th style={{ color: '#999', fontSize: '0.7rem' }}>#</th>
+                  {Array.from({ length: maxCols }, (_, colIdx) => {
+                    const isMapped = Object.values(mapping).includes(colIdx);
+                    const headerText = headerCols[colIdx];
+                    return (
+                      <th key={colIdx} style={{
+                        fontSize: '0.7rem',
+                        background: isMapped ? '#e0e7ff' : '#f1f5f9',
+                        whiteSpace: 'nowrap',
+                        padding: '4px 6px',
+                      }}>
+                        <div style={{ fontWeight: 700 }}>кол.{colIdx + 1}</div>
+                        <div style={{ fontWeight: 400, color: '#666' }}>{headerText || '(без названия)'}</div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.rows.map((row, rowIdx) => (
+                  <tr key={rowIdx} className={rowIdx === headerRow ? 'highlight' : ''}>
+                    <td style={{ color: '#999', fontSize: '0.75rem' }}>{rowIdx + 1}</td>
+                    {row.map((cell, colIdx) => {
+                      const isMapped = Object.values(mapping).includes(colIdx);
+                      return (
+                        <td
+                          key={colIdx}
+                          style={isMapped ? { background: '#e0e7ff' } : undefined}
+                        >
+                          {cell || ''}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
     </div>
   );
 }

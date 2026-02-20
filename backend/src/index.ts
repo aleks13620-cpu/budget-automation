@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
+import fs from 'fs';
 import { getDatabase, initializeDatabase } from './database';
 import specificationRoutes from './routes/specifications';
 import invoiceRoutes from './routes/invoices';
@@ -91,6 +92,65 @@ app.get('/api/projects/:id', (req, res) => {
   } catch (error) {
     console.error('GET /api/projects/:id error:', error);
     res.status(500).json({ error: 'Ошибка при получении проекта' });
+  }
+});
+
+// PUT /api/projects/:id — update project
+app.put('/api/projects/:id', (req, res) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const { name, description } = req.body;
+    if (!name || !String(name).trim()) {
+      return res.status(400).json({ error: 'Название проекта обязательно' });
+    }
+
+    const db = getDatabase();
+    const existing = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    db.prepare('UPDATE projects SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(String(name).trim(), description ? String(description).trim() : null, projectId);
+
+    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId);
+    res.json(project);
+  } catch (error) {
+    console.error('PUT /api/projects/:id error:', error);
+    res.status(500).json({ error: 'Ошибка при обновлении проекта' });
+  }
+});
+
+// DELETE /api/projects/:id — delete project + all related data + files
+app.delete('/api/projects/:id', (req, res) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const existing = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    // Get invoice file paths before deleting
+    const invoiceFiles = db.prepare(
+      'SELECT file_path FROM invoices WHERE project_id = ? AND file_path IS NOT NULL'
+    ).all(projectId) as { file_path: string }[];
+
+    // Delete project (CASCADE will delete specs, invoices, items, matches)
+    db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+
+    // Clean up invoice files from disk
+    for (const { file_path } of invoiceFiles) {
+      if (file_path) {
+        fs.unlink(file_path, () => {});
+      }
+    }
+
+    res.json({ deleted: true });
+  } catch (error) {
+    console.error('DELETE /api/projects/:id error:', error);
+    res.status(500).json({ error: 'Ошибка при удалении проекта' });
   }
 });
 

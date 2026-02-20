@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
 import { parseExcelFile } from '../services/excelParser';
+import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -234,6 +235,130 @@ router.delete('/api/specifications/:id', (req: Request, res: Response) => {
   } catch (error) {
     console.error('DELETE /api/specifications/:id error:', error);
     res.status(500).json({ error: 'Ошибка при удалении спецификации' });
+  }
+});
+
+// POST /api/projects/:id/specifications/bulk — upload multiple spec files with auto-detect section
+router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    const files = req.files as Express.Multer.File[];
+    if (!files || files.length === 0) {
+      return res.status(400).json({ error: 'Файлы не загружены' });
+    }
+
+    const results: {
+      fileName: string;
+      section: string | null;
+      imported: number;
+      status: 'ok' | 'conflict' | 'no_section' | 'parse_error';
+      error?: string;
+    }[] = [];
+
+    for (const file of files) {
+      const fileName = fixFilename(file.originalname);
+
+      try {
+        // Parse file
+        const parseResult = parseExcelFile(file.path);
+        if (parseResult.items.length === 0) {
+          fs.unlink(file.path, () => {});
+          results.push({ fileName, section: null, imported: 0, status: 'parse_error', error: 'Не удалось извлечь данные' });
+          continue;
+        }
+
+        // Detect section: filename first, then items
+        let section = detectSectionFromFilename(fileName);
+        if (!section) {
+          section = detectSectionFromItems(parseResult.items.map(it => ({
+            name: it.name,
+            characteristics: it.characteristics,
+          })));
+        }
+
+        if (!section || !SECTIONS.includes(section)) {
+          fs.unlink(file.path, () => {});
+          results.push({ fileName, section, imported: 0, status: 'no_section', error: `Не удалось определить раздел${section ? ` (определён: ${section})` : ''}` });
+          continue;
+        }
+
+        // Check if section already exists
+        const existing = db.prepare(
+          'SELECT id FROM specifications WHERE project_id = ? AND section = ?'
+        ).get(projectId, section) as { id: number } | undefined;
+
+        if (existing) {
+          fs.unlink(file.path, () => {});
+          results.push({ fileName, section, imported: 0, status: 'conflict', error: `Раздел «${section}» уже загружен` });
+          continue;
+        }
+
+        // Insert specification + items
+        const result = db.transaction(() => {
+          const specResult = db.prepare(
+            'INSERT INTO specifications (project_id, section, file_name) VALUES (?, ?, ?)'
+          ).run(projectId, section, fileName);
+          const specificationId = Number(specResult.lastInsertRowid);
+
+          const insertStmt = db.prepare(`
+            INSERT INTO specification_items
+              (project_id, specification_id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity, section)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `);
+
+          let count = 0;
+          for (const item of parseResult.items) {
+            insertStmt.run(
+              projectId,
+              specificationId,
+              item.position_number,
+              item.name,
+              item.characteristics,
+              item.equipment_code,
+              item.manufacturer,
+              item.unit,
+              item.quantity,
+              section,
+            );
+            count++;
+          }
+          return count;
+        })();
+
+        fs.unlink(file.path, () => {});
+        results.push({ fileName, section, imported: result, status: 'ok' });
+      } catch (err) {
+        fs.unlink(file.path, () => {});
+        results.push({
+          fileName,
+          section: null,
+          imported: 0,
+          status: 'parse_error',
+          error: err instanceof Error ? err.message : 'Неизвестная ошибка',
+        });
+      }
+    }
+
+    const totalImported = results.filter(r => r.status === 'ok').reduce((s, r) => s + r.imported, 0);
+    const okCount = results.filter(r => r.status === 'ok').length;
+
+    res.json({
+      results,
+      summary: { total: files.length, ok: okCount, totalImported },
+    });
+  } catch (error) {
+    console.error('POST /api/projects/:id/specifications/bulk error:', error);
+    res.status(500).json({
+      error: 'Ошибка при массовом импорте спецификаций',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
   }
 });
 

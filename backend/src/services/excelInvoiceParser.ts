@@ -19,6 +19,7 @@ function normalizeRowWidths(rows: string[][]): string[][] {
 
 /**
  * Extract raw rows (string[][]) from an Excel file. Used by preview endpoint.
+ * Ensures all columns up to the sheet's last used column are included (preserves empty cells).
  */
 export function extractExcelRawRows(filePath: string): string[][] {
   const workbook = XLSX.readFile(filePath);
@@ -26,11 +27,25 @@ export function extractExcelRawRows(filePath: string): string[][] {
   if (!sheetName) return [];
 
   const sheet = workbook.Sheets[sheetName];
+
+  // Determine total column count from sheet range to ensure empty columns are preserved
+  const ref = sheet['!ref'];
+  let totalCols = 0;
+  if (ref) {
+    const range = XLSX.utils.decode_range(ref);
+    totalCols = range.e.c + 1; // 0-based end column + 1
+  }
+
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
-  const rows = rawRows.map(row =>
-    row.map(cell => (cell === null || cell === undefined) ? '' : String(cell))
-  );
+  const rows = rawRows.map(row => {
+    const cells = row.map(cell => (cell === null || cell === undefined) ? '' : String(cell));
+    // Pad to totalCols to preserve empty columns at the end
+    while (cells.length < totalCols) {
+      cells.push('');
+    }
+    return cells;
+  });
 
   return normalizeRowWidths(rows);
 }
