@@ -514,31 +514,55 @@ router.get('/api/projects/:id/invoice-items/search', (req: Request, res: Respons
       return res.status(400).json({ error: 'Минимум 2 символа для поиска' });
     }
 
-    const invoiceItems = db.prepare(`
+    const mode = String(req.query.mode || 'similarity');
+    const supplierId = req.query.supplier_id ? parseInt(String(req.query.supplier_id), 10) : null;
+
+    let sql = `
       SELECT ii.id, ii.name, ii.article, ii.unit, ii.quantity, ii.price, ii.amount,
-             s.name as supplier_name, i.supplier_id
+             s.name as supplier_name, i.supplier_id,
+             i.id as invoice_id, i.file_name as invoice_file_name
       FROM invoice_items ii
       JOIN invoices i ON ii.invoice_id = i.id
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.project_id = ?
-      ORDER BY ii.id
-    `).all(projectId) as Array<{
+    `;
+    const params: any[] = [projectId];
+
+    if (supplierId) {
+      sql += ' AND i.supplier_id = ?';
+      params.push(supplierId);
+    }
+
+    sql += ' ORDER BY ii.id';
+
+    const invoiceItems = db.prepare(sql).all(...params) as Array<{
       id: number; name: string; article: string | null;
       unit: string | null; quantity: number | null;
       price: number | null; amount: number | null;
       supplier_name: string | null; supplier_id: number | null;
+      invoice_id: number; invoice_file_name: string | null;
     }>;
 
-    const normalizedQ = normalizeForMatching(q);
+    let top: Array<any>;
 
-    const scored = invoiceItems.map(item => {
-      const normalizedName = normalizeForMatching(item.name);
-      const score = stringSimilarity.compareTwoStrings(normalizedQ, normalizedName);
-      return { ...item, score };
-    });
-
-    scored.sort((a, b) => b.score - a.score);
-    const top = scored.slice(0, 15).filter(s => s.score > 0.15);
+    if (mode === 'like') {
+      const lowerQ = q.toLowerCase();
+      const filtered = invoiceItems.filter(item => {
+        const lowerName = (item.name || '').toLowerCase();
+        const lowerArticle = (item.article || '').toLowerCase();
+        return lowerName.includes(lowerQ) || lowerArticle.includes(lowerQ);
+      });
+      top = filtered.slice(0, 30).map(item => ({ ...item, score: null }));
+    } else {
+      const normalizedQ = normalizeForMatching(q);
+      const scored = invoiceItems.map(item => {
+        const normalizedName = normalizeForMatching(item.name);
+        const score = stringSimilarity.compareTwoStrings(normalizedQ, normalizedName);
+        return { ...item, score };
+      });
+      scored.sort((a, b) => b.score - a.score);
+      top = scored.slice(0, 30).filter(s => s.score > 0.1);
+    }
 
     res.json({ results: top });
   } catch (error) {

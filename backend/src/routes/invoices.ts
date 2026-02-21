@@ -661,10 +661,10 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       for (const item of parseResult.items) {
         insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
       }
-      const newStatus = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+      const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
       const newCategoryReason = parseResult.items.length > 0
-        ? `Пересобрано: ${parseResult.items.length} позиций`
+        ? `Проверено оператором: ${parseResult.items.length} позиций`
         : 'Колонки не распознаны после пересборки';
       db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
         .run(newStatus, parseResult.totalAmount, newCategory, newCategoryReason, invoiceId);
@@ -676,7 +676,7 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       imported: parseResult.items.length,
       errors: parseResult.errors,
       items,
-      status: parseResult.items.length > 0 ? 'parsed' : 'needs_mapping',
+      status: parseResult.items.length > 0 ? 'verified' : 'needs_mapping',
     });
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse error:', error);
@@ -894,10 +894,10 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
       for (const item of parseResult.items) {
         insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
       }
-      const newStatus = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+      const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
       const newCategoryReason = parseResult.items.length > 0
-        ? `Пересобрано с разделителем: ${parseResult.items.length} позиций`
+        ? `Проверено оператором: ${parseResult.items.length} позиций`
         : 'Колонки не распознаны после разделения';
       db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
         .run(newStatus, totalAmount, newCategory, newCategoryReason, invoiceId);
@@ -918,7 +918,7 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
       imported: parseResult.items.length,
       errors: parseResult.errors,
       items,
-      status: parseResult.items.length > 0 ? 'parsed' : 'needs_mapping',
+      status: parseResult.items.length > 0 ? 'verified' : 'needs_mapping',
     });
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse-with-separator error:', error);

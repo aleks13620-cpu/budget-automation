@@ -64,6 +64,19 @@ function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: Co
       }
     }
 
+    // Deduplicate: if multiple fields point to the same column, keep only the first one
+    const usedCols = new Set<number>();
+    for (const field of Object.keys(HEADER_KEYWORDS)) {
+      const key = field as keyof ColumnMapping;
+      if (mapping[key] === null) continue;
+      if (usedCols.has(mapping[key]!)) {
+        mapping[key] = null;
+        matchCount--;
+      } else {
+        usedCols.add(mapping[key]!);
+      }
+    }
+
     // Require at least "name" and one more column to consider it a header
     if (mapping.name !== null && matchCount >= 2) {
       return { rowIndex: row, mapping };

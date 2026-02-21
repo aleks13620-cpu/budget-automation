@@ -85,6 +85,8 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [selectedInvoiceItem, setSelectedInvoiceItem] = useState<UnmatchedInvoiceItem | null>(null);
   const [unmatchedSearch, setUnmatchedSearch] = useState('');
   const [unmatchedSupplierFilter, setUnmatchedSupplierFilter] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sectionFilter, setSectionFilter] = useState<string>('all');
 
   const loadMatching = async () => {
     setLoading(true);
@@ -174,16 +176,40 @@ export function MatchingView({ projectId, onBack }: Props) {
 
   if (loading) return <p className="loading">Загрузка...</p>;
 
-  // Filter items based on status
+  // Filter items based on status + search + section
   const filteredItems = items.filter(row => {
     const hasConfirmed = row.matches.some(m => m.isConfirmed);
     const hasMatches = row.matches.length > 0;
 
-    if (filterStatus === 'confirmed') return hasConfirmed;
-    if (filterStatus === 'pending') return hasMatches && !hasConfirmed;
-    if (filterStatus === 'unmatched') return !hasMatches;
-    return true; // 'all'
+    if (filterStatus === 'confirmed' && !hasConfirmed) return false;
+    if (filterStatus === 'pending' && !(hasMatches && !hasConfirmed)) return false;
+    if (filterStatus === 'unmatched' && hasMatches) return false;
+
+    if (sectionFilter !== 'all' && row.specItem.section !== sectionFilter) return false;
+
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const nameMatch = row.specItem.name.toLowerCase().includes(q);
+      const charMatch = row.specItem.characteristics?.toLowerCase().includes(q);
+      const invoiceMatch = row.matches.some(m => m.invoiceName.toLowerCase().includes(q) || m.article?.toLowerCase().includes(q));
+      if (!nameMatch && !charMatch && !invoiceMatch) return false;
+    }
+
+    return true;
   });
+
+  // Group filtered items by section
+  const availableSections = [...new Set(items.map(r => r.specItem.section || 'Без раздела'))].sort();
+  const groupedItems: { section: string; rows: typeof filteredItems }[] = [];
+  const sectionMap = new Map<string, typeof filteredItems>();
+  for (const row of filteredItems) {
+    const sec = row.specItem.section || 'Без раздела';
+    if (!sectionMap.has(sec)) sectionMap.set(sec, []);
+    sectionMap.get(sec)!.push(row);
+  }
+  for (const [sec, rows] of sectionMap) {
+    groupedItems.push({ section: sec, rows });
+  }
 
   return (
     <div>
@@ -269,8 +295,8 @@ export function MatchingView({ projectId, onBack }: Props) {
             </thead>
             <tbody>
               {sections.map(sec => (
-                <tr key={sec.name}>
-                  <td>{sec.name}</td>
+                <tr key={sec.name} style={{ cursor: 'pointer' }} onClick={() => setSectionFilter(prev => prev === sec.name ? 'all' : sec.name)}>
+                  <td>{sec.name}{sectionFilter === sec.name && ' ✓'}</td>
                   <td>{sec.itemCount}</td>
                   <td>{sec.matchedCount}</td>
                   <td style={{ fontWeight: 600 }}>{sec.subtotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
@@ -285,12 +311,40 @@ export function MatchingView({ projectId, onBack }: Props) {
         </div>
       )}
 
+      {/* Search + section filter */}
+      {items.length > 0 && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+          <input
+            type="text"
+            placeholder="Поиск по наименованию..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            style={{ flex: 1, padding: '0.4rem 0.6rem', width: 'auto' }}
+          />
+          <select
+            value={sectionFilter}
+            onChange={e => setSectionFilter(e.target.value)}
+            style={{ padding: '0.4rem 0.6rem' }}
+          >
+            <option value="all">Все разделы ({filteredItems.length})</option>
+            {availableSections.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          {(searchQuery || sectionFilter !== 'all') && (
+            <button className="btn btn-secondary btn-sm" onClick={() => { setSearchQuery(''); setSectionFilter('all'); }}>
+              Сбросить
+            </button>
+          )}
+        </div>
+      )}
+
       {items.length === 0 ? (
         <p className="muted">Нет данных для сопоставления. Загрузите спецификацию и счета, затем запустите сопоставление.</p>
       ) : filteredItems.length === 0 ? (
         <p className="muted">По выбранному фильтру позиций не найдено.</p>
       ) : (
-        <MatchTable items={filteredItems} onRefresh={handleRefresh} onManualMatch={setManualMatchSpec} />
+        <MatchTable groupedItems={groupedItems} onRefresh={handleRefresh} onManualMatch={setManualMatchSpec} />
       )}
 
       {/* Unmatched invoice items section */}
@@ -329,7 +383,7 @@ export function MatchingView({ projectId, onBack }: Props) {
                       placeholder="Поиск по названию..."
                       value={unmatchedSearch}
                       onChange={e => setUnmatchedSearch(e.target.value)}
-                      style={{ flex: 1, padding: '0.4rem 0.6rem' }}
+                      style={{ flex: 1, padding: '0.4rem 0.6rem', width: 'auto' }}
                     />
                     <select
                       value={unmatchedSupplierFilter}

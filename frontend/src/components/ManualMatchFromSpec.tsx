@@ -19,7 +19,13 @@ interface InvoiceSearchResult {
   price: number | null;
   amount: number | null;
   supplier_name: string | null;
-  score: number;
+  score: number | null;
+  invoice_file_name: string | null;
+}
+
+interface Supplier {
+  id: number;
+  name: string;
 }
 
 interface Props {
@@ -35,6 +41,13 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
   const [searching, setSearching] = useState(false);
   const [matching, setMatching] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchMode, setSearchMode] = useState<'similarity' | 'like'>('similarity');
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [selectedSupplier, setSelectedSupplier] = useState<number | null>(null);
+
+  useEffect(() => {
+    api.get('/suppliers').then(({ data }) => setSuppliers(data.suppliers || [])).catch(() => {});
+  }, []);
 
   const doSearch = async (q: string) => {
     if (q.trim().length < 2) {
@@ -44,7 +57,11 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
     setSearching(true);
     try {
       const { data } = await api.get(`/projects/${projectId}/invoice-items/search`, {
-        params: { q: q.trim() },
+        params: {
+          q: q.trim(),
+          mode: searchMode,
+          ...(selectedSupplier ? { supplier_id: selectedSupplier } : {}),
+        },
       });
       setResults(data.results || []);
     } catch {
@@ -95,15 +112,30 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="text"
             value={query}
             onChange={e => setQuery(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
             placeholder="Поиск по счетам..."
-            style={{ flex: 1, padding: '0.5rem' }}
+            style={{ flex: 1, minWidth: '150px', padding: '0.5rem', width: 'auto' }}
           />
+          <select
+            value={selectedSupplier ?? ''}
+            onChange={e => setSelectedSupplier(e.target.value ? Number(e.target.value) : null)}
+            style={{ width: 'auto', minWidth: '140px' }}
+          >
+            <option value="">Все поставщики</option>
+            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          <button
+            className={`btn btn-sm ${searchMode === 'like' ? 'btn-primary' : 'btn-secondary'}`}
+            onClick={() => setSearchMode(prev => prev === 'similarity' ? 'like' : 'similarity')}
+            title="Переключить режим поиска"
+          >
+            {searchMode === 'similarity' ? 'Похожие' : 'Точный'}
+          </button>
           <button className="btn btn-primary btn-sm" onClick={handleSearch} disabled={searching}>
             {searching ? '...' : 'Найти'}
           </button>
@@ -112,7 +144,7 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
         {error && <p className="error-msg">{error}</p>}
 
         {results.length === 0 && !searching ? (
-          <p className="muted">Нет результатов. Попробуйте другой запрос.</p>
+          <p className="muted">Нет результатов. Попробуйте другой запрос или переключите режим поиска.</p>
         ) : (
           <table>
             <thead>
@@ -131,11 +163,16 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
                   <td>
                     {item.name}
                     {item.article && <div className="muted" style={{ fontSize: '0.75rem' }}>Арт: {item.article}</div>}
+                    {item.invoice_file_name && (
+                      <div className="muted" style={{ fontSize: '0.75rem' }}>
+                        Счёт: {item.invoice_file_name}
+                      </div>
+                    )}
                   </td>
                   <td>{item.supplier_name || '—'}</td>
                   <td>{item.unit || '—'}</td>
                   <td>{item.price != null ? item.price.toLocaleString('ru-RU') : '—'}</td>
-                  <td>{Math.round(item.score * 100)}%</td>
+                  <td>{item.score != null ? `${Math.round(item.score * 100)}%` : '—'}</td>
                   <td>
                     <button
                       className="btn btn-primary btn-sm"

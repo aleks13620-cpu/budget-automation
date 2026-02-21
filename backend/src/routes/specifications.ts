@@ -216,6 +216,28 @@ router.get('/api/projects/:id/specification', (req: Request, res: Response) => {
 });
 
 // DELETE /api/specifications/:id — delete one specification + its items
+// GET /api/specifications/:id/items — get all items for a specification
+router.get('/api/specifications/:id/items', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const spec = db.prepare('SELECT id, section, file_name FROM specifications WHERE id = ?').get(specId) as { id: number; section: string; file_name: string | null } | undefined;
+    if (!spec) {
+      return res.status(404).json({ error: 'Спецификация не найдена' });
+    }
+
+    const items = db.prepare(
+      'SELECT id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity FROM specification_items WHERE specification_id = ? ORDER BY id'
+    ).all(specId);
+
+    res.json({ specification: spec, items, total: items.length });
+  } catch (error) {
+    console.error('GET /api/specifications/:id/items error:', error);
+    res.status(500).json({ error: 'Ошибка при загрузке позиций спецификации' });
+  }
+});
+
 router.delete('/api/specifications/:id', (req: Request, res: Response) => {
   try {
     const specId = parseInt(String(req.params.id), 10);

@@ -49,6 +49,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     fileName: string; section: string | null; imported: number;
     status: 'ok' | 'conflict' | 'no_section' | 'parse_error'; error?: string;
   }[] | null>(null);
+  const [specItemsView, setSpecItemsView] = useState<number | null>(null);
+  const [specItems, setSpecItems] = useState<any[]>([]);
+  const [specItemsLoading, setSpecItemsLoading] = useState(false);
   const [bulkInvUploading, setBulkInvUploading] = useState(false);
   const [bulkInvResults, setBulkInvResults] = useState<{
     fileName: string; invoiceId: number | null; supplierName: string | null;
@@ -174,6 +177,23 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     }
   };
 
+  const handleViewSpecItems = async (specId: number) => {
+    if (specItemsView === specId) {
+      setSpecItemsView(null);
+      return;
+    }
+    setSpecItemsView(specId);
+    setSpecItemsLoading(true);
+    try {
+      const { data } = await api.get(`/specifications/${specId}/items`);
+      setSpecItems(data.items || []);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка загрузки позиций спецификации' });
+    } finally {
+      setSpecItemsLoading(false);
+    }
+  };
+
   const handleBulkInvoiceUpload = async () => {
     const files = bulkInvFileRef.current?.files;
     if (!files || files.length === 0) return;
@@ -286,51 +306,97 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
               <th></th>
             </tr>
           </thead>
-          <tbody>
             {sections.map(section => {
               const spec = specBySection[section];
               return (
-                <tr key={section}>
-                  <td style={{ fontWeight: 500 }}>{section}</td>
-                  {spec ? (
-                    <>
-                      <td>{spec.file_name || '—'}</td>
-                      <td>{spec.item_count}</td>
-                      <td>
-                        <button
-                          className="btn btn-secondary btn-sm"
-                          onClick={() => handleDeleteSpec(spec.id, section)}
-                        >
-                          Удалить
-                        </button>
-                      </td>
-                    </>
-                  ) : (
-                    <>
-                      <td colSpan={2}>
-                        <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                          <input
-                            type="file"
-                            accept=".xlsx,.xls"
-                            ref={el => { specFileRefs.current[section] = el; }}
-                            style={{ maxWidth: '220px', fontSize: '0.8rem' }}
-                          />
+                <tbody key={section}>
+                  <tr>
+                    <td style={{ fontWeight: 500 }}>{section}</td>
+                    {spec ? (
+                      <>
+                        <td>{spec.file_name || '—'}</td>
+                        <td>{spec.item_count}</td>
+                        <td style={{ display: 'flex', gap: '0.25rem' }}>
                           <button
-                            className="btn btn-primary btn-sm"
-                            onClick={() => handleUploadSpec(section)}
-                            disabled={uploadingSection === section}
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleViewSpecItems(spec.id)}
                           >
-                            {uploadingSection === section ? 'Загрузка...' : 'Загрузить'}
+                            {specItemsView === spec.id ? 'Скрыть' : 'Просмотр'}
                           </button>
-                        </span>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ color: '#dc2626' }}
+                            onClick={() => handleDeleteSpec(spec.id, section)}
+                          >
+                            Удалить
+                          </button>
+                        </td>
+                      </>
+                    ) : (
+                      <>
+                        <td colSpan={2}>
+                          <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <input
+                              type="file"
+                              accept=".xlsx,.xls"
+                              ref={el => { specFileRefs.current[section] = el; }}
+                              style={{ maxWidth: '220px', fontSize: '0.8rem' }}
+                            />
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleUploadSpec(section)}
+                              disabled={uploadingSection === section}
+                            >
+                              {uploadingSection === section ? 'Загрузка...' : 'Загрузить'}
+                            </button>
+                          </span>
+                        </td>
+                        <td></td>
+                      </>
+                    )}
+                  </tr>
+                  {spec && specItemsView === spec.id && (
+                    <tr>
+                      <td colSpan={4} style={{ padding: '0.5rem 1rem', background: '#f8f9fa' }}>
+                        {specItemsLoading ? (
+                          <p className="muted">Загрузка позиций...</p>
+                        ) : (
+                          <>
+                            <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>
+                              Импортировано позиций: {specItems.length}
+                            </p>
+                            <div style={{ maxHeight: '400px', overflow: 'auto' }}>
+                              <table style={{ fontSize: '0.8rem' }}>
+                                <thead>
+                                  <tr>
+                                    <th style={{ width: '40px' }}>#</th>
+                                    <th>Наименование</th>
+                                    <th>Характеристики</th>
+                                    <th style={{ width: '60px' }}>Ед.</th>
+                                    <th style={{ width: '70px' }}>Кол-во</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {specItems.map((item: any, idx: number) => (
+                                    <tr key={item.id}>
+                                      <td>{idx + 1}</td>
+                                      <td>{item.name}</td>
+                                      <td>{item.characteristics || '—'}</td>
+                                      <td>{item.unit || '—'}</td>
+                                      <td>{item.quantity != null ? item.quantity : '—'}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </>
+                        )}
                       </td>
-                      <td></td>
-                    </>
+                    </tr>
                   )}
-                </tr>
+                </tbody>
               );
             })}
-          </tbody>
         </table>
         {totalSpecItems > 0 && (
           <p className="muted" style={{ marginTop: '0.5rem' }}>
@@ -469,6 +535,8 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                       <span style={{ color: '#7c3aed', fontWeight: 600 }}>Ожидание Excel</span>
                     ) : inv.status === 'skipped' ? (
                       <span style={{ color: '#9ca3af', fontWeight: 600 }}>Пропущен</span>
+                    ) : inv.status === 'verified' ? (
+                      <span style={{ color: '#2563eb', fontWeight: 600 }} title={inv.parsing_category_reason || ''}>Проверен ({inv.item_count})</span>
                     ) : inv.parsing_category === 'B' || inv.status === 'needs_mapping' ? (
                       <span style={{ color: '#d97706', fontWeight: 600 }} title={inv.parsing_category_reason || ''}>Требует настройки</span>
                     ) : (
