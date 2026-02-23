@@ -15,11 +15,11 @@ export interface ColumnMapping {
 
 export const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   article: ['артикул', 'article', 'код', 'арт.', 'арт', 'код товара', 'каталожный номер', 'номенклатурный номер'],
-  name: ['наименование', 'товар', 'название', 'описание', 'номенклатура', 'товар/услуга', 'материал', 'продукция', 'товары'],
-  quantity: ['количество', 'кол-во', 'qty', 'кол.', 'кол'],
-  price: ['цена', 'price', 'цена за ед', 'цена с ндс', 'цена с учетом ндс', 'стоимость за ед', 'цена за единицу'],
-  amount: ['сумма', 'total', 'стоимость', 'итого', 'сумма с ндс', 'всего с ндс', 'сумма с учётом ндс'],
-  unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм', 'ед. измерения', 'ед.изм.', 'ед.изм'],
+  name: ['наименование', 'товар', 'название', 'описание', 'номенклатура', 'товар/услуга', 'материал', 'продукция', 'товары', 'наименование товара', 'наименование товаров', 'наименование работ', 'наименование услуг'],
+  quantity: ['количество', 'кол-во', 'qty', 'кол.', 'кол', 'к-во'],
+  price: ['цена', 'price', 'цена за ед', 'цена с ндс', 'цена с учетом ндс', 'стоимость за ед', 'цена за единицу', 'цена без ндс', 'цена,руб', 'цена руб'],
+  amount: ['сумма', 'total', 'стоимость', 'итого', 'сумма с ндс', 'всего с ндс', 'сумма с учётом ндс', 'сумма,руб', 'сумма руб', 'всего'],
+  unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм', 'ед. измерения', 'ед.изм.', 'ед.изм', 'ед'],
 };
 
 export function normalizeText(text: unknown): string {
@@ -42,7 +42,7 @@ export function parsePrice(value: string | null | undefined): number | null {
 }
 
 export function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number } | null {
-  const searchLimit = Math.min(rows.length, 10);
+  const searchLimit = Math.min(rows.length, 30);
 
   for (let i = 0; i < searchLimit; i++) {
     const row = rows[i];
@@ -140,8 +140,19 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
     }
 
     const article = mapping.article !== null ? (row[mapping.article] || '').trim() || null : null;
-    const unit = mapping.unit !== null ? (row[mapping.unit] || '').trim() || null : null;
-    const quantity = mapping.quantity !== null ? parsePrice(row[mapping.quantity]) : null;
+    let unit = mapping.unit !== null ? (row[mapping.unit] || '').trim() || null : null;
+    let quantity = mapping.quantity !== null ? parsePrice(row[mapping.quantity]) : null;
+
+    // Try to split unit from quantity if quantity failed to parse (e.g. "146 пог. м")
+    if (quantity === null && mapping.quantity !== null) {
+      const qtyRaw = (row[mapping.quantity] || '').trim();
+      const match = qtyRaw.match(/^([\d\s.,]+)\s+(.+)$/);
+      if (match) {
+        quantity = parsePrice(match[1]);
+        if (!unit) unit = match[2].trim();
+      }
+    }
+
     const price = mapping.price !== null ? parsePrice(row[mapping.price]) : null;
     const amount = mapping.amount !== null ? parsePrice(row[mapping.amount]) : null;
 
@@ -806,6 +817,32 @@ export function splitTextWithSeparator(
     }
 
     rows.push(cells);
+  }
+
+  // Filter by dominant column count to remove noise/metadata lines
+  // (same logic as textTo2DArray — keep only rows close to the most common column count)
+  const colCounts = new Map<number, number>();
+  for (const row of rows) {
+    if (row.length >= 2) {
+      colCounts.set(row.length, (colCounts.get(row.length) || 0) + 1);
+    }
+  }
+
+  if (colCounts.size > 0) {
+    let dominantCols = 0;
+    let dominantCount = 0;
+    for (const [cols, count] of colCounts) {
+      if (count > dominantCount) {
+        dominantCount = count;
+        dominantCols = cols;
+      }
+    }
+    const filtered = rows.filter(row =>
+      row.length >= dominantCols - 1 && row.length <= dominantCols + 1
+    );
+    if (filtered.length > 0) {
+      return normalizeRowWidths(filtered);
+    }
   }
 
   return normalizeRowWidths(rows);

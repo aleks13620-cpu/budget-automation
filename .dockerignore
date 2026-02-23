@@ -1,0 +1,16 @@
+node_modules
+*/node_modules
+dist
+*/dist
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+data/uploads/*
+.git
+.gitignore
+docs
+docs.md
+README.md
+*.md

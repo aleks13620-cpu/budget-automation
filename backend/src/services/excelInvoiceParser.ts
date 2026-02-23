@@ -86,31 +86,8 @@ export function extractExcelPreviewData(filePath: string, sheetIndex = 0, maxRow
 export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping): InvoiceParseResult {
   const errors: string[] = [];
 
-  // Read workbook
-  const workbook = XLSX.readFile(filePath);
-  const sheetName = workbook.SheetNames[0];
-  if (!sheetName) {
-    return {
-      items: [],
-      errors: ['Файл не содержит листов'],
-      totalRows: 0,
-      skippedRows: 0,
-      invoiceNumber: null,
-      invoiceDate: null,
-      supplierName: null,
-      totalAmount: null,
-    };
-  }
-
-  const sheet = workbook.Sheets[sheetName];
-
-  // Convert sheet to 2D string array (header: 1 gives array of arrays)
-  const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
-
-  // Convert all cell values to strings
-  const rows: string[][] = rawRows.map(row =>
-    row.map(cell => (cell === null || cell === undefined) ? '' : String(cell))
-  );
+  // Read all rows with proper column padding (preserves right-side columns)
+  const rows = extractExcelRawRows(filePath);
 
   if (rows.length < 2) {
     return {

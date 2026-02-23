@@ -154,6 +154,18 @@ app.delete('/api/projects/:id', (req, res) => {
   }
 });
 
+// Serve frontend static files (production/Docker)
+const frontendDist = path.resolve(
+  process.env.FRONTEND_DIST_PATH || path.join(__dirname, '../../frontend/dist')
+);
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.use((req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(frontendDist, 'index.html'));
+  });
+}
+
 // Initialize database and start server
 async function start() {
   try {
