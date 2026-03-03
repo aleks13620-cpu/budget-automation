@@ -665,6 +665,17 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       <h3>Данные файла ({preview.totalRows} строк)</h3>
       {(() => {
         const maxCols = Math.max(...preview.rows.map(r => r.length), 0);
+        const COL_FIELD_LABELS: Record<string, string> = {
+          article: 'Артикул', name: 'Наименование', unit: 'Ед. изм.',
+          quantity: 'Кол-во', price: 'Цена', amount: 'Сумма',
+        };
+        // Reverse mapping: column index → field label
+        const colToField: Record<number, string> = {};
+        for (const [field, colIdx] of Object.entries(mapping)) {
+          if (colIdx !== null && colIdx !== undefined) {
+            colToField[colIdx as number] = COL_FIELD_LABELS[field] || field;
+          }
+        }
         return (
           <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
             <table>
@@ -674,6 +685,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
                   {Array.from({ length: maxCols }, (_, colIdx) => {
                     const isMapped = Object.values(mapping).includes(colIdx);
                     const headerText = headerCols[colIdx];
+                    const fieldLabel = colToField[colIdx];
                     return (
                       <th key={colIdx} style={{
                         fontSize: '0.7rem',
@@ -681,6 +693,16 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
                         whiteSpace: 'nowrap',
                         padding: '4px 6px',
                       }}>
+                        {fieldLabel && (
+                          <div style={{
+                            background: '#4f46e5', color: '#fff',
+                            borderRadius: 3, padding: '1px 5px',
+                            fontSize: '0.65rem', fontWeight: 700,
+                            marginBottom: '2px', display: 'inline-block',
+                          }}>
+                            {fieldLabel}
+                          </div>
+                        )}
                         <div style={{ fontWeight: 700 }}>кол.{colIdx + 1}</div>
                         <div style={{ fontWeight: 400, color: '#666' }}>{headerText || '(без названия)'}</div>
                       </th>
