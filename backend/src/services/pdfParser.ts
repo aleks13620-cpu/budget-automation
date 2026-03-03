@@ -41,11 +41,30 @@ export function parsePrice(value: string | null | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
+// Returns true if the row looks like a requisite/metadata row (INN, BIK, address, etc.)
+// Used by detectColumns() to skip such rows as potential header candidates.
+function isRequisiteLikeRow(row: string[]): boolean {
+  const text = row.join(' ').toLowerCase();
+  let hits = 0;
+  for (const kw of SKIP_ROW_KEYWORDS) {
+    if (text.includes(kw)) {
+      hits++;
+      if (hits >= 2) return true;
+    }
+  }
+  return false;
+}
+
 export function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number } | null {
   const searchLimit = Math.min(rows.length, 30);
 
   for (let i = 0; i < searchLimit; i++) {
     const row = rows[i];
+
+    // Skip rows that look like requisite/metadata rows (INN, BIK, address, etc.)
+    // to avoid false header detection on supplier/payer info blocks
+    if (isRequisiteLikeRow(row)) continue;
+
     const mapping: ColumnMapping = {
       article: null,
       name: null,
@@ -920,12 +939,12 @@ export function categorizeParsingResult(
 
   // B: text readable but no structure
   if (!textQuality.isGarbled && fullText.trim().length >= 50) {
-    return { category: 'B', reason: 'Текст извлечён, но структура таблицы не распознана', confidence: 0.7 };
+    return { category: 'B', reason: `Текст извлечён (${rows.length} строк), заголовки колонок не распознаны — откройте предпросмотр и настройте маппинг`, confidence: 0.7 };
   }
 
   // Borderline: text garbled but rows readable
   if (textQuality.isGarbled && !rowsGarbled && rows.length > 2) {
-    return { category: 'B', reason: 'Текст частично нечитаем, но таблица распознана — требуется настройка', confidence: 0.5 };
+    return { category: 'B', reason: `Текст частично нечитаем (${rows.length} строк), таблица частично распознана — требуется настройка маппинга`, confidence: 0.5 };
   }
 
   return { category: 'C', reason: 'Не удалось извлечь данные из документа', confidence: 0.6 };
