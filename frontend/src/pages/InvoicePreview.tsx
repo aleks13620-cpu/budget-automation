@@ -97,6 +97,7 @@ function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
         setMessage({ type: 'error', text: 'Позиции не найдены. Попробуйте другой разделитель или настройте колонки.' });
       } else {
         setMessage({ type: 'success', text: `Пересобрано: ${data.imported} позиций` });
+        await api.put(`/invoices/${invoiceId}/status`, { status: 'verified' });
       }
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
@@ -542,6 +543,10 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       }
       const msgType = data.imported === 0 ? 'error' : 'success';
       setMessage({ type: msgType as 'success' | 'error', text: msgs.join('. ') });
+
+      if (data.imported > 0) {
+        await api.put(`/invoices/${invoiceId}/status`, { status: 'verified' });
+      }
 
       const invoiceRes = await api.get(`/invoices/${invoiceId}`);
       setInvoice(invoiceRes.data.invoice);

@@ -926,4 +926,26 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
   }
 });
 
+// PUT /api/invoices/:id/status — update invoice status (e.g. mark as verified)
+router.put('/api/invoices/:id/status', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const { status } = req.body as { status: string };
+
+    const allowed = ['pending', 'parsed', 'needs_mapping', 'verified', 'skipped', 'awaiting_excel'];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ error: `Недопустимый статус. Допустимые: ${allowed.join(', ')}` });
+    }
+
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId);
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+
+    db.prepare('UPDATE invoices SET status = ? WHERE id = ?').run(status, invoiceId);
+    res.json({ updated: true, status });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при обновлении статуса', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 export default router;

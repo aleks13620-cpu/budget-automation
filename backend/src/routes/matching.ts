@@ -223,6 +223,22 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
   }
 });
 
+// PUT /api/matching/:id/unconfirm — roll back a confirmed match (keep record, just unconfirm)
+router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
+  try {
+    const matchId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const match = db.prepare('SELECT id FROM matched_items WHERE id = ?').get(matchId);
+    if (!match) return res.status(404).json({ error: 'Матч не найден' });
+
+    db.prepare('UPDATE matched_items SET is_confirmed = 0, is_selected = 0 WHERE id = ?').run(matchId);
+    res.json({ unconfirmed: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при сбросе матча', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 // DELETE /api/matching/:id — reject/delete a match
 router.delete('/api/matching/:id', (req: Request, res: Response) => {
   try {
@@ -504,6 +520,8 @@ router.get('/api/projects/:id/unmatched-invoice-items', (req: Request, res: Resp
 });
 
 // GET /api/projects/:id/invoice-items/search?q=... — fuzzy search invoice items
+// Note: intentionally returns ALL invoice items (including already matched ones),
+// so users can assign the same supplier item to multiple spec positions.
 router.get('/api/projects/:id/invoice-items/search', (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);

@@ -80,6 +80,9 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
   const handleSelect = (matchId: number) =>
     handleAction(matchId, () => api.put(`/matching/select/${matchId}`));
 
+  const handleUnconfirm = (matchId: number) =>
+    handleAction(matchId, () => api.put(`/matching/${matchId}/unconfirm`));
+
   const toggleExpand = (specId: number) => {
     setExpandedId(prev => prev === specId ? null : specId);
   };
@@ -205,7 +208,17 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                         </button>
                       )}
                       {best?.isConfirmed && (
-                        <span className="muted" style={{ fontSize: '0.75rem' }}>Подтверждено</span>
+                        <>
+                          <span className="muted" style={{ fontSize: '0.75rem' }}>Подтверждено</span>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleUnconfirm(best.id)}
+                            disabled={loading === best.id}
+                            title="Сбросить подтверждение"
+                          >
+                            ⟲
+                          </button>
+                        </>
                       )}
                       {hasMatches && (
                         <button

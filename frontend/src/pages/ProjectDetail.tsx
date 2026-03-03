@@ -540,7 +540,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     ) : inv.parsing_category === 'B' || inv.status === 'needs_mapping' ? (
                       <span style={{ color: '#d97706', fontWeight: 600 }} title={inv.parsing_category_reason || ''}>Требует настройки</span>
                     ) : (
-                      <span style={{ color: '#16a34a' }}>Готов ({inv.item_count})</span>
+                      <span style={{ color: '#d97706', fontWeight: 600 }} title="Распознан, но ещё не проверен">Требует проверки ({inv.item_count})</span>
                     )}
                   </td>
                   <td style={{ display: 'flex', gap: '0.25rem' }}>
