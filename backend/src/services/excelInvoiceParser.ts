@@ -115,6 +115,7 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
       name: savedMapping.name,
       unit: savedMapping.unit,
       quantity: savedMapping.quantity,
+      quantity_packages: savedMapping.quantity_packages ?? null,
       price: savedMapping.price,
       amount: savedMapping.amount,
     };

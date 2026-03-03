@@ -10,6 +10,7 @@ interface MatchItem {
   unit: string | null;
   quantity: number | null;
   price: number | null;
+  effectivePrice: number | null;
   amount: number | null;
   confidence: number;
   matchType: string;
@@ -157,7 +158,10 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                       {best?.supplierName || '—'}
                     </div>
                     <div style={{ flex: 1, paddingRight: '0.75rem' }}>
-                      {best?.price != null ? best.price.toLocaleString('ru-RU') : '—'}
+                      {best?.effectivePrice != null ? best.effectivePrice.toLocaleString('ru-RU') : (best?.price != null ? best.price.toLocaleString('ru-RU') : '—')}
+                      {best?.effectivePrice != null && best.effectivePrice !== best.price && (
+                        <span className="muted" style={{ fontSize: '0.65rem', marginLeft: '2px' }}>с НДС</span>
+                      )}
                     </div>
                     <div style={{ flex: 1, paddingRight: '0.75rem' }}>
                       {best?.amount != null ? best.amount.toLocaleString('ru-RU') : '—'}
@@ -245,7 +249,12 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                             {m.article && <span className="muted" style={{ fontSize: '0.75rem' }}> (Арт: {m.article})</span>}
                           </div>
                           <div style={{ flex: 1 }}>{m.supplierName || '—'}</div>
-                          <div style={{ flex: 1 }}>{m.price != null ? m.price.toLocaleString('ru-RU') : '—'}</div>
+                          <div style={{ flex: 1 }}>
+                            {(m.effectivePrice ?? m.price) != null ? (m.effectivePrice ?? m.price)!.toLocaleString('ru-RU') : '—'}
+                            {m.effectivePrice != null && m.effectivePrice !== m.price && (
+                              <span className="muted" style={{ fontSize: '0.65rem', marginLeft: '2px' }}>с НДС</span>
+                            )}
+                          </div>
                           <div style={{ flex: 1 }}>{m.amount != null ? m.amount.toLocaleString('ru-RU') : '—'}</div>
                           <div style={{ flex: '0 0 80px' }}>
                             <span className="confidence-badge" title={MATCH_TYPE_LABELS[m.matchType] || m.matchType}>

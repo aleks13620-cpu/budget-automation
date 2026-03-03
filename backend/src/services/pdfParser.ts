@@ -9,6 +9,7 @@ export interface ColumnMapping {
   name: number | null;
   unit: number | null;
   quantity: number | null;
+  quantity_packages: number | null;
   price: number | null;
   amount: number | null;
 }
@@ -17,6 +18,7 @@ export const COLUMN_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   article: ['артикул', 'article', 'код', 'арт.', 'арт', 'код товара', 'каталожный номер', 'номенклатурный номер'],
   name: ['наименование', 'товар', 'название', 'описание', 'номенклатура', 'товар/услуга', 'материал', 'продукция', 'товары', 'наименование товара', 'наименование товаров', 'наименование работ', 'наименование услуг'],
   quantity: ['количество', 'кол-во', 'qty', 'кол.', 'кол', 'к-во'],
+  quantity_packages: ['кол-во уп', 'кол уп', 'упак', 'уп.', 'упаковок', 'количество упак', 'кол-во упак'],
   price: ['цена', 'price', 'цена за ед', 'цена с ндс', 'цена с учетом ндс', 'стоимость за ед', 'цена за единицу', 'цена без ндс', 'цена,руб', 'цена руб'],
   amount: ['сумма', 'total', 'стоимость', 'итого', 'сумма с ндс', 'всего с ндс', 'сумма с учётом ндс', 'сумма,руб', 'сумма руб', 'всего'],
   unit: ['ед.', 'unit', 'ед. изм', 'единица', 'изм', 'ед. измерения', 'ед.изм.', 'ед.изм', 'ед'],
@@ -70,6 +72,7 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
       name: null,
       unit: null,
       quantity: null,
+      quantity_packages: null,
       price: null,
       amount: null,
     };
@@ -172,6 +175,7 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
       }
     }
 
+    const quantityPackages = mapping.quantity_packages !== null ? parsePrice(row[mapping.quantity_packages]) : null;
     const price = mapping.price !== null ? parsePrice(row[mapping.price]) : null;
     const amount = mapping.amount !== null ? parsePrice(row[mapping.amount]) : null;
 
@@ -180,6 +184,7 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
       name,
       unit,
       quantity,
+      quantity_packages: quantityPackages,
       price,
       amount,
       row_index: i,
@@ -528,6 +533,7 @@ export interface SavedMapping {
   name: number | null;
   unit: number | null;
   quantity: number | null;
+  quantity_packages?: number | null;
   price: number | null;
   amount: number | null;
   headerRow: number;
@@ -720,6 +726,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
       name: savedMapping.name,
       unit: savedMapping.unit,
       quantity: savedMapping.quantity,
+      quantity_packages: savedMapping.quantity_packages ?? null,
       price: savedMapping.price,
       amount: savedMapping.amount,
     };

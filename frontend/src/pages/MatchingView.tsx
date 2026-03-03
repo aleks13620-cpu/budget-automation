@@ -13,6 +13,7 @@ interface MatchItem {
   unit: string | null;
   quantity: number | null;
   price: number | null;
+  effectivePrice: number | null;
   amount: number | null;
   confidence: number;
   matchType: string;

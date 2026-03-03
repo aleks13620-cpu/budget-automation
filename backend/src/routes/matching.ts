@@ -5,6 +5,14 @@ import { runMatching, normalizeForMatching } from '../services/matcher';
 
 const router = Router();
 
+function effectivePrice(price: number | null, vatRate: number | null, pricesIncludeVat: number | null): number | null {
+  if (price == null) return null;
+  if (pricesIncludeVat === 0 && vatRate != null && vatRate > 0) {
+    return Math.round(price * (1 + vatRate / 100) * 100) / 100;
+  }
+  return price;
+}
+
 // POST /api/projects/:id/matching/run — run matching algorithm
 router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
   try {
@@ -100,7 +108,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       SELECT m.id, m.invoice_item_id, m.confidence, m.match_type, m.is_confirmed, m.is_selected,
              ii.name as invoice_name, ii.article, ii.unit as invoice_unit,
              ii.quantity as invoice_quantity, ii.price, ii.amount,
-             s.name as supplier_name
+             s.name as supplier_name, s.vat_rate, s.prices_include_vat
       FROM matched_items m
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
       JOIN invoices i ON ii.invoice_id = i.id
@@ -120,6 +128,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
         invoice_unit: string | null; invoice_quantity: number | null;
         price: number | null; amount: number | null;
         supplier_name: string | null;
+        vat_rate: number | null; prices_include_vat: number | null;
       }>;
 
       if (matches.length > 0) matchedCount++;
@@ -136,6 +145,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
           unit: m.invoice_unit,
           quantity: m.invoice_quantity,
           price: m.price,
+          effectivePrice: effectivePrice(m.price, m.vat_rate, m.prices_include_vat),
           amount: m.amount,
           confidence: m.confidence,
           matchType: m.match_type,
@@ -606,7 +616,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
     const rows = db.prepare(`
       SELECT si.id, si.name, si.unit, si.quantity, si.section,
              ii.price, ii.name as invoice_name, ii.article,
-             s.name as supplier_name,
+             s.name as supplier_name, s.vat_rate, s.prices_include_vat,
              m.id as match_id, m.is_confirmed
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
@@ -619,6 +629,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       id: number; name: string; unit: string | null; quantity: number | null;
       section: string | null; price: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
+      vat_rate: number | null; prices_include_vat: number | null;
       match_id: number | null; is_confirmed: number | null;
     }>;
 
@@ -643,8 +654,9 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       const section = sectionMap.get(sectionName)!;
 
       const price = row.price;
+      const effPrice = effectivePrice(price, row.vat_rate, row.prices_include_vat);
       const qty = row.quantity || 0;
-      const amount = price != null ? price * qty : null;
+      const amount = effPrice != null ? effPrice * qty : null;
 
       if (amount != null) {
         section.subtotal += amount;
@@ -656,7 +668,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
         name: row.name,
         unit: row.unit,
         quantity: row.quantity,
-        price,
+        price: effPrice,
         amount,
         invoiceName: row.invoice_name,
         article: row.article,

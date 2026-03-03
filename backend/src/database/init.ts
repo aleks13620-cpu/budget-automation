@@ -20,6 +20,7 @@ function initializeDatabase(): void {
       'ALTER TABLE invoices ADD COLUMN parsing_category_reason TEXT',
       'ALTER TABLE invoice_items ADD COLUMN is_manual INTEGER DEFAULT 0',
       'ALTER TABLE invoice_items ADD COLUMN is_delivery INTEGER DEFAULT 0',
+      'ALTER TABLE invoice_items ADD COLUMN quantity_packages REAL DEFAULT NULL',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

@@ -19,7 +19,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     const rows = db.prepare(`
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
              ii.price, ii.name as invoice_name, ii.article,
-             s.name as supplier_name
+             s.name as supplier_name, s.vat_rate, s.prices_include_vat
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
       LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
@@ -32,7 +32,16 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       unit: string | null; quantity: number | null; section: string | null;
       price: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
+      vat_rate: number | null; prices_include_vat: number | null;
     }>;
+
+    function effPrice(price: number | null, vatRate: number | null, inclVat: number | null): number | null {
+      if (price == null) return null;
+      if (inclVat === 0 && vatRate != null && vatRate > 0) {
+        return Math.round(price * (1 + vatRate / 100) * 100) / 100;
+      }
+      return price;
+    }
 
     // Group by section
     const sectionMap = new Map<string, typeof rows>();
@@ -51,7 +60,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     wsData.push([]); // empty row
 
     // Column headers
-    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Сумма', 'Поставщик'];
+    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик'];
     wsData.push(headerRow);
 
     let grandTotal = 0;
@@ -71,7 +80,8 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       for (const item of sectionItems) {
         const qty = item.quantity || 0;
         const price = item.price;
-        const amount = price != null ? Math.round(price * qty * 100) / 100 : null;
+        const priceWithVat = effPrice(price, item.vat_rate, item.prices_include_vat);
+        const amount = priceWithVat != null ? Math.round(priceWithVat * qty * 100) / 100 : null;
         if (amount != null) sectionTotal += amount;
 
         wsData.push([
@@ -80,6 +90,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           item.unit || '',
           item.quantity,
           price,
+          priceWithVat,
           amount,
           item.supplier_name || '',
         ]);
@@ -89,13 +100,13 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
 
       // Section subtotal
       subtotalRows.push(wsData.length);
-      wsData.push([null, `Итого ${sectionName}:`, null, null, null, Math.round(sectionTotal * 100) / 100, null]);
+      wsData.push([null, `Итого ${sectionName}:`, null, null, null, null, Math.round(sectionTotal * 100) / 100, null]);
       wsData.push([]); // empty row
     }
 
     // Grand total
     const grandTotalRowIdx = wsData.length;
-    wsData.push([null, 'ОБЩИЙ ИТОГ:', null, null, null, Math.round(grandTotal * 100) / 100, null]);
+    wsData.push([null, 'ОБЩИЙ ИТОГ:', null, null, null, null, Math.round(grandTotal * 100) / 100, null]);
 
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -108,19 +119,20 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 8 },   // Ед.
       { wch: 10 },  // Кол-во
       { wch: 12 },  // Цена
+      { wch: 14 },  // Цена с НДС
       { wch: 14 },  // Сумма
       { wch: 20 },  // Поставщик
     ];
 
     // Merge title row
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 6 } }, // title
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 6 } }, // date
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }, // title
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } }, // date
     ];
 
     // Merge section header rows
     for (const r of sectionHeaderRows) {
-      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 6 } });
+      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 7 } });
     }
 
     XLSX.utils.book_append_sheet(wb, ws, 'Спецификация');

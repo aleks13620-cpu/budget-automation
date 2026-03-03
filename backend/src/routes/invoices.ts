@@ -150,7 +150,8 @@ async function processInvoiceFile(
           const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
           const colMapping = {
             article: savedMapping.article, name: savedMapping.name, unit: savedMapping.unit,
-            quantity: savedMapping.quantity, price: savedMapping.price, amount: savedMapping.amount,
+            quantity: savedMapping.quantity, quantity_packages: savedMapping.quantity_packages ?? null,
+            price: savedMapping.price, amount: savedMapping.amount,
           };
           const tableResult = parseTableData(splitRows, colMapping, savedMapping.headerRow + 1);
           let totalAmount: number | null = null;
@@ -208,8 +209,8 @@ async function processInvoiceFile(
   `);
 
   const insertItem = db.prepare(`
-    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = db.transaction(() => {
@@ -234,6 +235,7 @@ async function processInvoiceFile(
         item.name,
         item.unit,
         item.quantity,
+        item.quantity_packages ?? null,
         item.price,
         item.amount,
         item.row_index,
@@ -664,13 +666,13 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
 
     // Replace items in transaction
     const insertItem = db.prepare(
-      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       for (const item of parseResult.items) {
-        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
       }
       const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
@@ -883,6 +885,7 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
       name: mapping.name ?? null,
       unit: mapping.unit ?? null,
       quantity: mapping.quantity ?? null,
+      quantity_packages: mapping.quantity_packages ?? null,
       price: mapping.price ?? null,
       amount: mapping.amount ?? null,
     };
@@ -897,13 +900,13 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
     }
 
     const insertItem = db.prepare(
-      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       for (const item of parseResult.items) {
-        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
       }
       const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
