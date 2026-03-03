@@ -52,6 +52,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   const [specItemsView, setSpecItemsView] = useState<number | null>(null);
   const [specItems, setSpecItems] = useState<any[]>([]);
   const [specItemsLoading, setSpecItemsLoading] = useState(false);
+  const [deliveryTotal, setDeliveryTotal] = useState<number | null>(null);
   const [bulkInvUploading, setBulkInvUploading] = useState(false);
   const [bulkInvResults, setBulkInvResults] = useState<{
     fileName: string; invoiceId: number | null; supplierName: string | null;
@@ -75,13 +76,15 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   const loadData = async () => {
     setLoading(true);
     try {
-      const [specRes, invRes] = await Promise.all([
+      const [specRes, invRes, delivRes] = await Promise.all([
         api.get(`/projects/${projectId}/specifications`),
         api.get(`/projects/${projectId}/invoices`),
+        api.get(`/projects/${projectId}/delivery-total`).catch(() => ({ data: { total: 0 } })),
       ]);
       setSpecifications(specRes.data.specifications || []);
       setSections(specRes.data.sections || []);
       setInvoices(invRes.data.invoices || []);
+      setDeliveryTotal(delivRes.data.total > 0 ? delivRes.data.total : null);
     } catch {
       setMessage({ type: 'error', text: 'Не удалось загрузить данные проекта' });
     } finally {
@@ -569,6 +572,13 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
               ))}
             </tbody>
           </table>
+        )}
+
+        {deliveryTotal != null && (
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem 0.75rem', background: '#fff7ed', borderRadius: '4px', border: '1px solid #fed7aa', display: 'inline-block' }}>
+            <span style={{ color: '#9a3412', fontWeight: 600 }}>Доставка по проекту: {deliveryTotal.toLocaleString('ru-RU')} ₽</span>
+            <span className="muted" style={{ marginLeft: '0.5rem', fontSize: '0.8rem' }}>(суммарно по всем счетам)</span>
+          </div>
         )}
       </div>
 

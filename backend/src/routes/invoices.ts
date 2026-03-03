@@ -50,6 +50,16 @@ function fixFilename(originalname: string): string {
   }
 }
 
+const DELIVERY_KEYWORDS = [
+  'доставка', 'транспортные расходы', 'транспортные услуги',
+  'транспортировка', 'доставка товара', 'грузоперевозк',
+];
+
+function isDeliveryItem(name: string): boolean {
+  const lower = name.toLowerCase();
+  return DELIVERY_KEYWORDS.some(kw => lower.includes(kw));
+}
+
 // Helper: load saved parser config for a supplier
 function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   const db = getDatabase();
@@ -198,8 +208,8 @@ async function processInvoiceFile(
   `);
 
   const insertItem = db.prepare(`
-    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = db.transaction(() => {
@@ -227,6 +237,7 @@ async function processInvoiceFile(
         item.price,
         item.amount,
         item.row_index,
+        isDeliveryItem(item.name) ? 1 : 0,
       );
     }
 
@@ -653,13 +664,13 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
 
     // Replace items in transaction
     const insertItem = db.prepare(
-      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       for (const item of parseResult.items) {
-        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
       }
       const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
@@ -886,13 +897,13 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
     }
 
     const insertItem = db.prepare(
-      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     );
 
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       for (const item of parseResult.items) {
-        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index);
+        insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
       }
       const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
       const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
@@ -923,6 +934,23 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse-with-separator error:', error);
     res.status(500).json({ error: 'Ошибка при пересборке с разделителем', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// GET /api/projects/:id/delivery-total — sum of all delivery rows across project invoices
+router.get('/api/projects/:id/delivery-total', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const row = db.prepare(`
+      SELECT COALESCE(SUM(ii.amount), 0) as total
+      FROM invoice_items ii
+      JOIN invoices i ON i.id = ii.invoice_id
+      WHERE i.project_id = ? AND ii.is_delivery = 1
+    `).get(projectId) as { total: number };
+    res.json({ total: row.total });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении суммы доставки', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
