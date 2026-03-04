@@ -27,6 +27,7 @@ function initializeDatabase(): void {
       'ALTER TABLE invoice_items ADD COLUMN needs_unit_review INTEGER DEFAULT 0',
       'ALTER TABLE invoice_items ADD COLUMN original_price REAL DEFAULT NULL',
       'ALTER TABLE invoice_items ADD COLUMN original_unit TEXT DEFAULT NULL',
+      'ALTER TABLE matched_items ADD COLUMN is_analog INTEGER DEFAULT 0',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

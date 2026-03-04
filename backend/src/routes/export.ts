@@ -15,15 +15,28 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Проект не найден' });
     }
 
-    // Get all spec items with their selected match
+    // mode: 'best' (default) = all selected, 'original' = non-analog only, 'analog' = analog only
+    const mode = String(req.query.mode || 'best');
+    let analogFilter = '';
+    if (mode === 'original') {
+      analogFilter = 'AND (COALESCE(m.is_analog, 0) = 0)';
+    } else if (mode === 'analog') {
+      analogFilter = 'AND m.is_analog = 1';
+    }
+
+    // Get all spec items with their selected match (including price list items)
     const rows = db.prepare(`
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
-             ii.price, ii.name as invoice_name, ii.article,
-             s.name as supplier_name, s.vat_rate, s.prices_include_vat
+             COALESCE(ii.price, pli.price) as price,
+             COALESCE(ii.name, pli.name) as invoice_name,
+             COALESCE(ii.article, pli.article) as article,
+             s.name as supplier_name, s.vat_rate, s.prices_include_vat,
+             COALESCE(m.is_analog, 0) as is_analog
       FROM specification_items si
-      LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
-      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1 ${analogFilter}
+      LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
       LEFT JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE si.project_id = ?
       ORDER BY si.section, si.id
@@ -33,6 +46,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       price: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
+      is_analog: number;
     }>;
 
     function effPrice(price: number | null, vatRate: number | null, inclVat: number | null): number | null {
@@ -55,12 +69,13 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     const wsData: (string | number | null)[][] = [];
 
     // Header
-    wsData.push([`Итоговая спецификация: ${project.name}`]);
+    const modeLabel = mode === 'original' ? ' [Оригинал]' : mode === 'analog' ? ' [Аналог]' : '';
+    wsData.push([`Итоговая спецификация: ${project.name}${modeLabel}`]);
     wsData.push([`Дата: ${new Date().toLocaleDateString('ru-RU')}`]);
     wsData.push([]); // empty row
 
     // Column headers
-    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик'];
+    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип'];
     wsData.push(headerRow);
 
     let grandTotal = 0;
@@ -93,6 +108,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           priceWithVat,
           amount,
           item.supplier_name || '',
+          item.is_analog ? 'Аналог' : 'Ориг.',
         ]);
       }
 
@@ -100,13 +116,13 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
 
       // Section subtotal
       subtotalRows.push(wsData.length);
-      wsData.push([null, `Итого ${sectionName}:`, null, null, null, null, Math.round(sectionTotal * 100) / 100, null]);
+      wsData.push([null, `Итого ${sectionName}:`, null, null, null, null, Math.round(sectionTotal * 100) / 100, null, null]);
       wsData.push([]); // empty row
     }
 
     // Grand total
     const grandTotalRowIdx = wsData.length;
-    wsData.push([null, 'ОБЩИЙ ИТОГ:', null, null, null, null, Math.round(grandTotal * 100) / 100, null]);
+    wsData.push([null, 'ОБЩИЙ ИТОГ:', null, null, null, null, Math.round(grandTotal * 100) / 100, null, null]);
 
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -122,17 +138,18 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 14 },  // Цена с НДС
       { wch: 14 },  // Сумма
       { wch: 20 },  // Поставщик
+      { wch: 9 },   // Тип
     ];
 
     // Merge title row
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }, // title
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 7 } }, // date
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }, // title
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 8 } }, // date
     ];
 
     // Merge section header rows
     for (const r of sectionHeaderRows) {
-      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 7 } });
+      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 8 } });
     }
 
     XLSX.utils.book_append_sheet(wb, ws, 'Спецификация');
@@ -140,7 +157,8 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // Write to buffer
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-    const fileName = encodeURIComponent(`${project.name}_спецификация.xlsx`);
+    const modeSuffix = mode === 'original' ? '_оригинал' : mode === 'analog' ? '_аналог' : '';
+    const fileName = encodeURIComponent(`${project.name}_спецификация${modeSuffix}.xlsx`);
     res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${fileName}`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(Buffer.from(buf));

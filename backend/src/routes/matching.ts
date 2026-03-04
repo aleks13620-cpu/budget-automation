@@ -140,7 +140,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
 
     const getMatches = db.prepare(`
       SELECT m.id, m.invoice_item_id, m.confidence, m.match_type, m.is_confirmed, m.is_selected,
-             COALESCE(m.source, 'invoice') as source,
+             COALESCE(m.source, 'invoice') as source, COALESCE(m.is_analog, 0) as is_analog,
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
              COALESCE(ii.unit, pli.unit) as invoice_unit,
@@ -164,7 +164,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       const matches = getMatches.all(spec.id) as Array<{
         id: number; invoice_item_id: number; confidence: number;
         match_type: string; is_confirmed: number; is_selected: number;
-        source: string;
+        source: string; is_analog: number;
         invoice_name: string; article: string | null;
         invoice_unit: string | null; invoice_quantity: number | null;
         price: number | null; amount: number | null;
@@ -192,6 +192,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
           matchType: m.match_type,
           isConfirmed: m.is_confirmed === 1,
           isSelected: m.is_selected === 1,
+          isAnalog: m.is_analog === 1,
           source: m.source ?? 'invoice',
         })),
       };
@@ -342,7 +343,7 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
       ).run(match.specification_item_id);
 
       db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
+        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?'
       ).run(matchId);
 
       // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
@@ -654,16 +655,19 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Проект не найден' });
     }
 
-    // Get all spec items with their selected match
+    // Get all spec items with their selected match (including price list items)
     const rows = db.prepare(`
       SELECT si.id, si.name, si.unit, si.quantity, si.section,
-             ii.price, ii.name as invoice_name, ii.article,
+             COALESCE(ii.price, pli.price) as price,
+             COALESCE(ii.name, pli.name) as invoice_name,
+             COALESCE(ii.article, pli.article) as article,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
-             m.id as match_id, m.is_confirmed
+             m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
-      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
       LEFT JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE si.project_id = ?
       ORDER BY si.section, si.id
@@ -672,7 +676,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       section: string | null; price: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
-      match_id: number | null; is_confirmed: number | null;
+      match_id: number | null; is_confirmed: number | null; is_analog: number;
     }>;
 
     // Group by section
@@ -684,14 +688,18 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
         isConfirmed: boolean; hasMatch: boolean;
       }>;
       subtotal: number;
+      originalSubtotal: number;
+      analogSubtotal: number;
     }>();
 
     let grandTotal = 0;
+    let originalGrandTotal = 0;
+    let analogGrandTotal = 0;
 
     for (const row of rows) {
       const sectionName = row.section || 'Без раздела';
       if (!sectionMap.has(sectionName)) {
-        sectionMap.set(sectionName, { items: [], subtotal: 0 });
+        sectionMap.set(sectionName, { items: [], subtotal: 0, originalSubtotal: 0, analogSubtotal: 0 });
       }
       const section = sectionMap.get(sectionName)!;
 
@@ -703,6 +711,13 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       if (amount != null) {
         section.subtotal += amount;
         grandTotal += amount;
+        if (row.is_analog === 1) {
+          section.analogSubtotal += amount;
+          analogGrandTotal += amount;
+        } else {
+          section.originalSubtotal += amount;
+          originalGrandTotal += amount;
+        }
       }
 
       section.items.push({
@@ -725,6 +740,8 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       itemCount: data.items.length,
       matchedCount: data.items.filter(i => i.hasMatch).length,
       subtotal: Math.round(data.subtotal * 100) / 100,
+      originalSubtotal: Math.round(data.originalSubtotal * 100) / 100,
+      analogSubtotal: Math.round(data.analogSubtotal * 100) / 100,
       items: data.items,
     }));
 
@@ -732,6 +749,8 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       projectName: project.name,
       sections,
       grandTotal: Math.round(grandTotal * 100) / 100,
+      originalGrandTotal: Math.round(originalGrandTotal * 100) / 100,
+      analogGrandTotal: Math.round(analogGrandTotal * 100) / 100,
     });
   } catch (error) {
     res.status(500).json({

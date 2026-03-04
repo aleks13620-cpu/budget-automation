@@ -19,6 +19,7 @@ interface MatchItem {
   matchType: string;
   isConfirmed: boolean;
   isSelected: boolean;
+  isAnalog: boolean;
 }
 
 interface SpecItem {
@@ -48,6 +49,8 @@ interface SectionSummary {
   itemCount: number;
   matchedCount: number;
   subtotal: number;
+  originalSubtotal: number;
+  analogSubtotal: number;
 }
 
 interface Props {
@@ -73,6 +76,9 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [summary, setSummary] = useState<Summary>({ total: 0, matched: 0, confirmed: 0, unmatched: 0 });
   const [sections, setSections] = useState<SectionSummary[]>([]);
   const [grandTotal, setGrandTotal] = useState(0);
+  const [originalGrandTotal, setOriginalGrandTotal] = useState(0);
+  const [analogGrandTotal, setAnalogGrandTotal] = useState(0);
+  const [exportMode, setExportMode] = useState<'best' | 'original' | 'analog'>('best');
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [runningIncremental, setRunningIncremental] = useState(false);
@@ -108,6 +114,8 @@ export function MatchingView({ projectId, onBack }: Props) {
       const { data } = await api.get(`/projects/${projectId}/summary`);
       setSections(data.sections || []);
       setGrandTotal(data.grandTotal || 0);
+      setOriginalGrandTotal(data.originalGrandTotal || 0);
+      setAnalogGrandTotal(data.analogGrandTotal || 0);
     } catch {
       // ignore
     }
@@ -133,7 +141,7 @@ export function MatchingView({ projectId, onBack }: Props) {
   const handleExport = async () => {
     setExporting(true);
     try {
-      const response = await api.get(`/projects/${projectId}/export`, { responseType: 'blob' });
+      const response = await api.get(`/projects/${projectId}/export?mode=${exportMode}`, { responseType: 'blob' });
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -246,6 +254,16 @@ export function MatchingView({ projectId, onBack }: Props) {
           <button className="btn btn-secondary" onClick={handleRunIncremental} disabled={running || runningIncremental}>
             {runningIncremental ? 'Обновление...' : 'Обновить (сохранить подтверждённые)'}
           </button>
+          <select
+            value={exportMode}
+            onChange={e => setExportMode(e.target.value as 'best' | 'original' | 'analog')}
+            style={{ padding: '0.35rem 0.5rem' }}
+            title="Режим экспорта"
+          >
+            <option value="best">Лучший</option>
+            <option value="original">Оригинал</option>
+            <option value="analog">Аналог</option>
+          </select>
           <button className="btn btn-secondary" onClick={handleExport} disabled={exporting || items.length === 0}>
             {exporting ? 'Экспорт...' : 'Экспорт в Excel'}
           </button>
@@ -315,8 +333,10 @@ export function MatchingView({ projectId, onBack }: Props) {
               <tr>
                 <th>Раздел</th>
                 <th style={{ width: '80px' }}>Позиций</th>
-                <th style={{ width: '100px' }}>С ценой</th>
-                <th style={{ width: '140px' }}>Сумма</th>
+                <th style={{ width: '80px' }}>С ценой</th>
+                <th style={{ width: '140px' }}>Ориг.</th>
+                <th style={{ width: '140px' }}>Аналог</th>
+                <th style={{ width: '140px' }}>Итого</th>
               </tr>
             </thead>
             <tbody>
@@ -325,11 +345,19 @@ export function MatchingView({ projectId, onBack }: Props) {
                   <td>{sec.name}{sectionFilter === sec.name && ' ✓'}</td>
                   <td>{sec.itemCount}</td>
                   <td>{sec.matchedCount}</td>
+                  <td>{sec.originalSubtotal > 0 ? sec.originalSubtotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 }) : '—'}</td>
+                  <td style={{ color: sec.analogSubtotal > 0 ? '#b35c00' : undefined }}>
+                    {sec.analogSubtotal > 0 ? sec.analogSubtotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 }) : '—'}
+                  </td>
                   <td style={{ fontWeight: 600 }}>{sec.subtotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
                 </tr>
               ))}
               <tr className="grand-total-row">
                 <td colSpan={3} style={{ fontWeight: 700, textAlign: 'right' }}>ОБЩИЙ ИТОГ:</td>
+                <td style={{ fontWeight: 700 }}>{originalGrandTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
+                <td style={{ fontWeight: 700, color: analogGrandTotal > 0 ? '#b35c00' : undefined }}>
+                  {analogGrandTotal > 0 ? analogGrandTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 }) : '—'}
+                </td>
                 <td style={{ fontWeight: 700 }}>{grandTotal.toLocaleString('ru-RU', { minimumFractionDigits: 2 })}</td>
               </tr>
             </tbody>
