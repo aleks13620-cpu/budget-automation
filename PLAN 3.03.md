@@ -18,7 +18,7 @@
 | 7 | И-6 | ✅ Выполнен | `98cc79f` |
 | 8 | И-4 backend | ✅ Выполнен | `c1b32a3` |
 | 9 | И-4 frontend | ✅ Выполнен | `7216752` |
-| 10 | И-9 backend | ⬜ Не начат | — |
+| 10 | И-9 backend | ✅ Выполнен | `d86e427` |
 | 11 | И-9 frontend + матчинг | ⬜ Не начат | — |
 | 12 | И-14 | ⬜ Не начат | — |
 | 13 | И-16 | ⬜ Не начат | — |
@@ -234,7 +234,7 @@ ALTER TABLE invoice_items ADD COLUMN original_unit TEXT DEFAULT NULL;
 
 ---
 
-### ⬜ Этап 10 — И-9 backend: прайсы (~4 ч)
+### ✅ Этап 10 — И-9 backend: прайсы (~4 ч) · коммит `d86e427`
 
 **DB Migration:**
 ```sql
