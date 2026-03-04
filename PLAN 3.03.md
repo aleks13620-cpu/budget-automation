@@ -15,7 +15,7 @@
 | 4 | И-8 | ✅ Выполнен | `34e6b56` |
 | 5 | И-5, И-11 backend | ✅ Выполнен | `3127fed` |
 | 6 | И-11 frontend, И-13 | ✅ Выполнен | `25cfd6b` |
-| 7 | И-6 | ⬜ Не начат | — |
+| 7 | И-6 | ✅ Выполнен | `98cc79f` |
 | 8 | И-4 backend | ⬜ Не начат | — |
 | 9 | И-4 frontend | ⬜ Не начат | — |
 | 10 | И-9 backend | ⬜ Не начат | — |
@@ -157,7 +157,7 @@ ALTER TABLE invoice_items ADD COLUMN quantity_packages REAL DEFAULT NULL;
 
 ---
 
-### ⬜ Этап 7 — И-6: Скидки (~4 ч)
+### ✅ Этап 7 — И-6: Скидки (~4 ч) · коммит `98cc79f`
 
 **DB Migration:**
 ```sql
