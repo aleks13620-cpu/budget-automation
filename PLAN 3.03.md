@@ -14,7 +14,7 @@
 | 3 | И-7 | ✅ Выполнен | `05ad403` |
 | 4 | И-8 | ✅ Выполнен | `34e6b56` |
 | 5 | И-5, И-11 backend | ✅ Выполнен | `3127fed` |
-| 6 | И-11 frontend, И-13 | ⬜ Не начат | — |
+| 6 | И-11 frontend, И-13 | ✅ Выполнен | `25cfd6b` |
 | 7 | И-6 | ⬜ Не начат | — |
 | 8 | И-4 backend | ⬜ Не начат | — |
 | 9 | И-4 frontend | ⬜ Не начат | — |
@@ -135,7 +135,7 @@ ALTER TABLE invoice_items ADD COLUMN quantity_packages REAL DEFAULT NULL;
 
 ---
 
-### ⬜ Этап 6 — И-11 frontend + И-13 (~4 ч)
+### ✅ Этап 6 — И-11 frontend + И-13 (~4 ч) · коммит `25cfd6b`
 
 **И-11 frontend (~1.5 ч):**
 1. `ColumnMapper.tsx`: добавить поле «Кол-во (упак.)» → маппинг `quantity_packages`
