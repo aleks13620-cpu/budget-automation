@@ -9,6 +9,7 @@ import invoiceRoutes from './routes/invoices';
 import supplierRoutes from './routes/suppliers';
 import matchingRoutes from './routes/matching';
 import exportRoutes from './routes/export';
+import unitTriggerRoutes from './routes/unitTriggers';
 
 dotenv.config();
 
@@ -26,6 +27,7 @@ app.use(invoiceRoutes);
 app.use(supplierRoutes);
 app.use(matchingRoutes);
 app.use(exportRoutes);
+app.use(unitTriggerRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

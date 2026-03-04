@@ -103,6 +103,16 @@ CREATE TABLE IF NOT EXISTS matched_items (
   FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE
 );
 
+-- Триггеры пересчёта единиц измерения
+CREATE TABLE IF NOT EXISTS unit_conversion_triggers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  keyword TEXT NOT NULL,
+  from_unit TEXT,
+  to_unit TEXT NOT NULL,
+  description TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Настройки парсеров для поставщиков
 CREATE TABLE IF NOT EXISTS supplier_parser_configs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

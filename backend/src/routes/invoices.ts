@@ -248,6 +248,19 @@ async function processInvoiceFile(
     return invoiceId;
   })();
 
+  // Flag items that match unit conversion triggers
+  const triggers = db.prepare('SELECT * FROM unit_conversion_triggers').all() as { id: number; keyword: string }[];
+  if (triggers.length > 0) {
+    const flagItem = db.prepare('UPDATE invoice_items SET needs_unit_review = 1 WHERE id = ?');
+    const items = db.prepare('SELECT id, name FROM invoice_items WHERE invoice_id = ?').all(result) as { id: number; name: string }[];
+    for (const item of items) {
+      const nameLower = item.name.toLowerCase();
+      if (triggers.some(t => nameLower.includes(t.keyword.toLowerCase()))) {
+        flagItem.run(item.id);
+      }
+    }
+  }
+
   return {
     invoiceId: result,
     supplierName,
@@ -1013,6 +1026,37 @@ router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) =>
     res.json({ applied: true, discount_percent });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при применении скидки', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// PUT /api/invoice-items/:id/apply-unit-conversion { new_unit, factor }
+router.put('/api/invoice-items/:id/apply-unit-conversion', (req: Request, res: Response) => {
+  try {
+    const itemId = parseInt(String(req.params.id), 10);
+    const { new_unit, factor } = req.body as { new_unit: string; factor: number };
+
+    if (!new_unit || typeof factor !== 'number' || factor <= 0) {
+      return res.status(400).json({ error: 'new_unit и factor (> 0) обязательны' });
+    }
+
+    const db = getDatabase();
+    const item = db.prepare('SELECT id, price, unit FROM invoice_items WHERE id = ?').get(itemId) as { id: number; price: number | null; unit: string | null } | undefined;
+    if (!item) return res.status(404).json({ error: 'Позиция не найдена' });
+
+    db.prepare(`
+      UPDATE invoice_items
+      SET original_price = ?,
+          original_unit  = ?,
+          price          = ROUND(? / ?, 4),
+          unit           = ?,
+          needs_unit_review = 0
+      WHERE id = ?
+    `).run(item.price, item.unit, item.price ?? 0, factor, new_unit, itemId);
+
+    const updated = db.prepare('SELECT * FROM invoice_items WHERE id = ?').get(itemId);
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при конвертации единицы', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
