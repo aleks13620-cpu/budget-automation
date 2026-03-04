@@ -117,12 +117,14 @@ router.post('/api/projects/:id/specifications', upload.single('file'), (req: Req
 
       const insertStmt = db.prepare(`
         INSERT INTO specification_items
-          (project_id, specification_id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity, section)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (project_id, specification_id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity, section, parent_item_id, full_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const inserted: any[] = [];
+      const insertedIds: number[] = [];  // track DB ids for parent resolution
       for (const item of parseResult.items) {
+        const parentDbId = item._parentIndex !== null ? (insertedIds[item._parentIndex] ?? null) : null;
         const itemResult = insertStmt.run(
           projectId,
           specificationId,
@@ -134,13 +136,18 @@ router.post('/api/projects/:id/specifications', upload.single('file'), (req: Req
           item.unit,
           item.quantity,
           section,
+          parentDbId,
+          item.full_name ?? null,
         );
+        const newId = Number(itemResult.lastInsertRowid);
+        insertedIds.push(newId);
         inserted.push({
-          id: Number(itemResult.lastInsertRowid),
+          id: newId,
           project_id: projectId,
           specification_id: specificationId,
           ...item,
           section,
+          parent_item_id: parentDbId,
         });
       }
 

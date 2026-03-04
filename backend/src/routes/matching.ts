@@ -128,7 +128,8 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
 
     // Get all spec items with their matches
     const specItems = db.prepare(`
-      SELECT id, name, characteristics, equipment_code, unit, quantity, section
+      SELECT id, name, characteristics, equipment_code, unit, quantity, section,
+             parent_item_id, full_name
       FROM specification_items
       WHERE project_id = ?
       ORDER BY id
@@ -136,6 +137,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       id: number; name: string; characteristics: string | null;
       equipment_code: string | null; unit: string | null;
       quantity: number | null; section: string | null;
+      parent_item_id: number | null; full_name: string | null;
     }>;
 
     const getMatches = db.prepare(`
@@ -176,7 +178,11 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       if (matches.some(m => m.is_confirmed)) confirmedCount++;
 
       return {
-        specItem: spec,
+        specItem: {
+          ...spec,
+          parentItemId: spec.parent_item_id,
+          fullName: spec.full_name,
+        },
         matches: matches.map(m => ({
           id: m.id,
           invoiceItemId: m.invoice_item_id,

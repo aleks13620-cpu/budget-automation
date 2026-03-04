@@ -6,6 +6,9 @@ export interface SpecificationRow {
   manufacturer: string | null;
   unit: string | null;
   quantity: number | null;
+  full_name: string | null;
+  /** Index into items array — resolved to DB id during INSERT, not stored in DB directly */
+  _parentIndex: number | null;
 }
 
 export interface ParseResult {

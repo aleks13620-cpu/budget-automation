@@ -17,6 +17,8 @@ interface SpecItemRow {
   unit: string | null;
   quantity: number | null;
   section: string | null;
+  parent_item_id: number | null;
+  full_name: string | null;
 }
 
 interface InvoiceItemRow {
@@ -92,9 +94,11 @@ function matchSpecItems(
   const allCandidates: MatchCandidate[] = [];
 
   for (const spec of specItems) {
-    const specNormName = normalizeForMatching(spec.name);
+    // Use full_name (parent.name + child.name) for DN sub-rows, otherwise use name
+    const nameForMatching = spec.full_name || spec.name;
+    const specNormName = normalizeForMatching(nameForMatching);
     const specNormFull = spec.characteristics
-      ? normalizeForMatching(spec.name + ' ' + spec.characteristics)
+      ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
       : specNormName;
     const specCode = spec.equipment_code?.trim() || null;
 
@@ -188,7 +192,7 @@ function matchSpecItems(
   return allCandidates;
 }
 
-const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, unit, quantity, section FROM specification_items WHERE project_id = ?';
+const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, unit, quantity, section, parent_item_id, full_name FROM specification_items WHERE project_id = ?';
 const INVOICE_ITEMS_SQL = `
   SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
          i.supplier_id, 'invoice' as source

@@ -103,6 +103,37 @@ function parseNumber(value: unknown): number | null {
   return isNaN(num) ? null : num;
 }
 
+/** DN child row pattern: empty position_number AND name is a short DN/diameter designator */
+const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
+
+function isDnChild(item: SpecificationRow): boolean {
+  return !item.position_number && DN_CHILD_PATTERN.test(item.name.trim());
+}
+
+/**
+ * Link DN sub-rows to their parent:
+ * - Walk items in order; track last "full" item (non-DN child)
+ * - When a DN child is found, link it to the last full item
+ * - Compute full_name = parent.name + " " + child.name
+ */
+function linkDnChildren(items: SpecificationRow[]): void {
+  let lastFullIndex: number | null = null;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!isDnChild(item)) {
+      lastFullIndex = i;
+      item._parentIndex = null;
+      item.full_name = null;
+    } else if (lastFullIndex !== null) {
+      item._parentIndex = lastFullIndex;
+      item.full_name = items[lastFullIndex].name + ' ' + item.name;
+    } else {
+      item._parentIndex = null;
+      item.full_name = null;
+    }
+  }
+}
+
 export function parseExcelFile(filePath: string): ParseResult {
   const errors: string[] = [];
   const items: SpecificationRow[] = [];
@@ -165,8 +196,13 @@ export function parseExcelFile(filePath: string): ParseResult {
       manufacturer: mapping.manufacturer !== null ? getCellValue(sheet, row, mapping.manufacturer) : null,
       unit: mapping.unit !== null ? getCellValue(sheet, row, mapping.unit) : null,
       quantity,
+      full_name: null,
+      _parentIndex: null,
     });
   }
+
+  // Post-process: link DN child rows to their parent
+  linkDnChildren(items);
 
   return { items, errors, totalRows, skippedRows };
 }

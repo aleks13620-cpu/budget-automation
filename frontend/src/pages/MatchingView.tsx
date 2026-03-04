@@ -30,6 +30,8 @@ interface SpecItem {
   unit: string | null;
   quantity: number | null;
   section: string | null;
+  parentItemId?: number | null;
+  fullName?: string | null;
 }
 
 interface MatchRow {
