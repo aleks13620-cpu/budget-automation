@@ -1029,6 +1029,23 @@ router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) =>
   }
 });
 
+// GET /api/invoices/:id/unit-review-items — items flagged for unit review
+router.get('/api/invoices/:id/unit-review-items', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const items = db.prepare(`
+      SELECT id, name, unit, price, amount, quantity, original_price, original_unit, needs_unit_review
+      FROM invoice_items
+      WHERE invoice_id = ? AND needs_unit_review = 1
+      ORDER BY row_index
+    `).all(invoiceId);
+    res.json(items);
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении позиций', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 // PUT /api/invoice-items/:id/apply-unit-conversion { new_unit, factor }
 router.put('/api/invoice-items/:id/apply-unit-conversion', (req: Request, res: Response) => {
   try {

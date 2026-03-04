@@ -4,8 +4,9 @@ import { ProjectList } from './pages/ProjectList';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { InvoicePreview } from './pages/InvoicePreview';
 import { MatchingView } from './pages/MatchingView';
+import { UnitTriggers } from './pages/UnitTriggers';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -35,11 +36,20 @@ function App() {
     setPage('matching');
   };
 
+  const goToUnitTriggers = () => {
+    setPage('unit-triggers');
+  };
+
   return (
     <>
       {/* Breadcrumbs */}
       <div className="breadcrumbs">
         <button onClick={goToProjects}>Проекты</button>
+        <span style={{ marginLeft: 'auto' }}>
+          <button className="btn btn-secondary btn-sm" onClick={goToUnitTriggers} style={{ fontSize: '0.75rem' }}>
+            ⚙ Триггеры единиц
+          </button>
+        </span>
         {page !== 'projects' && (
           <>
             <span>/</span>
@@ -85,6 +95,10 @@ function App() {
           projectId={projectId}
           onBack={() => goToProject(projectId!, projectName)}
         />
+      )}
+
+      {page === 'unit-triggers' && (
+        <UnitTriggers onBack={goToProjects} />
       )}
     </>
   );

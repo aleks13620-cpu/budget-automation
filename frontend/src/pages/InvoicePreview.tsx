@@ -425,6 +425,10 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [sheetIndex, setSheetIndex] = useState(0);
   const [sheetNames, setSheetNames] = useState<string[]>([]);
+  const [unitReviewItems, setUnitReviewItems] = useState<any[]>([]);
+  const [unitTriggers, setUnitTriggers] = useState<{ keyword: string; to_unit: string }[]>([]);
+  const [unitModal, setUnitModal] = useState<{ item: any; suggestedUnit: string } | null>(null);
+  const [unitFactor, setUnitFactor] = useState('');
 
   const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
     const currentInvoice = inv || invoice;
@@ -462,6 +466,17 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
+  const loadUnitReview = async () => {
+    try {
+      const [itemsRes, triggersRes] = await Promise.all([
+        api.get(`/invoices/${invoiceId}/unit-review-items`),
+        api.get('/unit-conversion-triggers'),
+      ]);
+      setUnitReviewItems(itemsRes.data);
+      setUnitTriggers(triggersRes.data);
+    } catch { /* non-critical */ }
+  };
+
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -472,6 +487,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
 
         const data = await loadPreview(inv, 0);
         applyMapping(data);
+        await loadUnitReview();
       } catch {
         setMessage({ type: 'error', text: 'Ошибка загрузки предпросмотра' });
       } finally {
@@ -555,10 +571,29 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       const invoiceRes = await api.get(`/invoices/${invoiceId}`);
       setInvoice(invoiceRes.data.invoice);
       await loadPreview(invoiceRes.data.invoice);
+      await loadUnitReview();
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
     } finally {
       setReparsing(false);
+    }
+  };
+
+  const handleUnitConvert = async (skip: boolean) => {
+    if (!unitModal) return;
+    if (skip) { setUnitModal(null); setUnitFactor(''); return; }
+    const factor = parseFloat(unitFactor.replace(',', '.'));
+    if (!factor || factor <= 0) { alert('Введите корректный коэффициент'); return; }
+    try {
+      await api.put(`/invoice-items/${unitModal.item.id}/apply-unit-conversion`, {
+        new_unit: unitModal.suggestedUnit,
+        factor,
+      });
+      setUnitModal(null);
+      setUnitFactor('');
+      await loadUnitReview();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Ошибка при конвертации');
     }
   };
 
@@ -637,6 +672,74 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
           <span>⚠️ В счёте обнаружена скидка <strong>{invoice.discount_detected}%</strong>. Применить ко всем позициям?</span>
           <button className="btn btn-primary btn-sm" onClick={() => handleApplyDiscount(true)}>Да, применить</button>
           <button className="btn btn-secondary btn-sm" onClick={() => handleApplyDiscount(false)}>Нет</button>
+        </div>
+      )}
+
+      {unitReviewItems.length > 0 && (
+        <div style={{ background: '#fef9c3', border: '1px solid #ca8a04', borderRadius: 6, padding: '0.75rem 1rem', marginBottom: '1rem' }}>
+          <strong>⚠️ Позиции требуют проверки единиц ({unitReviewItems.length})</strong>
+          <table style={{ marginTop: '0.5rem', width: '100%' }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', fontSize: '0.8rem' }}>Наименование</th>
+                <th style={{ textAlign: 'left', fontSize: '0.8rem' }}>Ед.</th>
+                <th style={{ textAlign: 'right', fontSize: '0.8rem' }}>Цена</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {unitReviewItems.map((item: any) => {
+                const trigger = unitTriggers.find(t => item.name.toLowerCase().includes(t.keyword.toLowerCase()));
+                const suggestedUnit = trigger?.to_unit || '';
+                return (
+                  <tr key={item.id}>
+                    <td style={{ fontSize: '0.85rem' }}>{item.name}</td>
+                    <td style={{ fontSize: '0.85rem' }}>{item.unit || '—'}</td>
+                    <td style={{ fontSize: '0.85rem', textAlign: 'right' }}>{item.price != null ? item.price.toLocaleString('ru-RU') : '—'}</td>
+                    <td>
+                      <button
+                        className="btn btn-primary btn-sm"
+                        onClick={() => { setUnitModal({ item, suggestedUnit }); setUnitFactor(''); }}
+                      >
+                        Пересчитать{suggestedUnit ? ` в ${suggestedUnit}` : ''}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Unit conversion modal */}
+      {unitModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 360, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 0.5rem' }}>Пересчёт единицы</h3>
+            <p style={{ margin: '0 0 0.25rem', fontSize: '0.9rem' }}><strong>{unitModal.item.name}</strong></p>
+            <p style={{ margin: '0 0 1rem', fontSize: '0.85rem', color: '#666' }}>
+              Текущая ед.: <strong>{unitModal.item.unit || '—'}</strong> → Новая: <strong>{unitModal.suggestedUnit || '?'}</strong>
+            </p>
+            <label style={{ fontSize: '0.85rem', fontWeight: 600 }}>
+              Коэффициент (1 {unitModal.item.unit} = ? {unitModal.suggestedUnit})
+            </label>
+            <input
+              className="input"
+              type="number"
+              step="any"
+              min="0"
+              value={unitFactor}
+              onChange={e => setUnitFactor(e.target.value)}
+              placeholder="например, 6"
+              style={{ marginTop: '0.25rem', marginBottom: '1rem' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <button className="btn btn-primary" onClick={() => handleUnitConvert(false)}>Применить</button>
+              <button className="btn btn-secondary" onClick={() => handleUnitConvert(true)}>Пропустить</button>
+            </div>
+          </div>
         </div>
       )}
 
