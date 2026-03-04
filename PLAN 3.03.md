@@ -16,7 +16,7 @@
 | 5 | И-5, И-11 backend | ✅ Выполнен | `3127fed` |
 | 6 | И-11 frontend, И-13 | ✅ Выполнен | `25cfd6b` |
 | 7 | И-6 | ✅ Выполнен | `98cc79f` |
-| 8 | И-4 backend | ⬜ Не начат | — |
+| 8 | И-4 backend | ✅ Выполнен | `c1b32a3` |
 | 9 | И-4 frontend | ⬜ Не начат | — |
 | 10 | И-9 backend | ⬜ Не начат | — |
 | 11 | И-9 frontend + матчинг | ⬜ Не начат | — |
@@ -184,7 +184,7 @@ ALTER TABLE invoices ADD COLUMN discount_applied INTEGER DEFAULT 0;
 
 ---
 
-### ⬜ Этап 8 — И-4 backend: триггеры единиц (~4 ч)
+### ✅ Этап 8 — И-4 backend: триггеры единиц (~4 ч) · коммит `c1b32a3`
 
 **DB Migrations:**
 ```sql
