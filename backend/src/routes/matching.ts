@@ -66,13 +66,13 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
 
     // Insert new candidates
     const insert = db.prepare(`
-      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected)
-      VALUES (?, ?, ?, ?, 0, 0)
+      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
+      VALUES (?, ?, ?, ?, 0, 0, ?)
     `);
 
     const insertAll = db.transaction(() => {
       for (const c of candidates) {
-        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType);
+        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, c.source ?? 'invoice');
       }
     });
     insertAll();
@@ -140,12 +140,18 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
 
     const getMatches = db.prepare(`
       SELECT m.id, m.invoice_item_id, m.confidence, m.match_type, m.is_confirmed, m.is_selected,
-             ii.name as invoice_name, ii.article, ii.unit as invoice_unit,
-             ii.quantity as invoice_quantity, ii.price, ii.amount,
+             COALESCE(m.source, 'invoice') as source,
+             COALESCE(ii.name, pli.name) as invoice_name,
+             COALESCE(ii.article, pli.article) as article,
+             COALESCE(ii.unit, pli.unit) as invoice_unit,
+             ii.quantity as invoice_quantity,
+             COALESCE(ii.price, pli.price) as price,
+             ii.amount,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat
       FROM matched_items m
-      JOIN invoice_items ii ON m.invoice_item_id = ii.id
-      JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
+      LEFT JOIN invoices i ON ii.invoice_id = i.id
+      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE m.specification_item_id = ?
       ORDER BY m.confidence DESC
@@ -158,6 +164,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       const matches = getMatches.all(spec.id) as Array<{
         id: number; invoice_item_id: number; confidence: number;
         match_type: string; is_confirmed: number; is_selected: number;
+        source: string;
         invoice_name: string; article: string | null;
         invoice_unit: string | null; invoice_quantity: number | null;
         price: number | null; amount: number | null;
@@ -175,7 +182,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
           invoiceItemId: m.invoice_item_id,
           invoiceName: m.invoice_name,
           article: m.article,
-          supplierName: m.supplier_name,
+          supplierName: m.source === 'price_list' ? '[Прайс]' : m.supplier_name,
           unit: m.invoice_unit,
           quantity: m.invoice_quantity,
           price: m.price,
@@ -185,6 +192,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
           matchType: m.match_type,
           isConfirmed: m.is_confirmed === 1,
           isSelected: m.is_selected === 1,
+          source: m.source ?? 'invoice',
         })),
       };
     });

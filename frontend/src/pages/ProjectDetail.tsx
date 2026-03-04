@@ -58,9 +58,12 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     fileName: string; invoiceId: number | null; supplierName: string | null;
     imported: number; parsingCategory: string | null; status: string; error?: string;
   }[] | null>(null);
+  const [priceLists, setPriceLists] = useState<{ id: number; file_name: string; status: string; item_count: number; supplier_name: string | null }[]>([]);
+  const [uploadingPriceList, setUploadingPriceList] = useState(false);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
   const bulkFileRef = useRef<HTMLInputElement>(null);
   const bulkInvFileRef = useRef<HTMLInputElement>(null);
+  const priceListFileRef = useRef<HTMLInputElement>(null);
   const specFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
@@ -76,15 +79,17 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   const loadData = async () => {
     setLoading(true);
     try {
-      const [specRes, invRes, delivRes] = await Promise.all([
+      const [specRes, invRes, delivRes, plRes] = await Promise.all([
         api.get(`/projects/${projectId}/specifications`),
         api.get(`/projects/${projectId}/invoices`),
         api.get(`/projects/${projectId}/delivery-total`).catch(() => ({ data: { total: 0 } })),
+        api.get(`/projects/${projectId}/price-lists`).catch(() => ({ data: [] })),
       ]);
       setSpecifications(specRes.data.specifications || []);
       setSections(specRes.data.sections || []);
       setInvoices(invRes.data.invoices || []);
       setDeliveryTotal(delivRes.data.total > 0 ? delivRes.data.total : null);
+      setPriceLists(plRes.data || []);
     } catch {
       setMessage({ type: 'error', text: 'Не удалось загрузить данные проекта' });
     } finally {
@@ -194,6 +199,25 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       setMessage({ type: 'error', text: 'Ошибка загрузки позиций спецификации' });
     } finally {
       setSpecItemsLoading(false);
+    }
+  };
+
+  const handleUploadPriceList = async () => {
+    const file = priceListFileRef.current?.files?.[0];
+    if (!file) return;
+    setUploadingPriceList(true);
+    setMessage(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post(`/projects/${projectId}/price-lists`, fd);
+      setMessage({ type: 'success', text: `Прайс загружен: ${data.imported} позиций` });
+      if (priceListFileRef.current) priceListFileRef.current.value = '';
+      await loadData();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при загрузке прайса' });
+    } finally {
+      setUploadingPriceList(false);
     }
   };
 
@@ -579,6 +603,63 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
             <span style={{ color: '#9a3412', fontWeight: 600 }}>Доставка по проекту: {deliveryTotal.toLocaleString('ru-RU')} ₽</span>
             <span className="muted" style={{ marginLeft: '0.5rem', fontSize: '0.8rem' }}>(суммарно по всем счетам)</span>
           </div>
+        )}
+      </div>
+
+      {/* Price lists section */}
+      <div className="section">
+        <h2>Прайсы</h2>
+        <div className="upload-area" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <input type="file" accept=".pdf,.xlsx,.xls" ref={priceListFileRef} />
+          <button className="btn btn-primary btn-sm" onClick={handleUploadPriceList} disabled={uploadingPriceList}>
+            {uploadingPriceList ? 'Загрузка...' : 'Загрузить прайс'}
+          </button>
+        </div>
+        {priceLists.length === 0 ? (
+          <p className="muted" style={{ marginTop: '0.5rem' }}>Нет загруженных прайсов.</p>
+        ) : (
+          <table style={{ marginTop: '0.75rem' }}>
+            <thead>
+              <tr>
+                <th>Файл</th>
+                <th>Поставщик</th>
+                <th>Позиций</th>
+                <th>Статус</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {priceLists.map(pl => (
+                <tr key={pl.id}>
+                  <td>{pl.file_name}</td>
+                  <td>{pl.supplier_name || '—'}</td>
+                  <td>{pl.item_count}</td>
+                  <td>
+                    {pl.status === 'parsed' ? (
+                      <span style={{ color: '#16a34a', fontWeight: 600 }}>Загружен</span>
+                    ) : (
+                      <span style={{ color: '#d97706', fontWeight: 600 }}>Требует настройки</span>
+                    )}
+                  </td>
+                  <td>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ color: '#dc2626' }}
+                      onClick={async () => {
+                        if (!confirm(`Удалить прайс «${pl.file_name}»?`)) return;
+                        try {
+                          await api.delete(`/price-lists/${pl.id}`);
+                          await loadData();
+                        } catch {
+                          setMessage({ type: 'error', text: 'Ошибка при удалении прайса' });
+                        }
+                      }}
+                    >Удалить</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

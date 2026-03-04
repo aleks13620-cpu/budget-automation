@@ -23,6 +23,7 @@ function initializeDatabase(): void {
       'ALTER TABLE invoice_items ADD COLUMN quantity_packages REAL DEFAULT NULL',
       'ALTER TABLE invoices ADD COLUMN discount_detected REAL DEFAULT NULL',
       'ALTER TABLE invoices ADD COLUMN discount_applied INTEGER DEFAULT 0',
+      'ALTER TABLE matched_items ADD COLUMN source TEXT DEFAULT \'invoice\'',
       'ALTER TABLE invoice_items ADD COLUMN needs_unit_review INTEGER DEFAULT 0',
       'ALTER TABLE invoice_items ADD COLUMN original_price REAL DEFAULT NULL',
       'ALTER TABLE invoice_items ADD COLUMN original_unit TEXT DEFAULT NULL',

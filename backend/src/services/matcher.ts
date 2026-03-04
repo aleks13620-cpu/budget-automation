@@ -6,6 +6,7 @@ export interface MatchCandidate {
   invoiceItemId: number;
   confidence: number;
   matchType: 'exact_article' | 'learned_rule' | 'name_similarity' | 'name_characteristics';
+  source: 'invoice' | 'price_list';
 }
 
 interface SpecItemRow {
@@ -28,6 +29,7 @@ interface InvoiceItemRow {
   price: number | null;
   amount: number | null;
   supplier_id: number | null;
+  source?: 'invoice' | 'price_list';
 }
 
 interface MatchingRule {
@@ -171,8 +173,9 @@ function matchSpecItems(
         candidates.push({
           specItemId: spec.id,
           invoiceItemId: inv.id,
-          confidence: Math.round(bestConfidence * 1000) / 1000, // Round to 3 decimals
+          confidence: Math.round(bestConfidence * 1000) / 1000,
           matchType: bestType,
+          source: inv.source ?? 'invoice',
         });
       }
     }
@@ -188,12 +191,25 @@ function matchSpecItems(
 const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, unit, quantity, section FROM specification_items WHERE project_id = ?';
 const INVOICE_ITEMS_SQL = `
   SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
-         i.supplier_id
+         i.supplier_id, 'invoice' as source
   FROM invoice_items ii
   JOIN invoices i ON ii.invoice_id = i.id
   WHERE i.project_id = ? AND ii.is_delivery = 0
 `;
+const PRICE_LIST_ITEMS_SQL = `
+  SELECT pli.id, 0 as invoice_id, pli.article, pli.name, pli.unit,
+         NULL as quantity, pli.price, NULL as amount, NULL as supplier_id, 'price_list' as source
+  FROM price_list_items pli
+  JOIN price_lists pl ON pli.price_list_id = pl.id
+  WHERE pl.project_id = ?
+`;
 const RULES_SQL = 'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id FROM matching_rules';
+
+function loadAllItems(db: ReturnType<typeof getDatabase>, projectId: number): InvoiceItemRow[] {
+  const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  const priceListItems = db.prepare(PRICE_LIST_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  return [...invoiceItems, ...priceListItems];
+}
 
 /**
  * Run full matching for all spec items in a project.
@@ -201,9 +217,9 @@ const RULES_SQL = 'SELECT id, specification_pattern, invoice_pattern, confidence
 export function runMatching(projectId: number): MatchCandidate[] {
   const db = getDatabase();
   const specItems = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
-  const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  const allItems = loadAllItems(db, projectId);
   const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
-  return matchSpecItems(specItems, invoiceItems, rules);
+  return matchSpecItems(specItems, allItems, rules);
 }
 
 /**
@@ -215,7 +231,7 @@ export function runMatchingIncremental(projectId: number, skipSpecIds: number[])
   const allSpecs = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
   const skipSet = new Set(skipSpecIds);
   const specItems = allSpecs.filter(s => !skipSet.has(s.id));
-  const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  const allItems = loadAllItems(db, projectId);
   const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
-  return matchSpecItems(specItems, invoiceItems, rules);
+  return matchSpecItems(specItems, allItems, rules);
 }
