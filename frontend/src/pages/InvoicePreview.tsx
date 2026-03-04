@@ -22,6 +22,8 @@ interface InvoiceInfo {
   parsing_category: string | null;
   parsing_category_reason: string | null;
   status: string;
+  discount_detected: number | null;
+  discount_applied: number;
 }
 
 interface Props {
@@ -560,6 +562,25 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
+  const handleApplyDiscount = async (apply: boolean) => {
+    if (!invoice) return;
+    if (!apply) {
+      // Dismiss banner by marking applied without actual recalc
+      setInvoice(prev => prev ? { ...prev, discount_detected: null } : prev);
+      return;
+    }
+    try {
+      await api.post(`/invoices/${invoiceId}/apply-discount`, {
+        discount_percent: invoice.discount_detected,
+      });
+      setInvoice(prev => prev ? { ...prev, discount_applied: 1 } : prev);
+      setMessage({ type: 'success', text: `Скидка ${invoice.discount_detected}% применена — цены пересчитаны` });
+      await loadPreview();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при применении скидки' });
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка предпросмотра...</p>;
   if (!preview || !invoice) return <p className="error-msg">Не удалось загрузить данные</p>;
 
@@ -605,6 +626,18 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <p className={message.type === 'success' ? 'success-msg' : 'error-msg'}>
           {message.text}
         </p>
+      )}
+
+      {invoice.discount_detected != null && !invoice.discount_applied && (
+        <div style={{
+          background: '#fef9c3', border: '1px solid #ca8a04', borderRadius: '6px',
+          padding: '0.75rem 1rem', marginBottom: '1rem',
+          display: 'flex', alignItems: 'center', gap: '1rem',
+        }}>
+          <span>⚠️ В счёте обнаружена скидка <strong>{invoice.discount_detected}%</strong>. Применить ко всем позициям?</span>
+          <button className="btn btn-primary btn-sm" onClick={() => handleApplyDiscount(true)}>Да, применить</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => handleApplyDiscount(false)}>Нет</button>
+        </div>
       )}
 
       {isExcel && sheetNames.length > 1 && (

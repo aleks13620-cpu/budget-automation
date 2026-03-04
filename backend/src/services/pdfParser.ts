@@ -105,6 +105,19 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
   return null;
 }
 
+/**
+ * Scan text for discount pattern like "скидка 10%", "скидки 15,5%".
+ * Returns the percent value or null if not found.
+ */
+export function detectDiscount(text: string): number | null {
+  const match = /скидк[аи]\s+(\d+[,.]?\d*)\s*%/i.exec(text);
+  if (match) {
+    const val = parseFloat(match[1].replace(',', '.'));
+    return isNaN(val) ? null : val;
+  }
+  return null;
+}
+
 const SKIP_ROW_KEYWORDS = [
   'получатель', 'плательщик', 'поставщик', 'продавец',
   'адрес', 'телефон', 'e-mail', 'email', 'факс',
@@ -713,6 +726,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
       invoiceDate: metadata.invoiceDate,
       supplierName: metadata.supplierName,
       totalAmount: metadata.totalAmount,
+      discountDetected: detectDiscount(fullText),
     };
   }
 
@@ -743,6 +757,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
         invoiceDate: metadata.invoiceDate,
         supplierName: metadata.supplierName,
         totalAmount: metadata.totalAmount,
+        discountDetected: detectDiscount(fullText),
       };
     }
     mapping = detected.mapping;
@@ -762,6 +777,8 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
     if (sum > 0) totalAmount = sum;
   }
 
+  const discountDetected = detectDiscount(fullText);
+
   return {
     items,
     errors,
@@ -771,6 +788,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
     invoiceDate: metadata.invoiceDate,
     supplierName: metadata.supplierName,
     totalAmount,
+    discountDetected,
   };
 }
 

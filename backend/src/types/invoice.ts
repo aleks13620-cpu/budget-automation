@@ -18,4 +18,5 @@ export interface InvoiceParseResult {
   invoiceDate: string | null;
   supplierName: string | null;
   totalAmount: number | null;
+  discountDetected: number | null;
 }

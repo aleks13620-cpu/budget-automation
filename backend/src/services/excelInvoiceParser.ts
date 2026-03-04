@@ -1,5 +1,6 @@
 import XLSX from 'xlsx';
 import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
+import { detectDiscount } from './pdfParser';
 import { detectColumns, parseTableData, parsePrice, SavedMapping, extractMetadataFromRows } from './pdfParser';
 
 /**
@@ -99,6 +100,7 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
       invoiceDate: null,
       supplierName: null,
       totalAmount: null,
+      discountDetected: null,
     };
   }
 
@@ -123,6 +125,8 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
   } else {
     const detected = detectColumns(rows);
     if (!detected) {
+      // Scan header area for discount before returning
+      const headerText = rows.slice(0, 10).map(r => r.join(' ')).join(' ');
       return {
         items: [],
         errors: ['Не удалось определить колонки таблицы в Excel-файле'],
@@ -132,6 +136,7 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
         invoiceDate: metadata.invoiceDate,
         supplierName: metadata.supplierName,
         totalAmount: metadata.totalAmount,
+        discountDetected: detectDiscount(headerText),
       };
     }
     mapping = detected.mapping;
@@ -151,6 +156,10 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
     if (sum > 0) totalAmount = sum;
   }
 
+  // Scan all rows for discount mention
+  const allText = rows.map(r => r.join(' ')).join(' ');
+  const discountDetected = detectDiscount(allText);
+
   return {
     items,
     errors,
@@ -160,5 +169,6 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
     invoiceDate: metadata.invoiceDate,
     supplierName: metadata.supplierName,
     totalAmount,
+    discountDetected,
   };
 }

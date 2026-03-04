@@ -21,6 +21,8 @@ function initializeDatabase(): void {
       'ALTER TABLE invoice_items ADD COLUMN is_manual INTEGER DEFAULT 0',
       'ALTER TABLE invoice_items ADD COLUMN is_delivery INTEGER DEFAULT 0',
       'ALTER TABLE invoice_items ADD COLUMN quantity_packages REAL DEFAULT NULL',
+      'ALTER TABLE invoices ADD COLUMN discount_detected REAL DEFAULT NULL',
+      'ALTER TABLE invoices ADD COLUMN discount_applied INTEGER DEFAULT 0',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

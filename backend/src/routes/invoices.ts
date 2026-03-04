@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata } from '../services/pdfParser';
+import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData } from '../services/excelInvoiceParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -169,6 +169,7 @@ async function processInvoiceFile(
             invoiceDate: metadata.invoiceDate,
             supplierName: metadata.supplierName,
             totalAmount: totalAmount || metadata.totalAmount,
+            discountDetected: detectDiscount(pdfFullText),
           };
         } else {
           parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
@@ -204,8 +205,8 @@ async function processInvoiceFile(
 
   // Insert invoice and items in a transaction
   const insertInvoice = db.prepare(`
-    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason, discount_detected)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -225,6 +226,7 @@ async function processInvoiceFile(
       status,
       parsingCategory,
       parsingCategoryReason,
+      parseResult.discountDetected ?? null,
     );
     const invoiceId = Number(invoiceResult.lastInsertRowid);
 
@@ -976,6 +978,41 @@ router.put('/api/invoices/:id/status', (req: Request, res: Response) => {
     res.json({ updated: true, status });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при обновлении статуса', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// POST /api/invoices/:id/apply-discount { discount_percent } — recalculate prices
+router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const { discount_percent } = req.body as { discount_percent: number };
+
+    if (typeof discount_percent !== 'number' || discount_percent <= 0 || discount_percent >= 100) {
+      return res.status(400).json({ error: 'discount_percent должен быть числом от 0 до 100' });
+    }
+
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id, discount_applied FROM invoices WHERE id = ?').get(invoiceId) as { id: number; discount_applied: number } | undefined;
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+    if (invoice.discount_applied) return res.status(409).json({ error: 'Скидка уже применена' });
+
+    const factor = 1 - discount_percent / 100;
+
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE invoice_items
+        SET price = ROUND(price * ?, 2), amount = ROUND(amount * ?, 2)
+        WHERE invoice_id = ?
+      `).run(factor, factor, invoiceId);
+
+      db.prepare(`
+        UPDATE invoices SET discount_applied = 1 WHERE id = ?
+      `).run(invoiceId);
+    })();
+
+    res.json({ applied: true, discount_percent });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при применении скидки', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
