@@ -110,7 +110,7 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
  * Returns the percent value or null if not found.
  */
 export function detectDiscount(text: string): number | null {
-  const match = /скидк[аи]\s+(\d+[,.]?\d*)\s*%/i.exec(text);
+  const match = /скидк[а-яё]*\s+(\d+[,.]?\d*)\s*%/i.exec(text);
   if (match) {
     const val = parseFloat(match[1].replace(',', '.'));
     return isNaN(val) ? null : val;
