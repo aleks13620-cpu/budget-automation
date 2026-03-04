@@ -47,7 +47,7 @@ function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
   const [customSep, setCustomSep] = useState(';');
   const [splitRows, setSplitRows] = useState<string[][] | null>(null);
   const [splitMapping, setSplitMapping] = useState<ColumnMapping>({
-    article: null, name: null, unit: null, quantity: null, price: null, amount: null,
+    article: null, name: null, unit: null, quantity: null, quantity_packages: null, price: null, amount: null,
   });
   const [splitHeaderRow, setSplitHeaderRow] = useState(0);
   const [previewing, setPreviewing] = useState(false);
@@ -70,6 +70,7 @@ function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
           name: data.detectedMapping.name,
           unit: data.detectedMapping.unit,
           quantity: data.detectedMapping.quantity,
+          quantity_packages: (data.detectedMapping as any).quantity_packages ?? null,
           price: data.detectedMapping.price,
           amount: data.detectedMapping.amount,
         });
@@ -414,7 +415,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [invoice, setInvoice] = useState<InvoiceInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [mapping, setMapping] = useState<ColumnMapping>({
-    article: null, name: null, unit: null, quantity: null, price: null, amount: null,
+    article: null, name: null, unit: null, quantity: null, quantity_packages: null, price: null, amount: null,
   });
   const [headerRow, setHeaderRow] = useState(0);
   const [saving, setSaving] = useState(false);
@@ -451,6 +452,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         name: source.name,
         unit: source.unit,
         quantity: source.quantity,
+        quantity_packages: (source as any).quantity_packages ?? null,
         price: source.price,
         amount: source.amount,
       });

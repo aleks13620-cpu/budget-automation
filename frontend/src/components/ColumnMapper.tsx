@@ -3,6 +3,7 @@ export interface ColumnMapping {
   name: number | null;
   unit: number | null;
   quantity: number | null;
+  quantity_packages: number | null;
   price: number | null;
   amount: number | null;
 }
@@ -11,7 +12,8 @@ const FIELD_LABELS: Record<keyof ColumnMapping, string> = {
   article: 'Артикул',
   name: 'Наименование',
   unit: 'Ед. изм.',
-  quantity: 'Количество',
+  quantity: 'Количество (ед.)',
+  quantity_packages: 'Кол-во (упак.)',
   price: 'Цена',
   amount: 'Сумма',
 };

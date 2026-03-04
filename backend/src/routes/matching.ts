@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import stringSimilarity from 'string-similarity';
 import { getDatabase } from '../database';
-import { runMatching, normalizeForMatching } from '../services/matcher';
+import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
 
 const router = Router();
 
@@ -14,9 +14,11 @@ function effectivePrice(price: number | null, vatRate: number | null, pricesIncl
 }
 
 // POST /api/projects/:id/matching/run — run matching algorithm
+// Query param: ?mode=full (default) | incremental (preserves confirmed matches)
 router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
+    const mode = String(req.query.mode || 'full');
     const db = getDatabase();
 
     const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
@@ -24,19 +26,45 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Проект не найден' });
     }
 
-    // Clear previous unconfirmed matches for this project's spec items
-    db.prepare(`
-      DELETE FROM matched_items
-      WHERE is_confirmed = 0
-        AND specification_item_id IN (
-          SELECT id FROM specification_items WHERE project_id = ?
-        )
-    `).run(projectId);
+    let candidates;
 
-    // Run matching
-    const candidates = runMatching(projectId);
+    if (mode === 'incremental') {
+      // Keep confirmed matches; delete unconfirmed only for spec items that have no confirmed match
+      db.prepare(`
+        DELETE FROM matched_items
+        WHERE is_confirmed = 0
+          AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+          AND specification_item_id NOT IN (
+            SELECT DISTINCT specification_item_id FROM matched_items
+            WHERE is_confirmed = 1
+              AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+          )
+      `).run(projectId, projectId);
 
-    // Insert results into matched_items
+      // Get spec IDs that are already confirmed — skip them
+      const confirmedRows = db.prepare(`
+        SELECT DISTINCT specification_item_id
+        FROM matched_items
+        WHERE is_confirmed = 1
+          AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+      `).all(projectId) as { specification_item_id: number }[];
+      const skipSpecIds = confirmedRows.map(r => r.specification_item_id);
+
+      candidates = runMatchingIncremental(projectId, skipSpecIds);
+    } else {
+      // Full mode: clear all unconfirmed matches and re-run
+      db.prepare(`
+        DELETE FROM matched_items
+        WHERE is_confirmed = 0
+          AND specification_item_id IN (
+            SELECT id FROM specification_items WHERE project_id = ?
+          )
+      `).run(projectId);
+
+      candidates = runMatching(projectId);
+    }
+
+    // Insert new candidates
     const insert = db.prepare(`
       INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected)
       VALUES (?, ?, ?, ?, 0, 0)
@@ -49,7 +77,7 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
     });
     insertAll();
 
-    // Auto-select best candidate per spec item (highest confidence)
+    // Auto-select best candidate per spec item (highest confidence, skip already confirmed)
     const specIds = [...new Set(candidates.map(c => c.specItemId))];
     const selectBest = db.prepare(`
       UPDATE matched_items SET is_selected = 1
@@ -69,10 +97,16 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       'SELECT COUNT(*) as cnt FROM specification_items WHERE project_id = ?'
     ).get(projectId) as { cnt: number }).cnt;
 
-    const matched = specIds.length;
+    // Total matched = new candidates + previously confirmed (if incremental)
+    const totalMatchedRows = db.prepare(`
+      SELECT COUNT(DISTINCT specification_item_id) as cnt
+      FROM matched_items
+      WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+    `).get(projectId) as { cnt: number };
+    const matched = totalMatchedRows.cnt;
     const unmatched = totalSpec - matched;
 
-    res.json({ total: totalSpec, matched, unmatched });
+    res.json({ total: totalSpec, matched, unmatched, mode });
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при запуске сопоставления',

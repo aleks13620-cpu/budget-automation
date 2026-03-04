@@ -64,34 +64,15 @@ export function normalizeForMatching(text: string): string {
 }
 
 /**
- * Run matching algorithm for all spec items in a project against all invoice items.
- * Returns top candidates per spec item.
+ * Core matching algorithm: match given spec items against invoice items using rules.
+ * Extracted to allow both full and incremental matching to share the same logic.
  */
-export function runMatching(projectId: number): MatchCandidate[] {
-  const db = getDatabase();
-
-  // Load all spec items for the project
-  const specItems = db.prepare(
-    'SELECT id, name, characteristics, equipment_code, unit, quantity, section FROM specification_items WHERE project_id = ?'
-  ).all(projectId) as SpecItemRow[];
-
-  // Load all invoice items for the project (join through invoices, include supplier_id)
-  const invoiceItems = db.prepare(`
-    SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
-           i.supplier_id
-    FROM invoice_items ii
-    JOIN invoices i ON ii.invoice_id = i.id
-    WHERE i.project_id = ?
-  `).all(projectId) as InvoiceItemRow[];
-
-  if (specItems.length === 0 || invoiceItems.length === 0) {
-    return [];
-  }
-
-  // Load learned matching rules (including supplier_id for scoping)
-  const rules = db.prepare(
-    'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id FROM matching_rules'
-  ).all() as MatchingRule[];
+function matchSpecItems(
+  specItems: SpecItemRow[],
+  invoiceItems: InvoiceItemRow[],
+  rules: MatchingRule[],
+): MatchCandidate[] {
+  if (specItems.length === 0 || invoiceItems.length === 0) return [];
 
   // Pre-normalize invoice items
   const normalizedInvoice = invoiceItems.map(item => ({
@@ -202,4 +183,39 @@ export function runMatching(projectId: number): MatchCandidate[] {
   }
 
   return allCandidates;
+}
+
+const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, unit, quantity, section FROM specification_items WHERE project_id = ?';
+const INVOICE_ITEMS_SQL = `
+  SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
+         i.supplier_id
+  FROM invoice_items ii
+  JOIN invoices i ON ii.invoice_id = i.id
+  WHERE i.project_id = ? AND ii.is_delivery = 0
+`;
+const RULES_SQL = 'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id FROM matching_rules';
+
+/**
+ * Run full matching for all spec items in a project.
+ */
+export function runMatching(projectId: number): MatchCandidate[] {
+  const db = getDatabase();
+  const specItems = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
+  const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
+  return matchSpecItems(specItems, invoiceItems, rules);
+}
+
+/**
+ * Incremental matching: skip spec items that already have confirmed matches.
+ * Only processes the remaining unconfirmed spec items.
+ */
+export function runMatchingIncremental(projectId: number, skipSpecIds: number[]): MatchCandidate[] {
+  const db = getDatabase();
+  const allSpecs = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
+  const skipSet = new Set(skipSpecIds);
+  const specItems = allSpecs.filter(s => !skipSet.has(s.id));
+  const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
+  const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
+  return matchSpecItems(specItems, invoiceItems, rules);
 }

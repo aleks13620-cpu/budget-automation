@@ -75,6 +75,7 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [grandTotal, setGrandTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [runningIncremental, setRunningIncremental] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -175,6 +176,27 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
+  const handleRunIncremental = async () => {
+    setRunningIncremental(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/projects/${projectId}/matching/run?mode=incremental`);
+      setMessage({
+        type: 'success',
+        text: `Обновление завершено: ${data.matched} из ${data.total} позиций найдены (подтверждённые сохранены)`,
+      });
+      await loadMatching();
+      await loadSummary();
+    } catch (err: any) {
+      setMessage({
+        type: 'error',
+        text: err.response?.data?.error || 'Ошибка при обновлении сопоставления',
+      });
+    } finally {
+      setRunningIncremental(false);
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка...</p>;
 
   // Filter items based on status + search + section
@@ -218,8 +240,11 @@ export function MatchingView({ projectId, onBack }: Props) {
         <h2 style={{ margin: 0 }}>Сопоставление позиций</h2>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button className="btn btn-secondary" onClick={onBack}>Назад</button>
-          <button className="btn btn-primary" onClick={handleRun} disabled={running}>
+          <button className="btn btn-primary" onClick={handleRun} disabled={running || runningIncremental}>
             {running ? 'Сопоставление...' : 'Запустить сопоставление'}
+          </button>
+          <button className="btn btn-secondary" onClick={handleRunIncremental} disabled={running || runningIncremental}>
+            {runningIncremental ? 'Обновление...' : 'Обновить (сохранить подтверждённые)'}
           </button>
           <button className="btn btn-secondary" onClick={handleExport} disabled={exporting || items.length === 0}>
             {exporting ? 'Экспорт...' : 'Экспорт в Excel'}
