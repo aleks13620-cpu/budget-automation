@@ -103,6 +103,30 @@ CREATE TABLE IF NOT EXISTS matched_items (
   FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE
 );
 
+-- Прайс-листы
+CREATE TABLE IF NOT EXISTS price_lists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  supplier_id INTEGER REFERENCES suppliers(id),
+  file_name TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  status TEXT DEFAULT 'pending',
+  parser_config JSON,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Позиции прайс-листов
+CREATE TABLE IF NOT EXISTS price_list_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  price_list_id INTEGER NOT NULL REFERENCES price_lists(id) ON DELETE CASCADE,
+  article TEXT,
+  name TEXT NOT NULL,
+  unit TEXT,
+  price REAL,
+  row_index INTEGER,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Триггеры пересчёта единиц измерения
 CREATE TABLE IF NOT EXISTS unit_conversion_triggers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,

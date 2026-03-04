@@ -10,6 +10,7 @@ import supplierRoutes from './routes/suppliers';
 import matchingRoutes from './routes/matching';
 import exportRoutes from './routes/export';
 import unitTriggerRoutes from './routes/unitTriggers';
+import priceListRoutes from './routes/priceLists';
 
 dotenv.config();
 
@@ -28,6 +29,7 @@ app.use(supplierRoutes);
 app.use(matchingRoutes);
 app.use(exportRoutes);
 app.use(unitTriggerRoutes);
+app.use(priceListRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
