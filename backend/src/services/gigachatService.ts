@@ -15,7 +15,7 @@ import https from 'https';
 // Константы
 // ---------------------------------------------------------------------------
 
-const TOKEN_URL  = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth/token';
+const TOKEN_URL  = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth';
 const CHAT_URL   = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions';
 const MODELS_URL = 'https://gigachat.devices.sberbank.ru/api/v1/models';
 
