@@ -12,4 +12,7 @@ services:
       UPLOAD_PATH: /app/data/uploads
       FRONTEND_DIST_PATH: /app/frontend/dist
       NODE_ENV: production
+      # GigaChat — задать на сервере в .env рядом с docker-compose.yml
+      GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
+      GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
     restart: unless-stopped
