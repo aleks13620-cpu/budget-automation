@@ -4,7 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
-import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData } from '../services/excelInvoiceParser';
+import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
+import type { ExcelParseResult } from '../types/invoice';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -101,13 +102,15 @@ async function processInvoiceFile(
 
   // First pass: parse without saved config to get supplier name
   let initialResult;
+  let lastExcelResult: ExcelParseResult | null = null;
   if (ext === '.pdf') {
     const rawExtraction = await extractRawRows(file.path);
     pdfRawRows = rawExtraction.rows;
     pdfFullText = rawExtraction.fullText;
     initialResult = parsePdfFromExtracted(pdfRawRows, pdfFullText);
   } else {
-    initialResult = parseExcelInvoice(file.path);
+    lastExcelResult = parseExcelInvoice(file.path);
+    initialResult = excelToLegacy(lastExcelResult);
   }
 
   // Find or create supplier
@@ -175,7 +178,8 @@ async function processInvoiceFile(
           parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
         }
       } else {
-        parseResult = parseExcelInvoice(file.path, savedMapping);
+        lastExcelResult = parseExcelInvoice(file.path, savedMapping);
+        parseResult = excelToLegacy(lastExcelResult);
       }
     }
   }
@@ -188,6 +192,12 @@ async function processInvoiceFile(
     const cat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
     parsingCategory = cat.category;
     parsingCategoryReason = cat.reason;
+  } else if (lastExcelResult) {
+    // Используем confidence-based категорию из Excel-парсера
+    parsingCategory = lastExcelResult.category;
+    parsingCategoryReason = `Excel confidence: ${lastExcelResult.confidence.overall}%` +
+      (lastExcelResult.validation.warnings.length > 0 ? `, предупреждений: ${lastExcelResult.validation.warnings.length}` : '');
+    console.log(`[Invoice] Excel category=${parsingCategory}, confidence=${lastExcelResult.confidence.overall}, errors=${lastExcelResult.validation.errors.length}, warnings=${lastExcelResult.validation.warnings.length}`);
   } else {
     if (parseResult.items.length > 0) {
       parsingCategory = 'A';
@@ -675,9 +685,10 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     }
 
     const ext = path.extname(invoice.file_name).toLowerCase();
+    let reparseExcelResult: ExcelParseResult | null = null;
     const parseResult = ext === '.pdf'
       ? await parsePdfFile(invoice.file_path, savedMapping)
-      : parseExcelInvoice(invoice.file_path, savedMapping);
+      : (() => { reparseExcelResult = parseExcelInvoice(invoice.file_path, savedMapping); return excelToLegacy(reparseExcelResult); })();
 
     // Replace items in transaction
     const insertItem = db.prepare(
@@ -690,10 +701,11 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
         insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
       }
       const newStatus = parseResult.items.length > 0 ? 'verified' : 'needs_mapping';
-      const newCategory = parseResult.items.length > 0 ? 'A' : 'B';
-      const newCategoryReason = parseResult.items.length > 0
-        ? `Проверено оператором: ${parseResult.items.length} позиций`
-        : 'Колонки не распознаны после пересборки';
+      const newCategory = reparseExcelResult ? reparseExcelResult.category
+        : (parseResult.items.length > 0 ? 'A' : 'B');
+      const newCategoryReason = reparseExcelResult
+        ? `Проверено оператором, Excel confidence: ${reparseExcelResult.confidence.overall}%`
+        : (parseResult.items.length > 0 ? `Проверено оператором: ${parseResult.items.length} позиций` : 'Колонки не распознаны после пересборки');
       db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
         .run(newStatus, parseResult.totalAmount, newCategory, newCategoryReason, invoiceId);
     })();
