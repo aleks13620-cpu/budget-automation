@@ -1,6 +1,6 @@
 services:
   app:
-    build: .
+    image: ghcr.io/aleks13620-cpu/budget-automation:latest
     ports:
       - "3001:3001"
     volumes:
