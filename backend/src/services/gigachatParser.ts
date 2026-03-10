@@ -230,12 +230,37 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096, functionCall: 'auto' }
       );
 
+      console.log(`[GigaChatParser] File API raw response (first 500): ${rawResponse.slice(0, 500)}`);
+
       const jsonStr = extractJSON(rawResponse);
       const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
+      const items = mapItems(parsed.items);
+
+      // Если File API вернул мало позиций — пробуем через текст
+      if (items.length < 3 && mimeType === 'application/pdf') {
+        console.log(`[GigaChatParser] File API items=${items.length} < 3 — fallback to text extraction`);
+        const docText = await readPdfText(filePath);
+        if (docText.trim()) {
+          const textResponse = await chatCompletion(
+            [
+              { role: 'system', content: INVOICE_PROMPT },
+              { role: 'user',   content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+            ],
+            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
+          );
+          console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
+          const textParsed: GigaChatParsedJSON = JSON.parse(extractJSON(textResponse));
+          const textItems = mapItems(textParsed.items);
+          // Берём лучший результат
+          if (textItems.length > items.length) {
+            return { metadata: mapMetadata(textParsed), items: textItems, rawResponse: textResponse };
+          }
+        }
+      }
 
       return {
         metadata: mapMetadata(parsed),
-        items: mapItems(parsed.items),
+        items,
         rawResponse,
       };
     } catch (err) {
