@@ -60,6 +60,10 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
   }[] | null>(null);
   const [priceLists, setPriceLists] = useState<{ id: number; file_name: string; status: string; item_count: number; supplier_name: string | null }[]>([]);
   const [uploadingPriceList, setUploadingPriceList] = useState(false);
+  const [invoiceItemsView, setInvoiceItemsView] = useState<number | null>(null);
+  const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+  const [invoiceItemsMeta, setInvoiceItemsMeta] = useState<any | null>(null);
+  const [invoiceItemsLoading, setInvoiceItemsLoading] = useState(false);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
   const bulkFileRef = useRef<HTMLInputElement>(null);
   const bulkInvFileRef = useRef<HTMLInputElement>(null);
@@ -199,6 +203,24 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
       setMessage({ type: 'error', text: 'Ошибка загрузки позиций спецификации' });
     } finally {
       setSpecItemsLoading(false);
+    }
+  };
+
+  const handleViewInvoiceItems = async (invoiceId: number) => {
+    if (invoiceItemsView === invoiceId) {
+      setInvoiceItemsView(null);
+      return;
+    }
+    setInvoiceItemsView(invoiceId);
+    setInvoiceItemsLoading(true);
+    try {
+      const { data } = await api.get(`/invoices/${invoiceId}`);
+      setInvoiceItemsMeta(data.invoice || null);
+      setInvoiceItems(data.items || []);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка загрузки позиций счёта' });
+    } finally {
+      setInvoiceItemsLoading(false);
     }
   };
 
@@ -512,7 +534,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
               </tr>
             </thead>
             <tbody>
-              {invoices.map(inv => (
+              {invoices.map(inv => {
+                const isVerified = inv.status === 'verified' || inv.parsing_category === 'A';
+                const needsSetup = inv.status === 'needs_mapping' || inv.parsing_category === 'C';
+                return (
+                <>
                 <tr key={inv.id}>
                   <td>{inv.invoice_number || '—'}</td>
                   <td>{inv.supplier_name || '—'}</td>
@@ -571,28 +597,18 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     )}
                   </td>
                   <td style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                    <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
-                      {inv.parsing_category === 'C' ? 'Действия' : inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
-                    </button>
-                    <button
-                      className="btn btn-secondary btn-sm"
-                      style={{ color: '#7c3aed' }}
-                      title="Переразобрать этот счёт через GigaChat AI"
-                      onClick={async (e) => {
-                        e.stopPropagation();
-                        if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
-                        try {
-                          setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
-                          const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
-                          setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
-                          await loadData();
-                        } catch {
-                          setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
-                        }
-                      }}
-                    >
-                      GigaChat
-                    </button>
+                    {isVerified ? (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        onClick={() => handleViewInvoiceItems(inv.id)}
+                      >
+                        {invoiceItemsView === inv.id ? 'Скрыть' : 'Позиции'}
+                      </button>
+                    ) : (
+                      <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
+                        {needsSetup ? 'Настроить' : 'Предпросмотр'}
+                      </button>
+                    )}
                     <button
                       className="btn btn-secondary btn-sm"
                       style={{ color: '#dc2626' }}
@@ -612,7 +628,84 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     </button>
                   </td>
                 </tr>
-              ))}
+                {invoiceItemsView === inv.id && (
+                  <tr key={`items-${inv.id}`}>
+                    <td colSpan={9} style={{ padding: '0.5rem 1rem', background: '#f0f4ff' }}>
+                      {invoiceItemsLoading ? (
+                        <p className="muted">Загрузка позиций...</p>
+                      ) : (
+                        <>
+                          {invoiceItemsMeta && (
+                            <div style={{ marginBottom: '0.5rem', fontSize: '0.85rem', color: '#374151' }}>
+                              {invoiceItemsMeta.supplier_name && <span style={{ marginRight: '1rem' }}>Поставщик: <strong>{invoiceItemsMeta.supplier_name}</strong></span>}
+                              {invoiceItemsMeta.invoice_number && <span style={{ marginRight: '1rem' }}>№ {invoiceItemsMeta.invoice_number}</span>}
+                              {invoiceItemsMeta.invoice_date && <span style={{ marginRight: '1rem' }}>от {invoiceItemsMeta.invoice_date}</span>}
+                              {invoiceItemsMeta.total_amount != null && <span>Итого: <strong>{invoiceItemsMeta.total_amount.toLocaleString('ru-RU')} ₽</strong></span>}
+                            </div>
+                          )}
+                          <div style={{ maxHeight: '400px', overflow: 'auto', marginBottom: '0.5rem' }}>
+                            <table style={{ fontSize: '0.8rem' }}>
+                              <thead>
+                                <tr>
+                                  <th style={{ width: '30px' }}>#</th>
+                                  <th style={{ width: '90px' }}>Артикул</th>
+                                  <th>Наименование</th>
+                                  <th style={{ width: '50px' }}>Ед.</th>
+                                  <th style={{ width: '60px' }}>Кол-во</th>
+                                  <th style={{ width: '90px' }}>Цена</th>
+                                  <th style={{ width: '100px' }}>Сумма</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {invoiceItems.map((item: any, idx: number) => (
+                                  <tr key={item.id} style={item.is_delivery ? { color: '#9a3412' } : {}}>
+                                    <td>{idx + 1}</td>
+                                    <td>{item.article || '—'}</td>
+                                    <td>{item.name}</td>
+                                    <td>{item.unit || '—'}</td>
+                                    <td>{item.quantity != null ? item.quantity : '—'}</td>
+                                    <td>{item.price != null ? item.price.toLocaleString('ru-RU') : '—'}</td>
+                                    <td>{item.amount != null ? item.amount.toLocaleString('ru-RU') : '—'}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ color: '#7c3aed' }}
+                              title="Если позиции определены неверно — переразобрать счёт через GigaChat"
+                              onClick={async () => {
+                                if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
+                                try {
+                                  setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
+                                  const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
+                                  setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                                  setInvoiceItemsView(null);
+                                  await loadData();
+                                } catch {
+                                  setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
+                                }
+                              }}
+                            >
+                              Переразобрать (GigaChat)
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              title="Настроить колонки вручную"
+                              onClick={() => { setInvoiceItemsView(null); onInvoicePreview(inv.id); }}
+                            >
+                              Настроить вручную
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </>
+              )})}
             </tbody>
           </table>
         )}
