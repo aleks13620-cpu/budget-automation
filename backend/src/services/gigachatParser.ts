@@ -251,8 +251,8 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
           const textParsed: GigaChatParsedJSON = JSON.parse(extractJSON(textResponse));
           const textItems = mapItems(textParsed.items);
-          // Берём лучший результат
-          if (textItems.length > items.length) {
+          // Берём текстовый результат если он содержит хоть одну позицию
+          if (textItems.length > 0) {
             return { metadata: mapMetadata(textParsed), items: textItems, rawResponse: textResponse };
           }
         }
