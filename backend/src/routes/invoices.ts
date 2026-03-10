@@ -216,8 +216,18 @@ async function processInvoiceFile(
     }
   }
 
-  // GigaChat fallback: если позиции не найдены — пробуем через GigaChat
-  if (parseResult.items.length === 0 && isGigaChatConfigured()) {
+  // Быстрая оценка качества PDF для решения о fallback
+  let quickPdfCategory: string | null = null;
+  if (ext === '.pdf' && pdfRawRows && pdfFullText !== null && parseResult.items.length > 0) {
+    const quickCat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
+    quickPdfCategory = quickCat.category;
+  }
+
+  // GigaChat fallback: если позиции не найдены ИЛИ PDF плохого качества (B/C)
+  const needsGigaChat = parseResult.items.length === 0 ||
+    (ext === '.pdf' && (quickPdfCategory === 'B' || quickPdfCategory === 'C'));
+
+  if (needsGigaChat && isGigaChatConfigured()) {
     try {
       let gigaResult;
       if (ext === '.pdf') {
@@ -543,7 +553,15 @@ router.get('/api/invoices/:id/preview-excel', (req: Request, res: Response) => {
     const sheetIndex = parseInt(String(req.query.sheet || '0'), 10);
     const maxRows = parseInt(String(req.query.maxRows || '200'), 10);
 
-    const { rows, sheetNames, totalRows } = extractExcelPreviewData(invoice.file_path, sheetIndex, maxRows);
+    const { rows: rawRows, sheetNames, totalRows } = extractExcelPreviewData(invoice.file_path, sheetIndex, maxRows);
+
+    // Определяем непустые колонки: хотя бы одна строка имеет непустое значение
+    const colCount = Math.max(...rawRows.map(r => r.length), 0);
+    const nonEmptyCols = Array.from({ length: colCount }, (_, i) => i)
+      .filter(ci => rawRows.some(row => String(row[ci] ?? '').trim() !== ''));
+
+    // Фильтруем строки — оставляем только непустые колонки
+    const rows = rawRows.map(row => nonEmptyCols.map(ci => row[ci] ?? ''));
 
     const detected = detectColumns(rows);
     const detectedMapping = detected ? {
