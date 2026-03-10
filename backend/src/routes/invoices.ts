@@ -5,6 +5,7 @@ import fs from 'fs';
 import { getDatabase } from '../database';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
+import { routeInvoiceFile } from '../services/invoiceRouter';
 import type { ExcelParseResult } from '../types/invoice';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -28,10 +29,11 @@ const upload = multer({
   storage,
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.pdf' || ext === '.xlsx' || ext === '.xls') {
+    const allowed = ['.pdf', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.tiff', '.bmp'];
+    if (allowed.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Допустимы только файлы .pdf, .xlsx, .xls'));
+      cb(new Error('Допустимы только файлы .pdf, .xlsx, .xls, .jpg, .jpeg, .png, .tiff, .bmp'));
     }
   },
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
@@ -99,6 +101,34 @@ async function processInvoiceFile(
   // For PDF: extract raw data once, reuse for parsing and categorization
   let pdfRawRows: string[][] | null = null;
   let pdfFullText: string | null = null;
+
+  const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.bmp']);
+
+  // For images — delegate entirely to invoiceRouter (GigaChat)
+  if (IMAGE_EXTS.has(ext)) {
+    const routerResult = await routeInvoiceFile(file.path);
+    const parseResult = routerResult.parseResult;
+    const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
+    const fileName = fixFilename(file.originalname);
+    const supplierNameImg = parseResult.supplierName;
+    let supplierIdImg: number | null = null;
+    if (supplierNameImg) {
+      const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
+      supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierNameImg).lastInsertRowid);
+    }
+    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason, discount_detected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const invoiceIdImg = db.transaction(() => {
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null);
+      const iid = Number(r.lastInsertRowid);
+      for (const item of parseResult.items) {
+        insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
+      }
+      return iid;
+    })();
+    console.log(`[Invoice] image source=${routerResult.source}, items=${parseResult.items.length}, category=${routerResult.category}`);
+    return { invoiceId: invoiceIdImg, supplierName: supplierNameImg, imported: parseResult.items.length, parsingCategory: routerResult.category, status, errors: [] };
+  }
 
   // First pass: parse without saved config to get supplier name
   let initialResult;
