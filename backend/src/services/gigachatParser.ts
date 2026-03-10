@@ -170,8 +170,6 @@ export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatIn
     throw new Error(`Не удалось извлечь текст из файла: ${filePath}`);
   }
 
-  const userMessage = `${INVOICE_PROMPT}\n\nДОКУМЕНТ:\n${docText.slice(0, 8000)}`;
-
   let rawResponse = '';
   let lastError: Error | null = null;
 
@@ -179,7 +177,10 @@ export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatIn
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       rawResponse = await chatCompletion(
-        [{ role: 'user', content: userMessage }],
+        [
+          { role: 'system',    content: INVOICE_PROMPT },
+          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+        ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
       );
 
@@ -239,15 +240,16 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
     throw new Error(`Не удалось извлечь текст из Excel-файла: ${filePath}`);
   }
 
-  const userMessage = `${INVOICE_PROMPT}\n\nДОКУМЕНТ (таблица Excel):\n${docText.slice(0, 8000)}`;
-
   let rawResponse = '';
   let lastError: Error | null = null;
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       rawResponse = await chatCompletion(
-        [{ role: 'user', content: userMessage }],
+        [
+          { role: 'system',    content: INVOICE_PROMPT },
+          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+        ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
       );
 
