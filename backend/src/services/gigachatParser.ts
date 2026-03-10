@@ -15,31 +15,52 @@ import { ValidationResult } from '../types/validation';
 // Промпт
 // ---------------------------------------------------------------------------
 
-const INVOICE_PROMPT = `Ты — эксперт по обработке российских коммерческих документов.
+const INVOICE_PROMPT = `
+Ты — эксперт по извлечению данных из российских коммерческих документов.
 
-Проанализируй этот счёт/коммерческое предложение и извлеки данные.
+ЗАДАЧА: Извлечь ТОЛЬКО коммерческую суть документа.
 
-ВАЖНО:
-- Игнорируй водяные знаки, логотипы, декоративные элементы
-- Цены указывай как числа без пробелов и символов (например: 936728.36)
-- Если данных нет — ставь null
-- "В том числе НДС" означает что НДС УЖЕ ВКЛЮЧЁН в итоговую сумму
-- НЕ складывай и НЕ вычисляй суммы сам — бери только то что написано в документе
-- Поле "total_with_vat" = итоговая сумма к оплате
+ИЗВЛЕКАЙ:
+- Тип документа (счёт, КП, спецификация)
+- Номер и дата документа
+- Поставщик: название, ИНН
+- Покупатель: название, ИНН
+- Таблица товаров: позиция, артикул, наименование, количество, единица, цена, скидка (если есть), сумма
+- Итого, НДС, Итого с НДС
 
-Верни ТОЛЬКО JSON без пояснений:
+ИГНОРИРУЙ (не включай в ответ):
+- Банковские реквизиты (БИК, р/с, к/с)
+- Адреса и телефоны
+- Условия поставки и оплаты
+- Рекламу, ссылки, промокоды
+- Подписи, печати, QR-коды
+- Юридические оговорки
+- Информацию о гарантии
+- Контакты менеджеров
+
+ПРАВИЛА:
+- Дату бери ТОЧНО как написано в документе, не изменяй цифры
+- Цены как числа без пробелов: 936728.36
+- Если данных нет — ставь null (не строку "null", а именно null)
+- Если ИНН не указан — ставь null
+- vat_amount бери из документа как есть. Если сумма НДС не указана явно — ставь null. НЕ вычисляй сам
+- Артикул бери точно как написано, сохраняй дефисы
+- НДС обычно УЖЕ ВКЛЮЧЁН в итоговую сумму ("в т.ч. НДС", "Итого с НДС")
+- НЕ вычисляй и НЕ пересчитывай суммы — бери только то что написано в документе
+
+ОТВЕТ — ТОЛЬКО JSON, без пояснений и комментариев:
 
 {
-  "document_type": "счет | коммерческое_предложение | спецификация",
-  "document_number": "номер или null",
-  "document_date": "ДД.ММ.ГГГГ или null",
+  "document_type": "счёт | коммерческое_предложение | спецификация",
+  "number": "номер документа",
+  "date": "ДД.ММ.ГГГГ",
   "supplier": {
-    "name": "название поставщика или null",
-    "inn": "ИНН (10 или 12 цифр) или null"
+    "name": "ООО Название",
+    "inn": "1234567890"
   },
   "buyer": {
-    "name": "название покупателя или null",
-    "inn": "ИНН или null"
+    "name": "ООО Название",
+    "inn": "1234567890"
   },
   "items": [
     {
@@ -49,14 +70,16 @@ const INVOICE_PROMPT = `Ты — эксперт по обработке росс
       "quantity": 1.0,
       "unit": "шт",
       "price": 1000.00,
+      "discount_percent": null,
       "total": 1000.00
     }
   ],
-  "vat_included": true,
+  "subtotal": null,
   "vat_rate": 20,
-  "vat_amount": 0.00,
-  "total_with_vat": 0.00
-}`;
+  "vat_amount": null,
+  "total_with_vat": 1000.00
+}
+`;
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -69,6 +92,10 @@ export interface GigaChatInvoiceResult {
 }
 
 interface GigaChatParsedJSON {
+  // новые поля (обновлённый промпт)
+  number?: string | null;
+  date?: string | null;
+  // старые поля (обратная совместимость)
   document_number?: string | null;
   document_date?: string | null;
   supplier?: { name?: string | null; inn?: string | null };
@@ -80,8 +107,11 @@ interface GigaChatParsedJSON {
     quantity?: number | null;
     unit?: string | null;
     price?: number | null;
+    discount_percent?: number | null;
     total?: number | null;
   }>;
+  subtotal?: number | null;
+  vat_rate?: number | null;
   vat_amount?: number | null;
   total_with_vat?: number | null;
 }
@@ -134,8 +164,9 @@ function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
 /** Конвертирует распарсенный JSON в InvoiceMetadata */
 function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
   return {
-    documentNumber: data.document_number || null,
-    documentDate: data.document_date || null,
+    // поддерживаем оба варианта полей (новый промпт и старый)
+    documentNumber: data.number || data.document_number || null,
+    documentDate: data.date || data.document_date || null,
     supplierName: data.supplier?.name || null,
     supplierINN: data.supplier?.inn || null,
     buyerName: data.buyer?.name || null,
