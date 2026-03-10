@@ -6,6 +6,8 @@ import { getDatabase } from '../database';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
 import { routeInvoiceFile } from '../services/invoiceRouter';
+import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
+import { isGigaChatConfigured } from '../services/gigachatService';
 import type { ExcelParseResult } from '../types/invoice';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -211,6 +213,34 @@ async function processInvoiceFile(
         lastExcelResult = parseExcelInvoice(file.path, savedMapping);
         parseResult = excelToLegacy(lastExcelResult);
       }
+    }
+  }
+
+  // GigaChat fallback: если позиции не найдены — пробуем через GigaChat
+  if (parseResult.items.length === 0 && isGigaChatConfigured()) {
+    try {
+      let gigaResult;
+      if (ext === '.pdf') {
+        console.log(`[InvoiceRouter] PDF items=0 — GigaChat fallback`);
+        gigaResult = await parsePdfWithGigaChat(file.path);
+      } else {
+        console.log(`[InvoiceRouter] Excel items=0 — GigaChat fallback`);
+        gigaResult = await parseExcelWithGigaChat(file.path);
+      }
+      parseResult = {
+        items: gigaResult.items,
+        errors: [],
+        totalRows: gigaResult.items.length,
+        skippedRows: 0,
+        invoiceNumber: gigaResult.metadata.documentNumber,
+        invoiceDate: gigaResult.metadata.documentDate,
+        supplierName: gigaResult.metadata.supplierName || parseResult.supplierName,
+        totalAmount: gigaResult.metadata.totalWithVat,
+        discountDetected: null,
+      };
+      if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
+    } catch (err) {
+      console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
     }
   }
 
