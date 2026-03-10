@@ -802,6 +802,63 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
   }
 });
 
+// POST /api/invoices/:id/reparse-gigachat — принудительный перепарсинг через GigaChat
+router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const invoice = db.prepare(
+      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+    if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
+      return res.status(404).json({ error: 'Файл счёта не найден на диске' });
+    }
+    if (!isGigaChatConfigured()) {
+      return res.status(503).json({ error: 'GigaChat не настроен (нет GIGACHAT_AUTH_KEY)' });
+    }
+
+    const ext = path.extname(invoice.file_name).toLowerCase();
+    let gigaResult;
+    if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'].includes(ext)) {
+      gigaResult = await parsePdfWithGigaChat(invoice.file_path);
+    } else {
+      gigaResult = await parseExcelWithGigaChat(invoice.file_path);
+    }
+
+    const items = gigaResult.items;
+    const meta  = gigaResult.metadata;
+    const newStatus = items.length > 0 ? 'verified' : 'needs_mapping';
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      db.prepare(
+        'UPDATE invoices SET status=?, invoice_number=?, invoice_date=?, total_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
+      ).run(
+        newStatus,
+        meta.documentNumber,
+        meta.documentDate,
+        meta.totalWithVat,
+        items.length > 0 ? 'A' : 'B',
+        `GigaChat reparse, позиций: ${items.length}`,
+        invoiceId,
+      );
+      const ins = db.prepare(
+        'INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?,?,?,?,?,?,?,?,?,?)'
+      );
+      items.forEach(it => ins.run(invoiceId, it.article, it.name, it.unit, it.quantity, it.quantity_packages ?? null, it.price, it.amount, it.row_index, isDeliveryItem(it.name) ? 1 : 0));
+    })();
+
+    console.log(`[GigaChat] Reparse invoice=${invoiceId}, items=${items.length}`);
+    res.json({ success: true, items: items.length, status: newStatus, metadata: meta });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/reparse-gigachat error:', error);
+    res.status(500).json({ error: 'Ошибка GigaChat reparse', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 // POST /api/invoices/:id/request-excel — mark invoice as awaiting Excel replacement
 router.post('/api/invoices/:id/request-excel', (req: Request, res: Response) => {
   try {

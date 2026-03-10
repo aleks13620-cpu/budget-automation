@@ -570,9 +570,28 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                       <span style={{ color: '#d97706', fontWeight: 600 }} title="Распознан, но ещё не проверен">Требует проверки ({inv.item_count})</span>
                     )}
                   </td>
-                  <td style={{ display: 'flex', gap: '0.25rem' }}>
+                  <td style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                     <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
                       {inv.parsing_category === 'C' ? 'Действия' : inv.status === 'needs_mapping' ? 'Настроить' : 'Предпросмотр'}
+                    </button>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      style={{ color: '#7c3aed' }}
+                      title="Переразобрать этот счёт через GigaChat AI"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
+                        try {
+                          setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
+                          const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
+                          setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                          await loadData();
+                        } catch {
+                          setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
+                        }
+                      }}
+                    >
+                      GigaChat
                     </button>
                     <button
                       className="btn btn-secondary btn-sm"
