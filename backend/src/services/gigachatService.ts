@@ -10,6 +10,8 @@
  */
 
 import https from 'https';
+import fs from 'fs';
+import path from 'path';
 
 // ---------------------------------------------------------------------------
 // Константы
@@ -18,6 +20,7 @@ import https from 'https';
 const TOKEN_URL  = 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth';
 const CHAT_URL   = 'https://gigachat.devices.sberbank.ru/api/v1/chat/completions';
 const MODELS_URL = 'https://gigachat.devices.sberbank.ru/api/v1/models';
+const FILES_URL  = 'https://gigachat.devices.sberbank.ru/api/v1/files';
 
 /** Игнорировать проверку сертификата Сбербанка (не в стандартном CA-bundle) */
 const tlsAgent = new https.Agent({ rejectUnauthorized: false });
@@ -29,12 +32,21 @@ const tlsAgent = new https.Agent({ rejectUnauthorized: false });
 export interface GigaChatMessage {
   role: 'system' | 'user' | 'assistant';
   content: string;
+  attachments?: string[]; // file_id из /files
 }
 
 export interface GigaChatOptions {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  functionCall?: 'auto' | 'none';
+}
+
+export interface GigaChatFileInfo {
+  id: string;
+  filename: string;
+  bytes: number;
+  purpose: string;
 }
 
 interface TokenResponse {
@@ -162,15 +174,18 @@ export async function chatCompletion(
 ): Promise<string> {
   const token = await getAccessToken();
 
-  const { model = 'GigaChat', temperature = 0.1, maxTokens = 2048 } = options;
+  const { model = 'GigaChat', temperature = 0.1, maxTokens = 2048, functionCall } = options;
 
-  const body = JSON.stringify({
+  const payload: Record<string, unknown> = {
     model,
     messages,
     temperature,
     max_tokens: maxTokens,
     stream: false,
-  });
+  };
+  if (functionCall) payload.function_call = functionCall;
+
+  const body = JSON.stringify(payload);
 
   const responseText = await httpsPost(CHAT_URL, {
     'Authorization':  `Bearer ${token}`,
@@ -201,6 +216,96 @@ export async function listModels(): Promise<string[]> {
   });
   const data = JSON.parse(responseText);
   return (data.data || []).map((m: { id: string }) => m.id);
+}
+
+/**
+ * Загрузить файл в хранилище GigaChat.
+ * Поддерживаемые форматы: pdf, doc, docx, txt, jpeg, png, tiff, bmp.
+ * @returns file_id для использования в attachments
+ */
+export async function uploadFile(filePath: string, mimeType: string): Promise<string> {
+  const token = await getAccessToken();
+  const fileData = fs.readFileSync(filePath);
+  const fileName = path.basename(filePath);
+  const boundary = `----GigaChatBoundary${Date.now()}`;
+
+  // Строим multipart/form-data вручную
+  const partFile = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\n` +
+      `Content-Disposition: form-data; name="file"; filename="${fileName}"\r\n` +
+      `Content-Type: ${mimeType}\r\n\r\n`
+    ),
+    fileData,
+    Buffer.from('\r\n'),
+  ]);
+  const partPurpose = Buffer.from(
+    `--${boundary}\r\n` +
+    `Content-Disposition: form-data; name="purpose"\r\n\r\n` +
+    `general\r\n` +
+    `--${boundary}--\r\n`
+  );
+  const bodyBuf = Buffer.concat([partFile, partPurpose]);
+
+  const responseText = await new Promise<string>((resolve, reject) => {
+    const req = https.request(FILES_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization':  `Bearer ${token}`,
+        'Content-Type':   `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': bodyBuf.length,
+        'Accept':         'application/json',
+      },
+      agent: tlsAgent,
+    }, res => {
+      let data = '';
+      res.on('data', chunk => (data += chunk));
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`GigaChat uploadFile HTTP ${res.statusCode}: ${data}`));
+        } else {
+          resolve(data);
+        }
+      });
+    });
+    req.on('error', reject);
+    req.write(bodyBuf);
+    req.end();
+  });
+
+  const info: GigaChatFileInfo = JSON.parse(responseText);
+  console.log(`[GigaChat] File uploaded: id=${info.id}, name=${info.filename}, bytes=${info.bytes}`);
+  return info.id;
+}
+
+/**
+ * Удалить файл из хранилища GigaChat.
+ */
+export async function deleteFile(fileId: string): Promise<void> {
+  const token = await getAccessToken();
+  await new Promise<void>((resolve, reject) => {
+    const req = https.request(`${FILES_URL}/${fileId}/delete`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Accept':        'application/json',
+      },
+      agent: tlsAgent,
+    }, res => {
+      let data = '';
+      res.on('data', chunk => (data += chunk));
+      res.on('end', () => {
+        if (res.statusCode && res.statusCode >= 400) {
+          reject(new Error(`GigaChat deleteFile HTTP ${res.statusCode}: ${data}`));
+        } else {
+          resolve();
+        }
+      });
+    });
+    req.on('error', reject);
+    req.end();
+  });
+  console.log(`[GigaChat] File deleted: id=${fileId}`);
 }
 
 /**

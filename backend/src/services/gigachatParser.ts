@@ -7,7 +7,7 @@
  */
 
 import fs from 'fs';
-import { chatCompletion } from './gigachatService';
+import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
 import { ValidationResult } from '../types/validation';
 
@@ -154,34 +154,49 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
  * Делает до 2 попыток при невалидном JSON.
  */
 export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatInvoiceResult> {
-  // Читаем текст документа
   const ext = filePath.toLowerCase().split('.').pop();
-  let docText = '';
 
-  if (ext === 'pdf') {
-    docText = await readPdfText(filePath);
-  } else {
-    // Для изображений передаём только имя файла — GigaChat Vision
-    // пока не поддерживается в базовой интеграции, используем заглушку
-    docText = `[Изображение: ${filePath}]`;
+  // PDF и изображения — загружаем через Files API (нативное чтение GigaChat)
+  const MIME_MAP: Record<string, string> = {
+    pdf:  'application/pdf',
+    jpg:  'image/jpeg',
+    jpeg: 'image/jpeg',
+    png:  'image/png',
+    tiff: 'image/tiff',
+    bmp:  'image/bmp',
+  };
+
+  const mimeType = ext ? MIME_MAP[ext] : undefined;
+
+  if (mimeType) {
+    return parsePdfViaFileApi(filePath, mimeType);
   }
 
-  if (!docText.trim()) {
-    throw new Error(`Не удалось извлечь текст из файла: ${filePath}`);
-  }
+  throw new Error(`Неподдерживаемый формат для GigaChat: .${ext}`);
+}
 
+/**
+ * Загружает файл в GigaChat Files API и получает результат через attachments.
+ * Файл удаляется после получения ответа.
+ */
+async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<GigaChatInvoiceResult> {
+  let fileId: string | null = null;
   let rawResponse = '';
   let lastError: Error | null = null;
 
-  // До 2 попыток при невалидном JSON
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
+      // Загружаем файл (только при первой попытке)
+      if (!fileId) {
+        fileId = await uploadFile(filePath, mimeType);
+      }
+
       rawResponse = await chatCompletion(
         [
-          { role: 'system',    content: INVOICE_PROMPT },
-          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+          { role: 'system', content: INVOICE_PROMPT },
+          { role: 'user',   content: 'Выполни инструкцию. Распознай документ.', attachments: [fileId] },
         ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
+        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096, functionCall: 'auto' }
       );
 
       const jsonStr = extractJSON(rawResponse);
@@ -194,18 +209,24 @@ export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatIn
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[GigaChatParser] Attempt ${attempt} failed: ${lastError.message}`);
-
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 3000));
+      console.warn(`[GigaChatParser] File API attempt ${attempt} failed: ${lastError.message}`);
+      if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
+    } finally {
+      // Удаляем файл после последней попытки
+      if (attempt === 2 && fileId) {
+        await deleteFile(fileId).catch(e => console.warn(`[GigaChatParser] deleteFile failed: ${e.message}`));
       }
     }
   }
 
+  // Если fileId был создан — удаляем
+  if (fileId) {
+    await deleteFile(fileId).catch(() => {});
+  }
+
   throw new Error(
-    `GigaChatParser: не удалось распарсить ответ после 2 попыток. ` +
-    `Последняя ошибка: ${lastError?.message}. ` +
-    `Ответ: ${rawResponse.slice(0, 200)}`
+    `GigaChatParser: не удалось распарсить после 2 попыток. ` +
+    `Ошибка: ${lastError?.message}. Ответ: ${rawResponse.slice(0, 200)}`
   );
 }
 
