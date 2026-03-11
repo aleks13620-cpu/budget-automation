@@ -9,7 +9,6 @@
 import fs from 'fs';
 import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
-import { ValidationResult } from '../types/validation';
 
 // ---------------------------------------------------------------------------
 // Промпт
@@ -254,7 +253,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           { role: 'system', content: INVOICE_PROMPT },
           { role: 'user',   content: 'Выполни инструкцию. Распознай документ.', attachments: [fileId] },
         ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096, functionCall: 'auto' }
+        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
       );
 
       console.log(`[GigaChatParser] File API raw response (first 500): ${rawResponse.slice(0, 500)}`);
