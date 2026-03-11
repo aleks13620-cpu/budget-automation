@@ -118,10 +118,10 @@ async function processInvoiceFile(
       const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
       supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierNameImg).lastInsertRowid);
     }
-    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason, discount_detected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const invoiceIdImg = db.transaction(() => {
-      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null);
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null);
       const iid = Number(r.lastInsertRowid);
       for (const item of parseResult.items) {
         insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
@@ -204,6 +204,7 @@ async function processInvoiceFile(
             invoiceDate: metadata.invoiceDate,
             supplierName: metadata.supplierName,
             totalAmount: totalAmount || metadata.totalAmount,
+            vatAmount: null,
             discountDetected: detectDiscount(pdfFullText),
           };
         } else {
@@ -223,10 +224,11 @@ async function processInvoiceFile(
     quickPdfCategory = quickCat.category;
   }
 
-  // GigaChat fallback: если позиции не найдены ИЛИ PDF плохого качества (B/C) ИЛИ Excel с низким confidence (B/C)
+  // GigaChat fallback: только если позиции не найдены ИЛИ документ нечитаем (C).
+  // При категории B с найденными позициями классический парсер оставляем — он точнее.
   const needsGigaChat = parseResult.items.length === 0 ||
-    (ext === '.pdf' && (quickPdfCategory === 'B' || quickPdfCategory === 'C')) ||
-    (lastExcelResult !== null && (lastExcelResult.category === 'B' || lastExcelResult.category === 'C'));
+    (ext === '.pdf' && quickPdfCategory === 'C') ||
+    (lastExcelResult !== null && lastExcelResult.category === 'C');
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
@@ -247,6 +249,7 @@ async function processInvoiceFile(
         invoiceDate: gigaResult.metadata.documentDate,
         supplierName: gigaResult.metadata.supplierName || parseResult.supplierName,
         totalAmount: gigaResult.metadata.totalWithVat,
+        vatAmount: gigaResult.metadata.vatAmount,
         discountDetected: null,
       };
       if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
@@ -286,8 +289,8 @@ async function processInvoiceFile(
 
   // Insert invoice and items in a transaction
   const insertInvoice = db.prepare(`
-    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, status, parsing_category, parsing_category_reason, discount_detected)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -304,6 +307,7 @@ async function processInvoiceFile(
       fileName,
       file.path,
       parseResult.totalAmount,
+      parseResult.vatAmount ?? null,
       status,
       parsingCategory,
       parsingCategoryReason,
@@ -621,7 +625,7 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
 
     const invoices = db.prepare(`
       SELECT i.id, i.project_id, i.supplier_id, i.invoice_number, i.invoice_date,
-             i.file_name, i.total_amount, i.status, i.created_at,
+             i.file_name, i.total_amount, i.vat_amount, i.status, i.created_at,
              i.parsing_category, i.parsing_category_reason,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
              (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
@@ -845,12 +849,13 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       db.prepare(
-        'UPDATE invoices SET status=?, invoice_number=?, invoice_date=?, total_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
+        'UPDATE invoices SET status=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
       ).run(
         newStatus,
         meta.documentNumber,
         meta.documentDate,
         meta.totalWithVat,
+        meta.vatAmount ?? null,
         items.length > 0 ? 'A' : 'B',
         `GigaChat reparse, позиций: ${items.length}`,
         invoiceId,

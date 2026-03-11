@@ -726,6 +726,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
       invoiceDate: metadata.invoiceDate,
       supplierName: metadata.supplierName,
       totalAmount: metadata.totalAmount,
+      vatAmount: null,
       discountDetected: detectDiscount(fullText),
     };
   }
@@ -757,6 +758,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
         invoiceDate: metadata.invoiceDate,
         supplierName: metadata.supplierName,
         totalAmount: metadata.totalAmount,
+        vatAmount: null,
         discountDetected: detectDiscount(fullText),
       };
     }
@@ -788,6 +790,7 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
     invoiceDate: metadata.invoiceDate,
     supplierName: metadata.supplierName,
     totalAmount,
+    vatAmount: null,
     discountDetected,
   };
 }

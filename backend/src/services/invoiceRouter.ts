@@ -56,6 +56,7 @@ function gigachatToLegacy(
     invoiceDate: gigaResult.metadata.documentDate,
     supplierName: gigaResult.metadata.supplierName,
     totalAmount: gigaResult.metadata.totalWithVat,
+    vatAmount: gigaResult.metadata.vatAmount,
     discountDetected: null,
   };
 }

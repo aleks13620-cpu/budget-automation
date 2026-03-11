@@ -477,6 +477,7 @@ export function excelToLegacy(r: ExcelParseResult): InvoiceParseResult {
     invoiceDate:   r.metadata.documentDate,
     supplierName:  r.metadata.supplierName,
     totalAmount:   r.metadata.totalWithVat,
+    vatAmount:     r.metadata.vatAmount,
     discountDetected: r.discountDetected,
   };
 }

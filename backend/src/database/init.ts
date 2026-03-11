@@ -30,6 +30,7 @@ function initializeDatabase(): void {
       'ALTER TABLE matched_items ADD COLUMN is_analog INTEGER DEFAULT 0',
       'ALTER TABLE specification_items ADD COLUMN parent_item_id INTEGER REFERENCES specification_items(id)',
       'ALTER TABLE specification_items ADD COLUMN full_name TEXT',
+      'ALTER TABLE invoices ADD COLUMN vat_amount REAL DEFAULT NULL',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

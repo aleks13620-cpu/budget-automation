@@ -23,6 +23,7 @@ interface Invoice {
   parsing_category_reason: string | null;
   vat_rate: number | null;
   prices_include_vat: number | null;
+  vat_amount: number | null;
   created_at: string;
 }
 
@@ -589,7 +590,14 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     )}
                   </td>
                   <td>{inv.invoice_date || '—'}</td>
-                  <td>{inv.total_amount != null ? inv.total_amount.toLocaleString('ru-RU') : '—'}</td>
+                  <td>
+                    {inv.total_amount != null ? inv.total_amount.toLocaleString('ru-RU') : '—'}
+                    {inv.vat_amount != null && (
+                      <div style={{ fontSize: '0.75rem', color: '#6b7280' }}>
+                        НДС: {inv.vat_amount.toLocaleString('ru-RU')}
+                      </div>
+                    )}
+                  </td>
                   <td>{inv.item_count}</td>
                   <td>{inv.file_name}</td>
                   <td>
@@ -608,14 +616,13 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     )}
                   </td>
                   <td style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
-                    {isVerified ? (
-                      <button
-                        className="btn btn-secondary btn-sm"
-                        onClick={() => handleViewInvoiceItems(inv.id)}
-                      >
-                        {invoiceItemsView === inv.id ? 'Скрыть' : 'Позиции'}
-                      </button>
-                    ) : (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => handleViewInvoiceItems(inv.id)}
+                    >
+                      {invoiceItemsView === inv.id ? 'Скрыть' : 'Позиции'}
+                    </button>
+                    {!isVerified && (
                       <>
                         <button className="btn btn-secondary btn-sm" onClick={() => onInvoicePreview(inv.id)}>
                           {needsSetup ? 'Настроить' : 'Предпросмотр'}
@@ -652,6 +659,15 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                         )}
                       </>
                     )}
+                    {isVerified && (
+                      <button
+                        className="btn btn-secondary btn-sm"
+                        title="Изменить позиции вручную"
+                        onClick={() => onInvoicePreview(inv.id)}
+                      >
+                        Редактировать
+                      </button>
+                    )}
                     <button
                       className="btn btn-secondary btn-sm"
                       style={{ color: '#dc2626' }}
@@ -684,6 +700,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                               {invoiceItemsMeta.invoice_number && <span style={{ marginRight: '1rem' }}>№ {invoiceItemsMeta.invoice_number}</span>}
                               {invoiceItemsMeta.invoice_date && <span style={{ marginRight: '1rem' }}>от {invoiceItemsMeta.invoice_date}</span>}
                               {invoiceItemsMeta.total_amount != null && <span>Итого: <strong>{invoiceItemsMeta.total_amount.toLocaleString('ru-RU')} ₽</strong></span>}
+                              {invoiceItemsMeta.vat_amount != null && <span style={{ marginLeft: '1rem', color: '#6b7280' }}>в т.ч. НДС: <strong>{invoiceItemsMeta.vat_amount.toLocaleString('ru-RU')} ₽</strong></span>}
                             </div>
                           )}
                           <div style={{ maxHeight: '400px', overflow: 'auto', marginBottom: '0.5rem' }}>
@@ -715,38 +732,34 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                             </table>
                           </div>
                           <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                            {!isVerified && (
-                              <>
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  style={{ color: '#7c3aed' }}
-                                  title="Если позиции определены неверно — переразобрать счёт через GigaChat"
-                                  onClick={async () => {
-                                    if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
-                                    try {
-                                      setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
-                                      const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
-                                      setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
-                                      setInvoiceItemsView(null);
-                                      await loadData();
-                                    } catch (err: any) {
-                                      const details = err.response?.data?.details || err.response?.data?.error || err.message || 'Неизвестная ошибка';
-                                      setMessage({ type: 'error', text: `Ошибка GigaChat: ${details}` });
-                                    }
-                                  }}
-                                >
-                                  Переразобрать (GigaChat)
-                                </button>
-                                <button
-                                  className="btn btn-secondary btn-sm"
-                                  title="Настроить колонки вручную"
-                                  onClick={() => { setInvoiceItemsView(null); onInvoicePreview(inv.id); }}
-                                >
-                                  Настроить вручную
-                                </button>
-                              </>
-                            )}
-                            {inv.status === 'parsed' && inv.item_count > 0 && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              style={{ color: '#7c3aed' }}
+                              title="Если позиции определены неверно — переразобрать счёт через GigaChat"
+                              onClick={async () => {
+                                if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
+                                try {
+                                  setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
+                                  const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
+                                  setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                                  setInvoiceItemsView(null);
+                                  await loadData();
+                                } catch (err: any) {
+                                  const details = err.response?.data?.details || err.response?.data?.error || err.message || 'Неизвестная ошибка';
+                                  setMessage({ type: 'error', text: `Ошибка GigaChat: ${details}` });
+                                }
+                              }}
+                            >
+                              Переразобрать (GigaChat)
+                            </button>
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              title="Настроить колонки вручную"
+                              onClick={() => { setInvoiceItemsView(null); onInvoicePreview(inv.id); }}
+                            >
+                              Редактировать вручную
+                            </button>
+                            {inv.status !== 'verified' && inv.item_count > 0 && (
                               <button
                                 className="btn btn-primary btn-sm"
                                 style={{ background: '#16a34a', borderColor: '#16a34a' }}
