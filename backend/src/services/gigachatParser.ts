@@ -77,6 +77,13 @@ const INVOICE_PROMPT = `
    - vat_amount — только если явно указан, иначе null
    - НЕ вычисляй сам
 
+5. НЕ ПУТАЙ СТАВКУ НДС С ЦЕНОЙ:
+   - Ставка НДС — это процент: 0, 5, 7, 10, 18, 20, 22 или "20/120"
+   - Ставка НДС НЕ является ценой товара
+   - Цена товара — это стоимость единицы в рублях, обычно трёх- и более значное число
+   - Если в таблице есть колонка "Ставка НДС" или "%" — ИГНОРИРУЙ её при заполнении поля price
+   - ПРИЗНАК ОШИБКИ: если все цены одинаковые (например, все = 20 или все = 22) — значит ты взял ставку НДС вместо цены, исправь
+
 ═══════════════════════════════════════
 ОТВЕТ — ТОЛЬКО JSON:
 ═══════════════════════════════════════
@@ -202,9 +209,12 @@ function sanitizeJSON(json: string): string {
   return result;
 }
 
+// Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга
+const VAT_RATES = new Set([0, 5, 7, 10, 18, 20, 22]);
+
 /** Конвертирует распарсенный JSON в InvoiceRow[] */
 function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
-  return items
+  const mapped = items
     .filter(it => it.name && it.name.trim())
     .map((it, idx) => ({
       article: it.article || null,
@@ -216,6 +226,19 @@ function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
       amount: typeof it.total === 'number' ? it.total : null,
       row_index: idx,
     }));
+
+  // Детектор: если >50% цен — типичная ставка НДС (0/5/7/10/18/20/22),
+  // значит GigaChat перепутал колонку "Ставка НДС" с "Ценой" → сбрасываем
+  const pricesWithValues = mapped.filter(i => i.price !== null);
+  if (pricesWithValues.length > 0) {
+    const vatLikePrices = pricesWithValues.filter(i => VAT_RATES.has(i.price!));
+    if (vatLikePrices.length / pricesWithValues.length > 0.5) {
+      console.warn(`[GigaChatParser] VAT-rate price detector triggered: ${vatLikePrices.length}/${pricesWithValues.length} prices look like VAT rates — clearing prices`);
+      mapped.forEach(i => { i.price = null; i.amount = null; });
+    }
+  }
+
+  return mapped;
 }
 
 /** Конвертирует распарсенный JSON в InvoiceMetadata */
