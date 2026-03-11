@@ -556,12 +556,21 @@ router.get('/api/invoices/:id/preview-excel', (req: Request, res: Response) => {
 
     const { rows: rawRows, sheetNames, totalRows } = extractExcelPreviewData(invoice.file_path, sheetIndex, maxRows);
 
-    // Определяем непустые колонки: хотя бы одна строка имеет непустое значение
     const colCount = Math.max(...rawRows.map(r => r.length), 0);
-    const nonEmptyCols = Array.from({ length: colCount }, (_, i) => i)
-      .filter(ci => rawRows.some(row => String(row[ci] ?? '').trim() !== ''));
 
-    // Фильтруем строки — оставляем только непустые колонки
+    // Первый проход: определяем строку-заголовок на всех данных
+    const allCols = Array.from({ length: colCount }, (_, i) => i);
+    const rawAllRows = rawRows.map(row => allCols.map(ci => row[ci] ?? ''));
+    const preDetected = detectColumns(rawAllRows);
+    const dataStartRow = preDetected?.headerRowIndex ?? 0;
+
+    // Фильтруем колонки: непустые начиная со строки-заголовка (игнорируем шапку с реквизитами)
+    const dataArea = rawRows.slice(dataStartRow);
+    const nonEmptyCols = allCols.filter(ci =>
+      dataArea.some(row => String(row[ci] ?? '').trim() !== '')
+    );
+
+    // Применяем фильтр ко всем строкам
     const rows = rawRows.map(row => nonEmptyCols.map(ci => row[ci] ?? ''));
 
     const detected = detectColumns(rows);
