@@ -270,6 +270,17 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
     }
   };
 
+  const handleVerifyInvoice = async (inv: Invoice) => {
+    if (!confirm(`Подтвердить счёт «${inv.file_name}»?\nСтатус изменится на «Проверен».`)) return;
+    try {
+      await api.put(`/invoices/${inv.id}/status`, { status: 'verified' });
+      setMessage({ type: 'success', text: `Счёт «${inv.file_name}» подтверждён` });
+      await loadData();
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при подтверждении счёта' });
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка...</p>;
 
   // Map section -> specification for quick lookup
@@ -628,6 +639,16 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                         >
                           GigaChat
                         </button>
+                        {!needsSetup && inv.status !== 'awaiting_excel' && inv.status !== 'skipped' && inv.item_count > 0 && (
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            style={{ color: '#16a34a', fontWeight: 600 }}
+                            title="Подтвердить — позиции проверены, всё верно"
+                            onClick={(e) => { e.stopPropagation(); handleVerifyInvoice(inv); }}
+                          >
+                            ✓ Подтвердить
+                          </button>
+                        )}
                       </>
                     )}
                     <button
@@ -692,33 +713,47 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                               </tbody>
                             </table>
                           </div>
-                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              style={{ color: '#7c3aed' }}
-                              title="Если позиции определены неверно — переразобрать счёт через GigaChat"
-                              onClick={async () => {
-                                if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
-                                try {
-                                  setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
-                                  const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
-                                  setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
-                                  setInvoiceItemsView(null);
-                                  await loadData();
-                                } catch {
-                                  setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
-                                }
-                              }}
-                            >
-                              Переразобрать (GigaChat)
-                            </button>
-                            <button
-                              className="btn btn-secondary btn-sm"
-                              title="Настроить колонки вручную"
-                              onClick={() => { setInvoiceItemsView(null); onInvoicePreview(inv.id); }}
-                            >
-                              Настроить вручную
-                            </button>
+                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                            {!isVerified && (
+                              <>
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ color: '#7c3aed' }}
+                                  title="Если позиции определены неверно — переразобрать счёт через GigaChat"
+                                  onClick={async () => {
+                                    if (!confirm(`Переразобрать «${inv.file_name}» через GigaChat?\nТекущие позиции будут заменены.`)) return;
+                                    try {
+                                      setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
+                                      const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
+                                      setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                                      setInvoiceItemsView(null);
+                                      await loadData();
+                                    } catch {
+                                      setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
+                                    }
+                                  }}
+                                >
+                                  Переразобрать (GigaChat)
+                                </button>
+                                <button
+                                  className="btn btn-secondary btn-sm"
+                                  title="Настроить колонки вручную"
+                                  onClick={() => { setInvoiceItemsView(null); onInvoicePreview(inv.id); }}
+                                >
+                                  Настроить вручную
+                                </button>
+                              </>
+                            )}
+                            {inv.status === 'parsed' && inv.item_count > 0 && (
+                              <button
+                                className="btn btn-primary btn-sm"
+                                style={{ background: '#16a34a', borderColor: '#16a34a' }}
+                                title="Позиции проверены — подтвердить счёт"
+                                onClick={() => { setInvoiceItemsView(null); handleVerifyInvoice(inv); }}
+                              >
+                                ✓ Всё верно — подтвердить
+                              </button>
+                            )}
                           </div>
                         </>
                       )}
