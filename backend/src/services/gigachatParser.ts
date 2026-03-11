@@ -253,7 +253,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           { role: 'system', content: INVOICE_PROMPT },
           { role: 'user',   content: 'Выполни инструкцию. Распознай документ.', attachments: [fileId] },
         ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
+        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
 
       console.log(`[GigaChatParser] File API raw response (first 500): ${rawResponse.slice(0, 500)}`);
@@ -272,7 +272,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
               { role: 'system', content: INVOICE_PROMPT },
               { role: 'user',   content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
             ],
-            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
+            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
           );
           console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
           const textParsed: GigaChatParsedJSON = JSON.parse(extractJSON(textResponse));
@@ -363,7 +363,7 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
           { role: 'system',    content: INVOICE_PROMPT },
           { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
         ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
+        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
 
       const jsonStr = extractJSON(rawResponse);
