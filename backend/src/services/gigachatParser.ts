@@ -174,6 +174,34 @@ function extractJSON(text: string): string {
   return text.trim();
 }
 
+/**
+ * Исправляет типичные ошибки в JSON от GigaChat:
+ * - невалидные escape-последовательности (\П, \Ц, \E и т.д.)
+ * - управляющие символы внутри строк (literal \n, \t, \r)
+ * - trailing commas перед } и ]
+ */
+function sanitizeJSON(json: string): string {
+  // 1. Заменить литеральные переносы строк и табуляции внутри строковых значений
+  //    (реальный \n → пробел, чтобы не ломать структуру JSON)
+  let result = json.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+    return match
+      .replace(/\n/g, ' ')
+      .replace(/\r/g, '')
+      .replace(/\t/g, ' ');
+  });
+
+  // 2. Невалидные escape-последовательности: \X где X не является допустимым
+  //    JSON escape-символом ("\/bfnrtu) → просто X (убираем backslash)
+  result = result.replace(/"(?:[^"\\]|\\.)*"/g, (match) => {
+    return match.replace(/\\([^"\\/bfnrtu0-9])/g, '$1');
+  });
+
+  // 3. Trailing commas: ,} и ,] → } и ]
+  result = result.replace(/,(\s*[}\]])/g, '$1');
+
+  return result;
+}
+
 /** Конвертирует распарсенный JSON в InvoiceRow[] */
 function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
   return items
@@ -261,7 +289,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
 
       console.log(`[GigaChatParser] File API raw response (first 500): ${rawResponse.slice(0, 500)}`);
 
-      const jsonStr = extractJSON(rawResponse);
+      const jsonStr = sanitizeJSON(extractJSON(rawResponse));
       const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
       const items = mapItems(parsed.items);
 
@@ -278,7 +306,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
             { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
           );
           console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
-          const textParsed: GigaChatParsedJSON = JSON.parse(extractJSON(textResponse));
+          const textParsed: GigaChatParsedJSON = JSON.parse(sanitizeJSON(extractJSON(textResponse)));
           const textItems = mapItems(textParsed.items);
           // Берём текстовый результат если он содержит хоть одну позицию
           if (textItems.length > 0) {
@@ -370,7 +398,7 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
 
-      const jsonStr = extractJSON(rawResponse);
+      const jsonStr = sanitizeJSON(extractJSON(rawResponse));
       const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
 
       return {
