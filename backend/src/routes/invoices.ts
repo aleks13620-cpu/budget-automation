@@ -223,18 +223,19 @@ async function processInvoiceFile(
     quickPdfCategory = quickCat.category;
   }
 
-  // GigaChat fallback: если позиции не найдены ИЛИ PDF плохого качества (B/C)
+  // GigaChat fallback: если позиции не найдены ИЛИ PDF плохого качества (B/C) ИЛИ Excel с низким confidence (B/C)
   const needsGigaChat = parseResult.items.length === 0 ||
-    (ext === '.pdf' && (quickPdfCategory === 'B' || quickPdfCategory === 'C'));
+    (ext === '.pdf' && (quickPdfCategory === 'B' || quickPdfCategory === 'C')) ||
+    (lastExcelResult !== null && (lastExcelResult.category === 'B' || lastExcelResult.category === 'C'));
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
       let gigaResult;
       if (ext === '.pdf') {
-        console.log(`[InvoiceRouter] PDF items=0 — GigaChat fallback`);
+        console.log(`[InvoiceRouter] PDF category=${quickPdfCategory}, items=${parseResult.items.length} — GigaChat fallback`);
         gigaResult = await parsePdfWithGigaChat(file.path);
       } else {
-        console.log(`[InvoiceRouter] Excel items=0 — GigaChat fallback`);
+        console.log(`[InvoiceRouter] Excel category=${lastExcelResult?.category}, items=${parseResult.items.length} — GigaChat fallback`);
         gigaResult = await parseExcelWithGigaChat(file.path);
       }
       parseResult = {
