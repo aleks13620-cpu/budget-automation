@@ -271,7 +271,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           const textResponse = await chatCompletion(
             [
               { role: 'system', content: INVOICE_PROMPT },
-              { role: 'user',   content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+              { role: 'user',   content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
             ],
             { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
           );
@@ -314,20 +314,30 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
 }
 
 /**
- * Конвертирует Excel-файл в читаемый текст (CSV) для отправки в GigaChat.
- * Берёт первый лист, пропускает пустые строки.
+ * Конвертирует Excel-файл в компактный текст для отправки в GigaChat.
+ * Фильтрует пустые строки и пустые колонки чтобы сократить объём текста.
  */
 function excelToText(filePath: string): string {
   const XLSX = require('xlsx');
   const wb = XLSX.readFile(filePath);
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  const rawRows: string[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-  return rows
-    .filter((row: string[]) => row.some((cell: string) => String(cell).trim() !== ''))
-    .map((row: string[]) =>
-      row
-        .map((cell: string) => String(cell).replace(/\n/g, ' ').trim())
+  // Убираем полностью пустые строки
+  const nonEmptyRows = rawRows.filter(row => row.some(cell => String(cell).trim() !== ''));
+
+  if (nonEmptyRows.length === 0) return '';
+
+  const colCount = Math.max(...nonEmptyRows.map(r => r.length), 0);
+
+  // Оставляем только колонки, непустые хотя бы в одной строке
+  const nonEmptyCols = Array.from({ length: colCount }, (_, i) => i)
+    .filter(ci => nonEmptyRows.some(row => String(row[ci] ?? '').trim() !== ''));
+
+  return nonEmptyRows
+    .map(row =>
+      nonEmptyCols
+        .map(ci => String(row[ci] ?? '').replace(/\n/g, ' ').trim())
         .join('\t')
     )
     .join('\n');
@@ -352,7 +362,7 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
       rawResponse = await chatCompletion(
         [
           { role: 'system',    content: INVOICE_PROMPT },
-          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 8000)}` },
+          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
         ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 4096 }
       );
