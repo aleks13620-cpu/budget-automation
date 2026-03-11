@@ -632,8 +632,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                               const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
                               setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
                               await loadData();
-                            } catch {
-                              setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
+                            } catch (err: any) {
+                              const details = err.response?.data?.details || err.response?.data?.error || err.message || 'Неизвестная ошибка';
+                              setMessage({ type: 'error', text: `Ошибка GigaChat: ${details}` });
                             }
                           }}
                         >
@@ -728,8 +729,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                                       setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
                                       setInvoiceItemsView(null);
                                       await loadData();
-                                    } catch {
-                                      setMessage({ type: 'error', text: 'Ошибка GigaChat reparse' });
+                                    } catch (err: any) {
+                                      const details = err.response?.data?.details || err.response?.data?.error || err.message || 'Неизвестная ошибка';
+                                      setMessage({ type: 'error', text: `Ошибка GigaChat: ${details}` });
                                     }
                                   }}
                                 >
