@@ -8,6 +8,7 @@ import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelT
 import { routeInvoiceFile } from '../services/invoiceRouter';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
 import { isGigaChatConfigured } from '../services/gigachatService';
+import stringSimilarity from 'string-similarity';
 import type { ExcelParseResult } from '../types/invoice';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -240,19 +241,44 @@ async function processInvoiceFile(
         console.log(`[InvoiceRouter] Excel category=${lastExcelResult?.category}, items=${parseResult.items.length} — GigaChat fallback`);
         gigaResult = await parseExcelWithGigaChat(file.path);
       }
-      parseResult = {
-        items: gigaResult.items,
-        errors: [],
-        totalRows: gigaResult.items.length,
-        skippedRows: 0,
-        invoiceNumber: gigaResult.metadata.documentNumber,
-        invoiceDate: gigaResult.metadata.documentDate,
-        supplierName: gigaResult.metadata.supplierName || parseResult.supplierName,
-        totalAmount: gigaResult.metadata.totalWithVat,
-        vatAmount: gigaResult.metadata.vatAmount,
-        discountDetected: null,
-      };
-      if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
+
+      // document_type guard: если документ явно не счёт и нет суммы — не перезаписывать результат
+      const docType = (gigaResult.documentType || '').toLowerCase();
+      const isNonInvoice = docType &&
+        !['счёт', 'счет', 'invoice'].some(t => docType.includes(t));
+      const hasFinancialData = gigaResult.metadata.totalWithVat != null || gigaResult.items.length >= 3;
+
+      if (isNonInvoice && !hasFinancialData) {
+        console.log(`[GigaChat] Skipping non-invoice document (type="${gigaResult.documentType}", items=${gigaResult.items.length}) — keeping classic parser result`);
+      } else {
+        // Fuzzy supplier match: если GigaChat нашёл поставщика — проверить по БД
+        let resolvedSupplierName = gigaResult.metadata.supplierName || parseResult.supplierName;
+        if (gigaResult.metadata.supplierName) {
+          const allSuppliers = db.prepare('SELECT name FROM suppliers').all() as { name: string }[];
+          if (allSuppliers.length > 0) {
+            const supplierNames = allSuppliers.map(s => s.name);
+            const match = stringSimilarity.findBestMatch(gigaResult.metadata.supplierName, supplierNames);
+            if (match.bestMatch.rating >= 0.75) {
+              console.log(`[GigaChat] Fuzzy supplier match: "${gigaResult.metadata.supplierName}" → "${match.bestMatch.target}" (score=${match.bestMatch.rating.toFixed(2)})`);
+              resolvedSupplierName = match.bestMatch.target;
+            }
+          }
+        }
+
+        parseResult = {
+          items: gigaResult.items,
+          errors: [],
+          totalRows: gigaResult.items.length,
+          skippedRows: 0,
+          invoiceNumber: gigaResult.metadata.documentNumber,
+          invoiceDate: gigaResult.metadata.documentDate,
+          supplierName: resolvedSupplierName,
+          totalAmount: gigaResult.metadata.totalWithVat,
+          vatAmount: gigaResult.metadata.vatAmount,
+          discountDetected: null,
+        };
+        if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
+      }
     } catch (err) {
       console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
     }
@@ -846,12 +872,33 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     const meta  = gigaResult.metadata;
     const newStatus = items.length > 0 ? 'verified' : 'needs_mapping';
 
+    // Fuzzy supplier match: если GigaChat нашёл поставщика — проверить по БД
+    let resolvedSupplierName = meta.supplierName;
+    if (meta.supplierName) {
+      const allSuppliers = db.prepare('SELECT name FROM suppliers').all() as { name: string }[];
+      if (allSuppliers.length > 0) {
+        const match = stringSimilarity.findBestMatch(meta.supplierName, allSuppliers.map(s => s.name));
+        if (match.bestMatch.rating >= 0.75) {
+          console.log(`[GigaChat Reparse] Fuzzy supplier: "${meta.supplierName}" → "${match.bestMatch.target}" (${match.bestMatch.rating.toFixed(2)})`);
+          resolvedSupplierName = match.bestMatch.target;
+        }
+      }
+    }
+
+    // Найти или создать поставщика по уточнённому имени
+    let resolvedSupplierId: number | null = null;
+    if (resolvedSupplierName) {
+      const existingS = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(resolvedSupplierName) as { id: number } | undefined;
+      resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(resolvedSupplierName).lastInsertRowid);
+    }
+
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       db.prepare(
-        'UPDATE invoices SET status=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
+        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
       ).run(
         newStatus,
+        resolvedSupplierId,
         meta.documentNumber,
         meta.documentDate,
         meta.totalWithVat,

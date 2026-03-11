@@ -115,9 +115,12 @@ export interface GigaChatInvoiceResult {
   metadata: InvoiceMetadata;
   items: InvoiceRow[];
   rawResponse: string;
+  /** Тип документа из ответа GigaChat — "счёт", "коммерческое_предложение", "спецификация" и т.д. */
+  documentType: string | null;
 }
 
 interface GigaChatParsedJSON {
+  document_type?: string | null;
   // новые поля (обновлённый промпт)
   number?: string | null;
   date?: string | null;
@@ -279,7 +282,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           const textItems = mapItems(textParsed.items);
           // Берём текстовый результат если он содержит хоть одну позицию
           if (textItems.length > 0) {
-            return { metadata: mapMetadata(textParsed), items: textItems, rawResponse: textResponse };
+            return { metadata: mapMetadata(textParsed), items: textItems, rawResponse: textResponse, documentType: textParsed.document_type || null };
           }
         }
       }
@@ -288,6 +291,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
         metadata: mapMetadata(parsed),
         items,
         rawResponse,
+        documentType: parsed.document_type || null,
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -373,6 +377,7 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
         metadata: mapMetadata(parsed),
         items: mapItems(parsed.items),
         rawResponse,
+        documentType: parsed.document_type || null,
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
