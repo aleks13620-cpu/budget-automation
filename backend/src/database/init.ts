@@ -31,6 +31,7 @@ function initializeDatabase(): void {
       'ALTER TABLE specification_items ADD COLUMN parent_item_id INTEGER REFERENCES specification_items(id)',
       'ALTER TABLE specification_items ADD COLUMN full_name TEXT',
       'ALTER TABLE invoices ADD COLUMN vat_amount REAL DEFAULT NULL',
+      'ALTER TABLE invoices ADD COLUMN needs_amount_review INTEGER DEFAULT 0',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

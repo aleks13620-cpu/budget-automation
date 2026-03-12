@@ -66,6 +66,23 @@ function isDeliveryItem(name: string): boolean {
   return DELIVERY_KEYWORDS.some(kw => lower.includes(kw));
 }
 
+// Helper: compute needs_amount_review flag
+// Returns 1 if Σ(price×quantity) diverges from totalWithVat by more than 15%
+function computeNeedsAmountReview(
+  items: Array<{ price: number | null; quantity: number | null }>,
+  totalWithVat: number | null
+): number {
+  if (!totalWithVat || totalWithVat <= 0 || items.length === 0) return 0;
+  const sumItems = items.reduce((acc, it) => {
+    const p = it.price ?? 0;
+    const q = it.quantity ?? 0;
+    return acc + p * q;
+  }, 0);
+  if (sumItems === 0) return 0;
+  const deviation = Math.abs(sumItems - totalWithVat) / totalWithVat;
+  return deviation > 0.15 ? 1 : 0;
+}
+
 // Helper: load saved parser config for a supplier
 function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   const db = getDatabase();
@@ -314,9 +331,11 @@ async function processInvoiceFile(
   console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
 
   // Insert invoice and items in a transaction
+  const needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+
   const insertInvoice = db.prepare(`
-    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -338,6 +357,7 @@ async function processInvoiceFile(
       parsingCategory,
       parsingCategoryReason,
       parseResult.discountDetected ?? null,
+      needsAmountReview,
     );
     const invoiceId = Number(invoiceResult.lastInsertRowid);
 
@@ -652,7 +672,7 @@ router.get('/api/projects/:id/invoices', (req: Request, res: Response) => {
     const invoices = db.prepare(`
       SELECT i.id, i.project_id, i.supplier_id, i.invoice_number, i.invoice_date,
              i.file_name, i.total_amount, i.vat_amount, i.status, i.created_at,
-             i.parsing_category, i.parsing_category_reason,
+             i.parsing_category, i.parsing_category_reason, i.needs_amount_review,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
              (SELECT COUNT(*) FROM invoice_items WHERE invoice_id = i.id) as item_count
       FROM invoices i
@@ -892,10 +912,12 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(resolvedSupplierName).lastInsertRowid);
     }
 
+    const reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null);
+
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       db.prepare(
-        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=? WHERE id=?'
+        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=?, needs_amount_review=? WHERE id=?'
       ).run(
         newStatus,
         resolvedSupplierId,
@@ -905,6 +927,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
         meta.vatAmount ?? null,
         items.length > 0 ? 'A' : 'B',
         `GigaChat reparse, позиций: ${items.length}`,
+        reparsedNeedsReview,
         invoiceId,
       );
       const ins = db.prepare(

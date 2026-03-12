@@ -24,6 +24,7 @@ interface Invoice {
   vat_rate: number | null;
   prices_include_vat: number | null;
   vat_amount: number | null;
+  needs_amount_review: number | null;
   created_at: string;
 }
 
@@ -614,6 +615,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                     ) : (
                       <span style={{ color: '#d97706', fontWeight: 600 }} title="Распознан, но ещё не проверен">Требует проверки ({inv.item_count})</span>
                     )}
+                    {inv.needs_amount_review === 1 && (
+                      <div style={{ fontSize: '0.75rem', color: '#b45309', marginTop: '0.2rem' }} title="Сумма позиций расходится с итогом документа более чем на 15%">
+                        ⚠ Сумма под сомнением
+                      </div>
+                    )}
                   </td>
                   <td style={{ display: 'flex', gap: '0.25rem', flexWrap: 'wrap' }}>
                     <button
@@ -701,6 +707,14 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                               {invoiceItemsMeta.invoice_date && <span style={{ marginRight: '1rem' }}>от {invoiceItemsMeta.invoice_date}</span>}
                               {invoiceItemsMeta.total_amount != null && <span>Итого: <strong>{invoiceItemsMeta.total_amount.toLocaleString('ru-RU')} ₽</strong></span>}
                               {invoiceItemsMeta.vat_amount != null && <span style={{ marginLeft: '1rem', color: '#6b7280' }}>в т.ч. НДС: <strong>{invoiceItemsMeta.vat_amount.toLocaleString('ru-RU')} ₽</strong></span>}
+                            </div>
+                          )}
+                          {inv.needs_amount_review === 1 && invoiceItemsMeta?.total_amount != null && (
+                            <div style={{ marginBottom: '0.5rem', padding: '0.4rem 0.75rem', background: '#fef3c7', border: '1px solid #f59e0b', borderRadius: '4px', fontSize: '0.8rem', color: '#92400e' }}>
+                              ⚠ <strong>Сумма под сомнением:</strong>{' '}
+                              расчётная сумма позиций ({invoiceItems.reduce((s: number, it: any) => s + (it.price ?? 0) * (it.quantity ?? 0), 0).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽)
+                              {' '}расходится с итогом документа ({invoiceItemsMeta.total_amount.toLocaleString('ru-RU')} ₽) более чем на 15%.
+                              Рекомендуется проверить позиции вручную.
                             </div>
                           )}
                           <div style={{ maxHeight: '400px', overflow: 'auto', marginBottom: '0.5rem' }}>
