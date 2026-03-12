@@ -83,6 +83,22 @@ function computeNeedsAmountReview(
   return deviation > 0.15 ? 1 : 0;
 }
 
+// Helper: build supplier context string for GigaChat from saved parser config
+function buildSupplierContext(supplierName: string | null, savedMapping: SavedMapping | undefined): string | undefined {
+  if (!savedMapping || !supplierName) return undefined;
+  const colNames: string[] = [];
+  if (savedMapping.name) colNames.push(`наименование (колонка ${savedMapping.name})`);
+  if (savedMapping.article) colNames.push(`артикул (колонка ${savedMapping.article})`);
+  if (savedMapping.quantity) colNames.push(`количество (колонка ${savedMapping.quantity})`);
+  if (savedMapping.unit) colNames.push(`единица (колонка ${savedMapping.unit})`);
+  if (savedMapping.price) colNames.push(`цена (колонка ${savedMapping.price})`);
+  if (savedMapping.amount) colNames.push(`сумма (колонка ${savedMapping.amount})`);
+  if (colNames.length === 0) return undefined;
+  const context = `КОНТЕКСТ ПОСТАВЩИКА: счёт от "${supplierName}". Структура таблицы: ${colNames.join(', ')}. Ориентируйся на эту структуру при извлечении данных.`;
+  console.log(`[GigaChat] Supplier context: ${context}`);
+  return context;
+}
+
 // Helper: load saved parser config for a supplier
 function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   const db = getDatabase();
@@ -250,13 +266,14 @@ async function processInvoiceFile(
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
+      const supplierCtx = buildSupplierContext(supplierName, supplierId ? loadSavedMapping(supplierId) : undefined);
       let gigaResult;
       if (ext === '.pdf') {
         console.log(`[InvoiceRouter] PDF category=${quickPdfCategory}, items=${parseResult.items.length} — GigaChat fallback`);
-        gigaResult = await parsePdfWithGigaChat(file.path);
+        gigaResult = await parsePdfWithGigaChat(file.path, supplierCtx);
       } else {
         console.log(`[InvoiceRouter] Excel category=${lastExcelResult?.category}, items=${parseResult.items.length} — GigaChat fallback`);
-        gigaResult = await parseExcelWithGigaChat(file.path);
+        gigaResult = await parseExcelWithGigaChat(file.path, supplierCtx);
       }
 
       // document_type guard: если документ явно не счёт и нет суммы — не перезаписывать результат
@@ -881,11 +898,19 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     }
 
     const ext = path.extname(invoice.file_name).toLowerCase();
+
+    // Build supplier context from saved parser config
+    let reparseSupplierCtx: string | undefined;
+    if (invoice.supplier_id) {
+      const supplierRow = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(invoice.supplier_id) as { name: string } | undefined;
+      reparseSupplierCtx = buildSupplierContext(supplierRow?.name ?? null, loadSavedMapping(invoice.supplier_id));
+    }
+
     let gigaResult;
     if (ext === '.pdf' || ['.jpg', '.jpeg', '.png', '.tiff', '.bmp'].includes(ext)) {
-      gigaResult = await parsePdfWithGigaChat(invoice.file_path);
+      gigaResult = await parsePdfWithGigaChat(invoice.file_path, reparseSupplierCtx);
     } else {
-      gigaResult = await parseExcelWithGigaChat(invoice.file_path);
+      gigaResult = await parseExcelWithGigaChat(invoice.file_path, reparseSupplierCtx);
     }
 
     const items = gigaResult.items;

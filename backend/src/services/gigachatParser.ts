@@ -346,7 +346,7 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
  * Парсит PDF-счёт через GigaChat.
  * Делает до 2 попыток при невалидном JSON.
  */
-export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatInvoiceResult> {
+export async function parsePdfWithGigaChat(filePath: string, supplierContext?: string): Promise<GigaChatInvoiceResult> {
   const ext = filePath.toLowerCase().split('.').pop();
 
   // PDF и изображения — загружаем через Files API (нативное чтение GigaChat)
@@ -362,7 +362,7 @@ export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatIn
   const mimeType = ext ? MIME_MAP[ext] : undefined;
 
   if (mimeType) {
-    return parsePdfViaFileApi(filePath, mimeType);
+    return parsePdfViaFileApi(filePath, mimeType, supplierContext);
   }
 
   throw new Error(`Неподдерживаемый формат для GigaChat: .${ext}`);
@@ -372,10 +372,12 @@ export async function parsePdfWithGigaChat(filePath: string): Promise<GigaChatIn
  * Загружает файл в GigaChat Files API и получает результат через attachments.
  * Файл удаляется после получения ответа.
  */
-async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<GigaChatInvoiceResult> {
+async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierContext?: string): Promise<GigaChatInvoiceResult> {
   let fileId: string | null = null;
   let rawResponse = '';
   let lastError: Error | null = null;
+
+  const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -387,7 +389,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
       rawResponse = await chatCompletion(
         [
           { role: 'system', content: INVOICE_PROMPT },
-          { role: 'user',   content: 'Выполни инструкцию. Распознай документ.', attachments: [fileId] },
+          { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай документ.`, attachments: [fileId] },
         ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
@@ -406,7 +408,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string): Promise<G
           const textResponse = await chatCompletion(
             [
               { role: 'system', content: INVOICE_PROMPT },
-              { role: 'user',   content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
+              { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
             ],
             { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
           );
@@ -483,13 +485,14 @@ function excelToText(filePath: string): string {
  * Парсит Excel-счёт через GigaChat.
  * Конвертирует таблицу в текст и отправляет с тем же промптом.
  */
-export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChatInvoiceResult> {
+export async function parseExcelWithGigaChat(filePath: string, supplierContext?: string): Promise<GigaChatInvoiceResult> {
   const docText = excelToText(filePath);
 
   if (!docText.trim()) {
     throw new Error(`Не удалось извлечь текст из Excel-файла: ${filePath}`);
   }
 
+  const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
   let rawResponse = '';
   let lastError: Error | null = null;
 
@@ -498,7 +501,7 @@ export async function parseExcelWithGigaChat(filePath: string): Promise<GigaChat
       rawResponse = await chatCompletion(
         [
           { role: 'system',    content: INVOICE_PROMPT },
-          { role: 'user',      content: `Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
+          { role: 'user',      content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
         ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
