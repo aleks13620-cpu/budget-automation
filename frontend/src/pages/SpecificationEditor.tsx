@@ -1,25 +1,12 @@
 import { useState, useEffect } from 'react';
 import { api } from '../api';
 import { SpecColumnMapper } from '../components/SpecColumnMapper';
-
-interface SpecColumnMapping {
-  position_number: number | null;
-  name: number | null;
-  characteristics: number | null;
-  equipment_code: number | null;
-  article: number | null;
-  product_code: number | null;
-  marking: number | null;
-  type_size: number | null;
-  manufacturer: number | null;
-  unit: number | null;
-  quantity: number | null;
-}
+import type { SpecColumnMapping } from '../components/SpecColumnMapper';
 
 const DEFAULT_MAPPING: SpecColumnMapping = {
   position_number: null, name: null, characteristics: null, equipment_code: null,
   article: null, product_code: null, marking: null, type_size: null,
-  manufacturer: null, unit: null, quantity: null,
+  manufacturer: null, unit: null, quantity: null, price: null, amount: null,
 };
 
 interface Props {
@@ -74,8 +61,17 @@ export function SpecificationEditor({ specId, onBack }: Props) {
     }
   };
 
-  const displayRows = rows.slice(0, 30);
-  const columnCount = rows.length > 0 ? Math.max(...rows.slice(0, 5).map(r => r.length), 0) : 0;
+  // Заголовки колонок из строки headerRow
+  const columnHeaders: string[] = rows.length > 0 && rows[headerRow]
+    ? rows[headerRow].map(c => String(c ?? '').trim())
+    : [];
+
+  const displayRows = rows.slice(0, 40);
+
+  // Подсвечиваемые колонки (те что выбраны в маппере)
+  const mappedCols = new Set(
+    Object.values(mapping).filter((v): v is number => v !== null)
+  );
 
   if (loading) return <div className="section"><p className="muted">Загрузка...</p></div>;
 
@@ -100,33 +96,86 @@ export function SpecificationEditor({ specId, onBack }: Props) {
           </p>
           <p style={{ margin: '0.5rem 0 0', color: '#666' }}>
             <strong>Решение:</strong> удалите спецификацию в разделе проекта и загрузите Excel-файл повторно.
-            После этого редактор будет доступен.
           </p>
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: '1rem' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-              <span>Строка заголовка (0-based):</span>
+          {/* Строка заголовка */}
+          <div style={{ marginBottom: '0.75rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.9rem' }}>
+              Строка заголовка:
               <input
                 type="number"
                 min={0}
                 max={rows.length - 1}
                 value={headerRow}
-                onChange={e => setHeaderRow(parseInt(e.target.value, 10) || 0)}
-                style={{ width: '80px' }}
+                onChange={e => setHeaderRow(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                style={{ width: '70px', padding: '3px 6px' }}
               />
             </label>
+            <span className="muted" style={{ fontSize: '0.8rem' }}>
+              Выделена синим в таблице. Колонки нумеруются с 1.
+            </span>
           </div>
 
-          <div style={{ overflowX: 'auto', marginBottom: '1rem' }}>
-            <table style={{ fontSize: '0.75rem', borderCollapse: 'collapse' }}>
+          {/* Маппинг колонок — над таблицей */}
+          <div style={{ border: '1px solid #dee2e6', borderRadius: 6, padding: '0.75rem', marginBottom: '0.75rem', background: '#f8f9fa' }}>
+            <h4 style={{ margin: '0 0 0.5rem' }}>Маппинг колонок</h4>
+            <SpecColumnMapper
+              mapping={mapping}
+              onChange={setMapping}
+              mergeMultiline={mergeMultiline}
+              onMergeMultilineChange={setMergeMultiline}
+              columnHeaders={columnHeaders}
+            />
+          </div>
+
+          {/* Кнопки действий */}
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+            <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing}>
+              {reparsing ? 'Пересборка...' : 'Пересобрать позиции'}
+            </button>
+            <button className="btn btn-secondary" onClick={handleSaveConfig}>
+              Сохранить конфиг
+            </button>
+          </div>
+
+          {/* Таблица сырых данных */}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ fontSize: '0.75rem', borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '100%' }}>
+              <thead>
+                <tr style={{ background: '#343a40', color: '#fff' }}>
+                  <th style={{ padding: '3px 6px', width: '35px', textAlign: 'center' }}>№</th>
+                  {(rows[0] || []).map((_, ci) => (
+                    <th key={ci} style={{
+                      padding: '3px 8px',
+                      minWidth: '80px',
+                      maxWidth: '180px',
+                      background: mappedCols.has(ci) ? '#0d6efd' : '#343a40',
+                      textAlign: 'center',
+                    }}>
+                      {ci + 1}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
               <tbody>
                 {displayRows.map((row, ri) => (
-                  <tr key={ri} style={{ background: ri === headerRow ? '#e3f2fd' : ri % 2 === 0 ? '#fff' : '#f8f9fa' }}>
-                    <td style={{ padding: '2px 4px', color: '#999', minWidth: '30px', fontWeight: ri === headerRow ? 'bold' : 'normal' }}>{ri}</td>
+                  <tr key={ri} style={{
+                    background: ri === headerRow ? '#cfe2ff' : ri % 2 === 0 ? '#fff' : '#f8f9fa',
+                    fontWeight: ri === headerRow ? 600 : 'normal',
+                  }}>
+                    <td style={{ padding: '2px 4px', color: '#999', textAlign: 'center', borderRight: '1px solid #dee2e6' }}>{ri}</td>
                     {row.map((cell, ci) => (
-                      <td key={ci} style={{ padding: '2px 6px', border: '1px solid #e0e0e0', whiteSpace: 'nowrap', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <td key={ci} style={{
+                        padding: '2px 6px',
+                        border: '1px solid #e0e0e0',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        maxWidth: '180px',
+                        background: mappedCols.has(ci) ? '#e8f0fe' : undefined,
+                      }}>
                         {String(cell ?? '')}
                       </td>
                     ))}
@@ -134,25 +183,11 @@ export function SpecificationEditor({ specId, onBack }: Props) {
                 ))}
               </tbody>
             </table>
-            {rows.length > 30 && <p className="muted" style={{ marginTop: '0.25rem' }}>Показаны первые 30 строк из {rows.length}</p>}
-          </div>
-
-          <h3>Маппинг колонок</h3>
-          <SpecColumnMapper
-            mapping={mapping}
-            onChange={setMapping}
-            mergeMultiline={mergeMultiline}
-            onMergeMultilineChange={setMergeMultiline}
-            columnCount={columnCount}
-          />
-
-          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-            <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing}>
-              {reparsing ? 'Пересборка...' : 'Пересобрать позиции'}
-            </button>
-            <button className="btn btn-secondary" onClick={handleSaveConfig}>
-              Сохранить конфиг
-            </button>
+            {rows.length > 40 && (
+              <p className="muted" style={{ marginTop: '0.25rem', fontSize: '0.8rem' }}>
+                Показаны первые 40 строк из {rows.length}
+              </p>
+            )}
           </div>
         </>
       )}

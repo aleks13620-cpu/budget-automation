@@ -13,6 +13,8 @@ export interface ColumnMapping {
   manufacturer: number | null;
   unit: number | null;
   quantity: number | null;
+  price: number | null;
+  amount: number | null;
 }
 
 const HEADER_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
@@ -27,6 +29,8 @@ const HEADER_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   manufacturer: ['производител', 'бренд', 'марка', 'завод'],
   unit: ['ед', 'единиц', 'изм'],
   quantity: ['кол', 'количеств', 'qty', 'объём', 'объем'],
+  price: ['цена', 'стоимость ед', 'цена ед', 'price'],
+  amount: ['сумма', 'итого', 'стоимость', 'amount', 'total'],
 };
 
 function normalizeText(text: unknown): string {
@@ -50,6 +54,8 @@ function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: Co
       manufacturer: null,
       unit: null,
       quantity: null,
+      price: null,
+      amount: null,
     };
 
     let matchCount = 0;
@@ -189,19 +195,22 @@ function linkDnChildren(items: SpecificationRow[]): void {
         item.full_name = null;
       }
     } else if (isToZheChild(item)) {
-      // "То же" — отдельная позиция, но full_name берём от родителя
-      // Чтобы матчер видел полный контекст ("Воздуховод DN100 То же DN80")
+      // "То же" — отдельная позиция с полным самодостаточным наименованием.
+      // Разворачиваем: убираем "То же," и добавляем суффикс к имени родителя.
+      // Результат записывается в name (для UI и матчера) и full_name.
       if (lastFullIndex !== null) {
         item._parentIndex = lastFullIndex;
-        // Разворачиваем "То же" в полное имя: убираем "То же" и берём имя родителя
         const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
         const suffix = item.name.replace(/^то\s+же[,\s]*/i, '').trim();
-        item.full_name = suffix ? parentName + ' ' + suffix : parentName;
+        const expandedName = suffix ? parentName + ' ' + suffix : parentName;
+        item.name = expandedName;      // самодостаточное имя
+        item.full_name = expandedName; // для матчера (совпадает с name)
       } else {
         item._parentIndex = null;
         item.full_name = null;
+        // без родителя — оставляем как есть
       }
-      // "То же" сам может быть родителем для следующего "То же"
+      // "То же" сам становится родителем для следующего "То же"
       lastFullIndex = i;
     } else {
       // Обычная позиция — становится новым родителем
