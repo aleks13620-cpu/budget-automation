@@ -87,6 +87,8 @@ function generateUUID(): string {
   });
 }
 
+const REQUEST_TIMEOUT_MS = 60_000; // 60 секунд максимум на один запрос
+
 /** Обёртка над https.request, возвращает тело ответа как строку */
 function httpsPost(url: string, headers: Record<string, string | number>, body: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -100,6 +102,9 @@ function httpsPost(url: string, headers: Record<string, string | number>, body: 
           resolve(data);
         }
       });
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`GigaChat request timeout after ${REQUEST_TIMEOUT_MS / 1000}s`));
     });
     req.on('error', reject);
     req.write(body);
@@ -115,10 +120,14 @@ function httpsGet(url: string, headers: Record<string, string>): Promise<string>
       res.on('end', () => {
         if (res.statusCode && res.statusCode >= 400) {
           reject(new Error(`GigaChat HTTP ${res.statusCode}: ${data}`));
+
         } else {
           resolve(data);
         }
       });
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`GigaChat request timeout after ${REQUEST_TIMEOUT_MS / 1000}s`));
     });
     req.on('error', reject);
     req.end();
