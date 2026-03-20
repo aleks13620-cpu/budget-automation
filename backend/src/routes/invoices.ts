@@ -1408,4 +1408,32 @@ router.put('/api/invoice-items/:id/apply-unit-conversion', (req: Request, res: R
   }
 });
 
+// POST /api/invoices/:id/apply-net-price-mode
+// Режим: цена без скидки, сумма со скидкой
+// Пересчитывает цены: price = price * (1 - discount/100) для всех позиций
+router.post('/api/invoices/:id/apply-net-price-mode', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const { discount_percent } = req.body as { discount_percent: number };
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId);
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+    if (!discount_percent || discount_percent <= 0 || discount_percent >= 100) {
+      return res.status(400).json({ error: 'Укажите корректный процент скидки (1-99)' });
+    }
+    saveSnapshot(invoiceId, `net_price_mode_${discount_percent}pct`, db);
+    const factor = 1 - discount_percent / 100;
+    const result = db.prepare(`
+      UPDATE invoice_items
+      SET original_price = COALESCE(original_price, price),
+          price = ROUND(price * ?, 4)
+      WHERE invoice_id = ? AND price IS NOT NULL
+    `).run(factor, invoiceId);
+    res.json({ updated: result.changes, factor });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/apply-net-price-mode error:', error);
+    res.status(500).json({ error: 'Ошибка при пересчёте цен' });
+  }
+});
+
 export default router;

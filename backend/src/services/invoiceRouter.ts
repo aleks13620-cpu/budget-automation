@@ -107,6 +107,16 @@ export async function routeInvoiceFile(
       try {
         const gigaResult = await parseExcelWithGigaChat(filePath);
         const gigaParseResult = gigachatToLegacy(gigaResult);
+        if (gigaParseResult.items.length === 0) {
+          console.log(`[InvoiceRouter] GigaChat also returned 0 items — category C`);
+          return {
+            source: 'gigachat_fallback',
+            category: 'C',
+            parseResult: gigaParseResult,
+            metadata: gigaResult.metadata,
+            confidence: 0,
+          };
+        }
         const validation = validateInvoice(gigaParseResult.items, gigaResult.metadata);
         return {
           source: 'gigachat_fallback',
@@ -118,7 +128,14 @@ export async function routeInvoiceFile(
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
-        // Возвращаем исходный Excel-результат
+        // Возвращаем исходный Excel-результат с явной категорией C
+        return {
+          source: 'excel',
+          category: 'C',
+          parseResult: excelToLegacy(excelResult),
+          metadata: excelResult.metadata,
+          confidence: 0,
+        };
       }
     }
 
@@ -139,12 +156,21 @@ export async function routeInvoiceFile(
 
     const hasItems = pdfResult.items.length > 0;
 
-    // Fallback на GigaChat если PDF не распознан и GigaChat доступен
     if (!hasItems && isGigaChatConfigured()) {
       console.log(`[InvoiceRouter] PDF items=0 — GigaChat fallback`);
       try {
         const gigaResult = await parsePdfWithGigaChat(filePath);
         const gigaParseResult = gigachatToLegacy(gigaResult);
+        if (gigaParseResult.items.length === 0) {
+          console.log(`[InvoiceRouter] GigaChat PDF also returned 0 items — category C`);
+          return {
+            source: 'gigachat_fallback',
+            category: 'C',
+            parseResult: gigaParseResult,
+            metadata: gigaResult.metadata,
+            confidence: 0,
+          };
+        }
         const validation = validateInvoice(gigaParseResult.items, gigaResult.metadata);
         return {
           source: 'gigachat_fallback',
@@ -161,7 +187,7 @@ export async function routeInvoiceFile(
 
     return {
       source: 'pdf',
-      category: hasItems ? 'A' : 'B',
+      category: hasItems ? 'A' : 'C',
       parseResult: pdfResult,
       confidence: hasItems ? 80 : 20,
     };

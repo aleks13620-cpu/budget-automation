@@ -222,7 +222,7 @@ function matchSpecItems(
         }
       }
 
-      if (bestConfidence >= 0.4) {
+      if (bestConfidence >= 0.3) {
         candidates.push({
           specItemId: spec.id,
           invoiceItemId: inv.id,
@@ -233,9 +233,9 @@ function matchSpecItems(
       }
     }
 
-    // Sort by confidence DESC, keep top 3
+    // Sort by confidence DESC, keep top 5
     candidates.sort((a, b) => b.confidence - a.confidence);
-    allCandidates.push(...candidates.slice(0, 3));
+    allCandidates.push(...candidates.slice(0, 5));
   }
 
   return allCandidates;

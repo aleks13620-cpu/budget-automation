@@ -432,6 +432,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [calculatingPrices, setCalculatingPrices] = useState(false);
+  const [netPriceDiscount, setNetPriceDiscount] = useState('');
+  const [showNetPriceForm, setShowNetPriceForm] = useState(false);
+  const [applyingNetPrice, setApplyingNetPrice] = useState(false);
 
   const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
     const currentInvoice = inv || invoice;
@@ -655,6 +658,25 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
+  const handleApplyNetPriceMode = async () => {
+    const pct = parseFloat(netPriceDiscount.replace(',', '.'));
+    if (!pct || pct <= 0 || pct >= 100) {
+      setMessage({ type: 'error', text: 'Введите корректный процент скидки (1-99)' });
+      return;
+    }
+    setApplyingNetPrice(true);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/apply-net-price-mode`, { discount_percent: pct });
+      setMessage({ type: 'success', text: `Цены пересчитаны (×${data.factor.toFixed(4)}), обновлено: ${data.updated} позиций` });
+      setShowNetPriceForm(false);
+      await loadPreview();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересчёте' });
+    } finally {
+      setApplyingNetPrice(false);
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка предпросмотра...</p>;
   if (!preview || !invoice) return <p className="error-msg">Не удалось загрузить данные</p>;
 
@@ -816,6 +838,23 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <button className="btn btn-secondary" onClick={handleOpenHistory}>
           История версий
         </button>
+        <button className="btn btn-secondary btn-sm" onClick={() => setShowNetPriceForm(!showNetPriceForm)}>
+          Цена без скидки → нетто
+        </button>
+        {showNetPriceForm && (
+          <span style={{ display: 'inline-flex', gap: '0.25rem', alignItems: 'center' }}>
+            <input
+              type="text"
+              placeholder="% скидки"
+              value={netPriceDiscount}
+              onChange={e => setNetPriceDiscount(e.target.value)}
+              style={{ width: '70px', padding: '2px 6px', fontSize: '0.85rem' }}
+            />
+            <button className="btn btn-primary btn-sm" onClick={handleApplyNetPriceMode} disabled={applyingNetPrice}>
+              {applyingNetPrice ? '...' : 'Применить'}
+            </button>
+          </span>
+        )}
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
 
@@ -902,10 +941,10 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         }
         return (
           <div className="preview-table-wrap" style={{ maxHeight: '600px', overflowY: 'auto' }}>
-            <table>
+            <table style={{ tableLayout: 'fixed', minWidth: '100%' }}>
               <thead>
                 <tr style={{ position: 'sticky', top: 0, background: '#f1f5f9', zIndex: 1 }}>
-                  <th style={{ color: '#999', fontSize: '0.7rem' }}>#</th>
+                  <th style={{ color: '#999', fontSize: '0.7rem', width: '2rem', minWidth: '2rem' }}>#</th>
                   {Array.from({ length: maxCols }, (_, colIdx) => {
                     const isMapped = Object.values(mapping).includes(colIdx);
                     const headerText = headerCols[colIdx];
@@ -916,6 +955,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
                         background: isMapped ? '#e0e7ff' : '#f1f5f9',
                         whiteSpace: 'nowrap',
                         padding: '4px 6px',
+                        minWidth: '80px',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
                       }}>
                         {fieldLabel && (
                           <div style={{
@@ -937,13 +979,13 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
               <tbody>
                 {preview.rows.map((row, rowIdx) => (
                   <tr key={rowIdx} className={rowIdx === headerRow ? 'highlight' : ''}>
-                    <td style={{ color: '#999', fontSize: '0.75rem' }}>{rowIdx + 1}</td>
+                    <td style={{ color: '#999', fontSize: '0.75rem', width: '2rem', minWidth: '2rem' }}>{rowIdx + 1}</td>
                     {row.map((cell, colIdx) => {
                       const isMapped = Object.values(mapping).includes(colIdx);
                       return (
                         <td
                           key={colIdx}
-                          style={isMapped ? { background: '#e0e7ff' } : undefined}
+                          style={isMapped ? { background: '#e0e7ff', minWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' } : { minWidth: '80px', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}
                         >
                           {cell || ''}
                         </td>

@@ -172,6 +172,16 @@ CREATE TABLE IF NOT EXISTS size_synonyms (
   synonym TEXT NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS spec_parse_rules (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  specification_id INTEGER REFERENCES specifications(id) ON DELETE CASCADE,
+  field TEXT NOT NULL,
+  raw_value TEXT NOT NULL,
+  corrected_value TEXT NOT NULL,
+  times_used INTEGER DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 `;
 
 export const CREATE_INDEXES_SQL = `
@@ -190,4 +200,5 @@ CREATE INDEX IF NOT EXISTS idx_matching_rules_spec ON matching_rules(specificati
 CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
 CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);
+CREATE INDEX IF NOT EXISTS idx_spec_parse_rules_spec ON spec_parse_rules(specification_id);
 `;
