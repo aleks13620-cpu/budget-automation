@@ -577,8 +577,7 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
 
     const updateStmt = db.prepare(`
       UPDATE specification_items
-      SET name = COALESCE(?, name),
-          characteristics = COALESCE(?, characteristics),
+      SET characteristics = COALESCE(?, characteristics),
           manufacturer = COALESCE(?, manufacturer),
           article = COALESCE(?, article),
           type_size = COALESCE(?, type_size)
@@ -590,7 +589,6 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
         if (!diff.changed) continue;
         const item = inputs[diff.idx];
         updateStmt.run(
-          diff.after.name ?? null,
           diff.after.characteristics ?? null,
           diff.after.manufacturer ?? null,
           diff.after.article ?? null,
