@@ -56,6 +56,7 @@ export function SpecificationEditor({ specId, onBack }: Props) {
   const [enrichPreview, setEnrichPreview] = useState<EnrichDiff[] | null>(null);
   const [enrichStats, setEnrichStats] = useState<{ updated: number; total: number; errors: string[] } | null>(null);
   const [applying, setApplying] = useState(false);
+  const [saveRules, setSaveRules] = useState(false);
 
   // History / rollback
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -126,10 +127,12 @@ export function SpecificationEditor({ specId, onBack }: Props) {
   const handleEnrichApply = async () => {
     setApplying(true);
     try {
-      const { data } = await api.post(`/specifications/${specId}/gigachat-enrich`, { dryRun: false });
+      const { data } = await api.post(`/specifications/${specId}/gigachat-enrich`, { dryRun: false, saveRules });
       setEnrichPreview(null);
       setEnrichStats(null);
-      setMessage({ type: 'success', text: `GigaChat обновил ${data.updated} позиций из ${data.diffs.length}` });
+      setSaveRules(false);
+      const rulesMsg = saveRules ? ' Правила сохранены для обучения.' : '';
+      setMessage({ type: 'success', text: `GigaChat обновил ${data.updated} позиций из ${data.diffs.length}.${rulesMsg}` });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при применении изменений GigaChat' });
     } finally {
@@ -389,13 +392,23 @@ export function SpecificationEditor({ specId, onBack }: Props) {
               </table>
             </div>
 
-            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary" onClick={() => { setEnrichPreview(null); setEnrichStats(null); }}>
-                Отмена
-              </button>
-              <button className="btn btn-primary" onClick={handleEnrichApply} disabled={applying || enrichStats.updated === 0}>
-                {applying ? 'Применение...' : `Применить изменения (${enrichStats.updated})`}
-              </button>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.75rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+                <input
+                  type="checkbox"
+                  checked={saveRules}
+                  onChange={e => setSaveRules(e.target.checked)}
+                />
+                Сохранить правила в память для обучения
+              </label>
+              <div style={{ display: 'flex', gap: '0.75rem' }}>
+                <button className="btn btn-secondary" onClick={() => { setEnrichPreview(null); setEnrichStats(null); setSaveRules(false); }}>
+                  Отмена
+                </button>
+                <button className="btn btn-primary" onClick={handleEnrichApply} disabled={applying || enrichStats.updated === 0}>
+                  {applying ? 'Применение...' : `Применить изменения (${enrichStats.updated})`}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -535,7 +535,7 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
     const spec = db.prepare('SELECT id, project_id, section FROM specifications WHERE id = ?').get(specId) as { id: number; project_id: number; section: string } | undefined;
     if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
 
-    const { dryRun = false, fieldsToUpdate } = req.body as { dryRun?: boolean; fieldsToUpdate?: string[] };
+    const { dryRun = false, fieldsToUpdate, saveRules = false } = req.body as { dryRun?: boolean; fieldsToUpdate?: string[]; saveRules?: boolean };
 
     const dbItems = db.prepare(
       'SELECT id, position_number, name, characteristics, unit, quantity, manufacturer, article, type_size FROM specification_items WHERE specification_id = ? ORDER BY id'
@@ -584,13 +584,13 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
       WHERE id = ?
     `);
 
-    const ruleStmt = db.prepare(`
+    const ruleStmt = saveRules ? db.prepare(`
       INSERT INTO spec_parse_rules (specification_id, field, raw_value, corrected_value, times_used)
       VALUES (?, ?, ?, ?, 1)
       ON CONFLICT(specification_id, field, raw_value) DO UPDATE SET
         corrected_value = excluded.corrected_value,
         times_used = times_used + 1
-    `);
+    `) : null;
 
     db.transaction(() => {
       for (const diff of result.diffs) {
@@ -603,14 +603,16 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
           diff.after.type_size ?? null,
           item.id,
         );
-        // Сохранить правила (обучение) — каждый изменённый field
-        for (const field of Object.keys(diff.after)) {
-          const rawVal = (diff.before as any)[field];
-          const corrVal = (diff.after as any)[field];
-          if (rawVal !== undefined && corrVal !== undefined && rawVal !== corrVal) {
-            try {
-              ruleStmt.run(specId, field, String(rawVal ?? ''), String(corrVal ?? ''));
-            } catch { /* conflict handled by ON CONFLICT */ }
+        // Сохранить правила для обучения — только если пользователь подтвердил
+        if (ruleStmt) {
+          for (const field of Object.keys(diff.after)) {
+            const rawVal = (diff.before as any)[field];
+            const corrVal = (diff.after as any)[field];
+            if (rawVal !== undefined && corrVal !== undefined && rawVal !== corrVal) {
+              try {
+                ruleStmt.run(specId, field, String(rawVal ?? ''), String(corrVal ?? ''));
+              } catch { /* conflict handled by ON CONFLICT */ }
+            }
           }
         }
       }
