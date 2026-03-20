@@ -341,33 +341,37 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
           continue;
         }
 
+        // Read raw data for storage
+        const XLSXb = require('xlsx');
+        const wbb = XLSXb.readFile(file.path);
+        const wsb = wbb.Sheets[wbb.SheetNames[0]];
+        const rawDataB = JSON.stringify(XLSXb.utils.sheet_to_json(wsb, { header: 1, defval: '' }));
+
         // Insert specification + items
         const result = db.transaction(() => {
           const specResult = db.prepare(
-            'INSERT INTO specifications (project_id, section, file_name) VALUES (?, ?, ?)'
-          ).run(projectId, section, fileName);
+            'INSERT INTO specifications (project_id, section, file_name, raw_data) VALUES (?, ?, ?, ?)'
+          ).run(projectId, section, fileName, rawDataB);
           const specificationId = Number(specResult.lastInsertRowid);
 
           const insertStmt = db.prepare(`
             INSERT INTO specification_items
-              (project_id, specification_id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity, section)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              (project_id, specification_id, position_number, name, characteristics, equipment_code, article, product_code, marking, type_size, manufacturer, unit, quantity, section, parent_item_id, full_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `);
 
+          const insertedIds: number[] = [];
           let count = 0;
           for (const item of parseResult.items) {
-            insertStmt.run(
-              projectId,
-              specificationId,
-              item.position_number,
-              item.name,
-              item.characteristics,
-              item.equipment_code,
-              item.manufacturer,
-              item.unit,
-              item.quantity,
-              section,
+            const parentDbId = item._parentIndex !== null ? (insertedIds[item._parentIndex] ?? null) : null;
+            const r = insertStmt.run(
+              projectId, specificationId, item.position_number, item.name,
+              item.characteristics, item.equipment_code,
+              item.article, item.product_code, item.marking, item.type_size,
+              item.manufacturer, item.unit, item.quantity, section,
+              parentDbId, item.full_name ?? null,
             );
+            insertedIds.push(Number(r.lastInsertRowid));
             count++;
           }
           return count;
