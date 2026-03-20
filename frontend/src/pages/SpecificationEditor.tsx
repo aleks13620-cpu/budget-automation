@@ -40,6 +40,7 @@ export function SpecificationEditor({ specId, onBack }: Props) {
   }, [specId]);
 
   const handleReparse = async () => {
+    if (!confirm('Пересобрать позиции спецификации? Текущие позиции будут заменены новыми.')) return;
     setReparsing(true);
     setMessage(null);
     try {
@@ -83,7 +84,19 @@ export function SpecificationEditor({ specId, onBack }: Props) {
       </div>
 
       {message && (
-        <div className={`alert alert-${message.type === 'success' ? 'success' : 'danger'}`} style={{ marginBottom: '1rem' }}>
+        <div style={{
+          marginBottom: '1rem',
+          padding: '0.75rem 1rem',
+          borderRadius: 6,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+          background: message.type === 'success' ? '#d1fae5' : '#fee2e2',
+          border: `1px solid ${message.type === 'success' ? '#6ee7b7' : '#fca5a5'}`,
+          color: message.type === 'success' ? '#065f46' : '#991b1b',
+          fontWeight: 500,
+        }}>
+          <span style={{ fontSize: '1.1rem' }}>{message.type === 'success' ? '✓' : '✕'}</span>
           {message.text}
         </div>
       )}
