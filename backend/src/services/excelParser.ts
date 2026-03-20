@@ -119,6 +119,12 @@ function parseNumber(value: unknown): number | null {
 const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
 
 /**
+ * "То же" child pattern — строка ссылается на предыдущую позицию ("то же, но другой размер").
+ * Является ОТДЕЛЬНОЙ позицией, но для матчера нужен full_name с контекстом родителя.
+ */
+const TO_ZHE_PATTERN = /^то\s+же/i;
+
+/**
  * Continuation keyword pattern — строки, начинающиеся с этих слов,
  * являются продолжением описания предыдущей позиции даже если имеют
  * собственные единицы/количество (например, детализация размера/материала).
@@ -127,6 +133,10 @@ const CONTINUATION_KEYWORD_PATTERN = /^(толщиной|толщ\.|сечени
 
 function isDnChild(item: SpecificationRow): boolean {
   return !item.position_number && DN_CHILD_PATTERN.test(item.name.trim());
+}
+
+function isToZheChild(item: SpecificationRow): boolean {
+  return TO_ZHE_PATTERN.test(item.name.trim());
 }
 
 function isContinuationByKeyword(item: SpecificationRow): boolean {
@@ -159,23 +169,43 @@ function mergeMultilineItems(items: SpecificationRow[]): SpecificationRow[] {
 }
 
 /**
- * Link DN sub-rows to their parent:
- * - Walk items in order; track last "full" item (non-DN child)
- * - When a DN child is found, link it to the last full item
- * - Compute full_name = parent.name + " " + child.name
+ * Link DN sub-rows and "То же" rows to their parent:
+ * - DN children: нет позиции + имя начинается с DN/Ду/числа
+ * - "То же" дети: имя начинается с "То же" — отдельная позиция, но
+ *   full_name = parent.name + " " + child.name для корректного матчинга
+ * - Обычные строки: сбрасывают lastFull (новый "родитель" для следующих)
  */
 function linkDnChildren(items: SpecificationRow[]): void {
   let lastFullIndex: number | null = null;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
-    if (!isDnChild(item)) {
+    if (isDnChild(item)) {
+      // DN-дочерняя строка — связываем с родителем
+      if (lastFullIndex !== null) {
+        item._parentIndex = lastFullIndex;
+        item.full_name = items[lastFullIndex].name + ' ' + item.name;
+      } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+    } else if (isToZheChild(item)) {
+      // "То же" — отдельная позиция, но full_name берём от родителя
+      // Чтобы матчер видел полный контекст ("Воздуховод DN100 То же DN80")
+      if (lastFullIndex !== null) {
+        item._parentIndex = lastFullIndex;
+        // Разворачиваем "То же" в полное имя: убираем "То же" и берём имя родителя
+        const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+        const suffix = item.name.replace(/^то\s+же[,\s]*/i, '').trim();
+        item.full_name = suffix ? parentName + ' ' + suffix : parentName;
+      } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+      // "То же" сам может быть родителем для следующего "То же"
       lastFullIndex = i;
-      item._parentIndex = null;
-      item.full_name = null;
-    } else if (lastFullIndex !== null) {
-      item._parentIndex = lastFullIndex;
-      item.full_name = items[lastFullIndex].name + ' ' + item.name;
     } else {
+      // Обычная позиция — становится новым родителем
+      lastFullIndex = i;
       item._parentIndex = null;
       item.full_name = null;
     }
