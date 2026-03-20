@@ -5,14 +5,16 @@ import { ProjectDetail } from './pages/ProjectDetail';
 import { InvoicePreview } from './pages/InvoicePreview';
 import { MatchingView } from './pages/MatchingView';
 import { UnitTriggers } from './pages/UnitTriggers';
+import { SpecificationEditor } from './pages/SpecificationEditor';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectName, setProjectName] = useState('');
   const [invoiceId, setInvoiceId] = useState<number | null>(null);
+  const [specId, setSpecId] = useState<number | null>(null);
 
   const goToProjects = () => {
     setPage('projects');
@@ -38,6 +40,11 @@ function App() {
 
   const goToUnitTriggers = () => {
     setPage('unit-triggers');
+  };
+
+  const goToSpecEditor = (id: number) => {
+    setSpecId(id);
+    setPage('spec-editor');
   };
 
   return (
@@ -68,6 +75,12 @@ function App() {
             <span>Сопоставление</span>
           </>
         )}
+        {page === 'spec-editor' && (
+          <>
+            <span>/</span>
+            <span>Редактор спецификации</span>
+          </>
+        )}
       </div>
 
       {page === 'projects' && (
@@ -80,6 +93,7 @@ function App() {
           onBack={goToProjects}
           onInvoicePreview={goToInvoicePreview}
           onMatching={goToMatching}
+          onSpecEditor={goToSpecEditor}
         />
       )}
 
@@ -99,6 +113,13 @@ function App() {
 
       {page === 'unit-triggers' && (
         <UnitTriggers onBack={goToProjects} />
+      )}
+
+      {page === 'spec-editor' && specId && (
+        <SpecificationEditor
+          specId={specId}
+          onBack={() => goToProject(projectId!, projectName)}
+        />
       )}
     </>
   );

@@ -89,6 +89,11 @@ const INVOICE_PROMPT = `
    - Если в таблице есть колонка "Ставка НДС" или "%" — ИГНОРИРУЙ её при заполнении поля price
    - ПРИЗНАК ОШИБКИ: если все цены одинаковые (например, все = 20 или все = 22) — значит ты взял ставку НДС вместо цены, исправь
 
+7. ЦЕНЫ С НДС ИЛИ БЕЗ НДС:
+   - Если есть ДВЕ ценовые колонки ("без НДС" и "с НДС") — ВСЕГДА используй "с НДС" для price
+   - Аналогично для суммы: если есть "без НДС" и "с НДС" — используй "с НДС" для total
+   - Добавь флаг "vat_included": true если взяты цены с НДС
+
 ═══════════════════════════════════════
 ПРИМЕР ПРАВИЛЬНОГО РЕЗУЛЬТАТА:
 ═══════════════════════════════════════
@@ -125,7 +130,8 @@ const INVOICE_PROMPT = `
   "subtotal": 25000.00,
   "vat_rate": 20,
   "vat_amount": 5000.00,
-  "total_with_vat": 30000.00
+  "total_with_vat": 30000.00,
+  "vat_included": true
 }
 
 Обрати внимание:
@@ -160,7 +166,8 @@ const INVOICE_PROMPT = `
   "subtotal": null,
   "vat_rate": 20,
   "vat_amount": null,
-  "total_with_vat": 1044777.53
+  "total_with_vat": 1044777.53,
+  "vat_included": true
 }
 `;
 
@@ -200,6 +207,7 @@ interface GigaChatParsedJSON {
   vat_rate?: number | null;
   vat_amount?: number | null;
   total_with_vat?: number | null;
+  vat_included?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -294,6 +302,22 @@ function sanitizeJSON(json: string): string {
 // Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга
 const VAT_RATES = new Set([0, 5, 7, 10, 18, 20, 22]);
 
+function isValidArticle(s: string): boolean {
+  if (s.length > 30) return false;
+  if (/[а-яёА-ЯЁ]{11,}/.test(s)) return false;
+  return true;
+}
+
+function validateArticleNameSwap(items: InvoiceRow[]): InvoiceRow[] {
+  return items.map(item => {
+    if (!item.article) return item;
+    if (!isValidArticle(item.article) && isValidArticle(item.name)) {
+      return { ...item, article: item.name, name: item.article };
+    }
+    return item;
+  });
+}
+
 /** Конвертирует распарсенный JSON в InvoiceRow[] */
 function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
   const mapped = items
@@ -320,7 +344,7 @@ function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
     }
   }
 
-  return mapped;
+  return validateArticleNameSwap(mapped);
 }
 
 /** Конвертирует распарсенный JSON в InvoiceMetadata */
@@ -335,6 +359,7 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
     buyerINN: data.buyer?.inn || null,
     totalWithVat: typeof data.total_with_vat === 'number' ? data.total_with_vat : null,
     vatAmount: typeof data.vat_amount === 'number' ? data.vat_amount : null,
+    vat_rate: (typeof data.vat_rate === 'number' && data.vat_rate > 0) ? data.vat_rate : 22,
   };
 }
 

@@ -147,6 +147,31 @@ CREATE TABLE IF NOT EXISTS supplier_parser_configs (
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS invoice_items_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id INTEGER NOT NULL REFERENCES invoices(id) ON DELETE CASCADE,
+  version INTEGER NOT NULL,
+  items_snapshot TEXT NOT NULL,
+  action TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS specification_parser_configs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  specification_id INTEGER NOT NULL UNIQUE REFERENCES specifications(id) ON DELETE CASCADE,
+  header_row INTEGER NOT NULL,
+  column_mapping TEXT NOT NULL,
+  merge_multiline INTEGER NOT NULL DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS size_synonyms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  canonical TEXT NOT NULL,
+  synonym TEXT NOT NULL UNIQUE
+);
+
 `;
 
 export const CREATE_INDEXES_SQL = `
@@ -162,4 +187,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_name ON invoice_items(name);
 CREATE INDEX IF NOT EXISTS idx_matched_items_spec ON matched_items(specification_item_id);
 CREATE INDEX IF NOT EXISTS idx_matched_items_invoice ON matched_items(invoice_item_id);
 CREATE INDEX IF NOT EXISTS idx_matching_rules_spec ON matching_rules(specification_pattern);
+CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(invoice_id);
+CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
+CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);
 `;

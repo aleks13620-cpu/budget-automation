@@ -32,6 +32,12 @@ function initializeDatabase(): void {
       'ALTER TABLE specification_items ADD COLUMN full_name TEXT',
       'ALTER TABLE invoices ADD COLUMN vat_amount REAL DEFAULT NULL',
       'ALTER TABLE invoices ADD COLUMN needs_amount_review INTEGER DEFAULT 0',
+      'ALTER TABLE specification_items ADD COLUMN article TEXT',
+      'ALTER TABLE specification_items ADD COLUMN product_code TEXT',
+      'ALTER TABLE specification_items ADD COLUMN marking TEXT',
+      'ALTER TABLE specification_items ADD COLUMN type_size TEXT',
+      'ALTER TABLE invoices ADD COLUMN vat_rate INTEGER DEFAULT 22',
+      'ALTER TABLE specifications ADD COLUMN raw_data TEXT',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
@@ -40,6 +46,18 @@ function initializeDatabase(): void {
     // Create indexes after migrations (some indexes depend on migrated columns)
     db.exec(CREATE_INDEXES_SQL);
     console.log('Indexes created successfully!');
+
+    // Seed size synonyms
+    const synonymCount = (db.prepare('SELECT COUNT(*) as c FROM size_synonyms').get() as any).c;
+    if (synonymCount === 0) {
+      const ins = db.prepare('INSERT OR IGNORE INTO size_synonyms (canonical, synonym) VALUES (?, ?)');
+      [['DN15','ДУ15'],['DN15','Ду15'],['DN15','ду15'],['DN20','ДУ20'],['DN20','Ду20'],
+       ['DN25','ДУ25'],['DN25','Ду25'],['DN32','ДУ32'],['DN32','Ду32'],
+       ['DN40','ДУ40'],['DN40','Ду40'],['DN50','ДУ50'],['DN50','Ду50'],
+       ['DN65','ДУ65'],['DN65','Ду65'],['DN80','ДУ80'],['DN80','Ду80'],
+       ['DN100','ДУ100'],['DN100','Ду100']
+      ].forEach(([c,s]) => ins.run(c, s));
+    }
 
     // Verify tables
     const tables = db.prepare(`

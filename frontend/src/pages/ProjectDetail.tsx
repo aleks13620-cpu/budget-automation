@@ -35,9 +35,10 @@ interface Props {
   onBack: () => void;
   onInvoicePreview: (invoiceId: number) => void;
   onMatching: () => void;
+  onSpecEditor: (specId: number) => void;
 }
 
-export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props) {
+export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecEditor }: Props) {
   const [specifications, setSpecifications] = useState<Specification[]>([]);
   const [sections, setSections] = useState<string[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -384,6 +385,12 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching }: Props
                             onClick={() => handleViewSpecItems(spec.id)}
                           >
                             {specItemsView === spec.id ? 'Скрыть' : 'Просмотр'}
+                          </button>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => onSpecEditor(spec.id)}
+                          >
+                            Редактировать
                           </button>
                           <button
                             className="btn btn-secondary btn-sm"

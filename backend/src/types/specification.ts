@@ -3,6 +3,10 @@ export interface SpecificationRow {
   name: string;
   characteristics: string | null;
   equipment_code: string | null;
+  article: string | null;
+  product_code: string | null;
+  marking: string | null;
+  type_size: string | null;
   manufacturer: string | null;
   unit: string | null;
   quantity: number | null;

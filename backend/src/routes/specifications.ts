@@ -3,7 +3,8 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parseExcelFile } from '../services/excelParser';
+import { parseExcelFile, parseFromRawData } from '../services/excelParser';
+import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
@@ -108,17 +109,24 @@ router.post('/api/projects/:id/specifications', upload.single('file'), (req: Req
 
     const fileName = fixFilename(req.file.originalname);
 
+    // Read raw data for storage
+    const XLSX2 = require('xlsx');
+    const wb2 = XLSX2.readFile(req.file.path);
+    const ws2 = wb2.Sheets[wb2.SheetNames[0]];
+    const rawData2 = XLSX2.utils.sheet_to_json(ws2, { header: 1, defval: '' }) as string[][];
+    const rawDataStr = JSON.stringify(rawData2);
+
     // Insert specification + items in a transaction
     const result = db.transaction(() => {
       const specResult = db.prepare(
-        'INSERT INTO specifications (project_id, section, file_name) VALUES (?, ?, ?)'
-      ).run(projectId, section, fileName);
+        'INSERT INTO specifications (project_id, section, file_name, raw_data) VALUES (?, ?, ?, ?)'
+      ).run(projectId, section, fileName, rawDataStr);
       const specificationId = Number(specResult.lastInsertRowid);
 
       const insertStmt = db.prepare(`
         INSERT INTO specification_items
-          (project_id, specification_id, position_number, name, characteristics, equipment_code, manufacturer, unit, quantity, section, parent_item_id, full_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (project_id, specification_id, position_number, name, characteristics, equipment_code, article, product_code, marking, type_size, manufacturer, unit, quantity, section, parent_item_id, full_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
 
       const inserted: any[] = [];
@@ -132,6 +140,10 @@ router.post('/api/projects/:id/specifications', upload.single('file'), (req: Req
           item.name,
           item.characteristics,
           item.equipment_code,
+          item.article,
+          item.product_code,
+          item.marking,
+          item.type_size,
           item.manufacturer,
           item.unit,
           item.quantity,
@@ -388,6 +400,97 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
       error: 'Ошибка при массовом импорте спецификаций',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+});
+
+// GET /api/specifications/:id/raw-data
+router.get('/api/specifications/:id/raw-data', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id, raw_data FROM specifications WHERE id = ?').get(specId) as { id: number; raw_data: string | null } | undefined;
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+    if (!spec.raw_data) return res.status(404).json({ error: 'Сырые данные не сохранены для этой спецификации' });
+    const config = db.prepare('SELECT * FROM specification_parser_configs WHERE specification_id = ?').get(specId);
+    res.json({ rows: JSON.parse(spec.raw_data), config: config || null });
+  } catch (error) {
+    console.error('GET /api/specifications/:id/raw-data error:', error);
+    res.status(500).json({ error: 'Ошибка при получении сырых данных' });
+  }
+});
+
+// POST /api/specifications/:id/reparse
+router.post('/api/specifications/:id/reparse', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id, project_id, section, raw_data FROM specifications WHERE id = ?').get(specId) as { id: number; project_id: number; section: string; raw_data: string | null } | undefined;
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+    if (!spec.raw_data) return res.status(400).json({ error: 'Сырые данные не сохранены' });
+
+    const { headerRow, columnMapping, mergeMultiline } = req.body as { headerRow: number; columnMapping: ColumnMapping; mergeMultiline: boolean };
+    const rawRows = JSON.parse(spec.raw_data) as string[][];
+    const parseResult = parseFromRawData(rawRows, headerRow, columnMapping, mergeMultiline !== false);
+
+    const insertStmt = db.prepare(`
+      INSERT INTO specification_items
+        (project_id, specification_id, position_number, name, characteristics, equipment_code, article, product_code, marking, type_size, manufacturer, unit, quantity, section, parent_item_id, full_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = db.transaction(() => {
+      db.prepare('DELETE FROM specification_items WHERE specification_id = ?').run(specId);
+      const insertedIds: number[] = [];
+      for (const item of parseResult.items) {
+        const parentDbId = item._parentIndex !== null ? (insertedIds[item._parentIndex] ?? null) : null;
+        const r = insertStmt.run(
+          spec.project_id, specId, item.position_number, item.name, item.characteristics, item.equipment_code,
+          item.article, item.product_code, item.marking, item.type_size,
+          item.manufacturer, item.unit, item.quantity, spec.section, parentDbId, item.full_name ?? null
+        );
+        insertedIds.push(Number(r.lastInsertRowid));
+      }
+      // UPSERT parser config
+      db.prepare(`
+        INSERT INTO specification_parser_configs (specification_id, header_row, column_mapping, merge_multiline, updated_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(specification_id) DO UPDATE SET
+          header_row = excluded.header_row,
+          column_mapping = excluded.column_mapping,
+          merge_multiline = excluded.merge_multiline,
+          updated_at = CURRENT_TIMESTAMP
+      `).run(specId, headerRow, JSON.stringify(columnMapping), mergeMultiline ? 1 : 0);
+      return parseResult.items.length;
+    })();
+
+    res.json({ imported: result, errors: parseResult.errors, totalRows: parseResult.totalRows, skippedRows: parseResult.skippedRows });
+  } catch (error) {
+    console.error('POST /api/specifications/:id/reparse error:', error);
+    res.status(500).json({ error: 'Ошибка при перепарсинге', details: error instanceof Error ? error.message : 'Unknown' });
+  }
+});
+
+// POST /api/specifications/:id/parser-config
+router.post('/api/specifications/:id/parser-config', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id FROM specifications WHERE id = ?').get(specId);
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+    const { headerRow, columnMapping, mergeMultiline } = req.body;
+    db.prepare(`
+      INSERT INTO specification_parser_configs (specification_id, header_row, column_mapping, merge_multiline, updated_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      ON CONFLICT(specification_id) DO UPDATE SET
+        header_row = excluded.header_row,
+        column_mapping = excluded.column_mapping,
+        merge_multiline = excluded.merge_multiline,
+        updated_at = CURRENT_TIMESTAMP
+    `).run(specId, headerRow, JSON.stringify(columnMapping), mergeMultiline ? 1 : 0);
+    res.json({ saved: true });
+  } catch (error) {
+    console.error('POST /api/specifications/:id/parser-config error:', error);
+    res.status(500).json({ error: 'Ошибка при сохранении конфига' });
   }
 });
 

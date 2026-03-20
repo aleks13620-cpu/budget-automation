@@ -429,6 +429,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [unitTriggers, setUnitTriggers] = useState<{ keyword: string; to_unit: string }[]>([]);
   const [unitModal, setUnitModal] = useState<{ item: any; suggestedUnit: string } | null>(null);
   const [unitFactor, setUnitFactor] = useState('');
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [calculatingPrices, setCalculatingPrices] = useState(false);
 
   const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
     const currentInvoice = inv || invoice;
@@ -616,6 +619,42 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
+  const handleOpenHistory = async () => {
+    try {
+      const { data } = await api.get(`/invoices/${invoiceId}/history`);
+      setHistoryData(data.history || []);
+      setHistoryOpen(true);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при загрузке истории' });
+    }
+  };
+
+  const handleRollback = async (version: number) => {
+    if (!confirm(`Откатить к версии ${version}?`)) return;
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/rollback`, { version });
+      setMessage({ type: 'success', text: `Восстановлено ${data.restored} позиций из версии ${version}` });
+      setHistoryOpen(false);
+      await loadPreview();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при откате' });
+    }
+  };
+
+  const handleCalculatePrices = async () => {
+    setCalculatingPrices(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/calculate-prices`);
+      setMessage({ type: 'success', text: `Цены рассчитаны для ${data.updated} позиций` });
+      await loadPreview();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при расчёте цен' });
+    } finally {
+      setCalculatingPrices(false);
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка предпросмотра...</p>;
   if (!preview || !invoice) return <p className="error-msg">Не удалось загрузить данные</p>;
 
@@ -764,15 +803,62 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         onHeaderRowChange={setHeaderRow}
       />
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Сохранение...' : 'Сохранить настройки'}
         </button>
         <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing}>
           {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
         </button>
+        <button className="btn btn-secondary" onClick={handleCalculatePrices} disabled={calculatingPrices}>
+          {calculatingPrices ? 'Расчёт...' : 'Рассчитать цены (сумма ÷ количество)'}
+        </button>
+        <button className="btn btn-secondary" onClick={handleOpenHistory}>
+          История версий
+        </button>
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
+
+      {historyOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 480, maxHeight: '80vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>История версий</h3>
+            {historyData.length === 0 ? (
+              <p className="muted">История пуста</p>
+            ) : (
+              <table style={{ width: '100%', fontSize: '0.85rem', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Версия</th>
+                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Действие</th>
+                    <th style={{ textAlign: 'right', padding: '4px 8px' }}>Позиций</th>
+                    <th style={{ textAlign: 'left', padding: '4px 8px' }}>Дата</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {historyData.map((h: any) => (
+                    <tr key={h.id} style={{ borderTop: '1px solid #e5e7eb' }}>
+                      <td style={{ padding: '4px 8px' }}>v{h.version}</td>
+                      <td style={{ padding: '4px 8px' }}>{h.action}</td>
+                      <td style={{ padding: '4px 8px', textAlign: 'right' }}>{h.item_count}</td>
+                      <td style={{ padding: '4px 8px', fontSize: '0.75rem', color: '#666' }}>{new Date(h.created_at).toLocaleString('ru-RU')}</td>
+                      <td style={{ padding: '4px 8px' }}>
+                        <button className="btn btn-secondary btn-sm" onClick={() => handleRollback(h.version)}>
+                          Откатить
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            <div style={{ marginTop: '1rem' }}>
+              <button className="btn btn-secondary" onClick={() => setHistoryOpen(false)}>Закрыть</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {(() => {
         const FIELD_LABELS: Record<string, string> = {

@@ -119,6 +119,14 @@ function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   return undefined;
 }
 
+function saveSnapshot(invoiceId: number, action: string, db: ReturnType<typeof getDatabase>): void {
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId);
+  const maxVerRow = db.prepare('SELECT MAX(version) as v FROM invoice_items_history WHERE invoice_id = ?').get(invoiceId) as { v: number | null } | undefined;
+  const maxVer = maxVerRow?.v ?? 0;
+  db.prepare('INSERT INTO invoice_items_history (invoice_id, version, items_snapshot, action) VALUES (?,?,?,?)')
+    .run(invoiceId, maxVer + 1, JSON.stringify(items), action);
+}
+
 // Helper: process a single invoice file (parse, detect supplier, insert into DB)
 async function processInvoiceFile(
   file: { originalname: string; path: string },
@@ -152,10 +160,10 @@ async function processInvoiceFile(
       const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
       supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierNameImg).lastInsertRowid);
     }
-    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const invoiceIdImg = db.transaction(() => {
-      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null);
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null, 22);
       const iid = Number(r.lastInsertRowid);
       for (const item of parseResult.items) {
         insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
@@ -264,6 +272,8 @@ async function processInvoiceFile(
     (ext === '.pdf' && quickPdfCategory === 'C') ||
     (lastExcelResult !== null && lastExcelResult.category === 'C');
 
+  let parsedVatRate: number = 22;
+
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
       const supplierCtx = buildSupplierContext(supplierName, supplierId ? loadSavedMapping(supplierId) : undefined);
@@ -311,6 +321,7 @@ async function processInvoiceFile(
           vatAmount: gigaResult.metadata.vatAmount,
           discountDetected: null,
         };
+        parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
         if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
       }
     } catch (err) {
@@ -351,8 +362,8 @@ async function processInvoiceFile(
   const needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
 
   const insertInvoice = db.prepare(`
-    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
@@ -375,6 +386,7 @@ async function processInvoiceFile(
       parsingCategoryReason,
       parseResult.discountDetected ?? null,
       needsAmountReview,
+      parsedVatRate,
     );
     const invoiceId = Number(invoiceResult.lastInsertRowid);
 
@@ -1283,6 +1295,68 @@ router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) =>
     res.json({ applied: true, discount_percent });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при применении скидки', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// GET /api/invoices/:id/history
+router.get('/api/invoices/:id/history', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const history = db.prepare(`
+      SELECT id, version, action, created_at,
+             json_array_length(items_snapshot) as item_count
+      FROM invoice_items_history
+      WHERE invoice_id = ?
+      ORDER BY version DESC
+    `).all(invoiceId);
+    res.json({ history });
+  } catch (error) {
+    console.error('GET /api/invoices/:id/history error:', error);
+    res.status(500).json({ error: 'Ошибка при получении истории' });
+  }
+});
+
+// POST /api/invoices/:id/rollback
+router.post('/api/invoices/:id/rollback', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const { version } = req.body as { version: number };
+    const db = getDatabase();
+    const snap = db.prepare('SELECT items_snapshot FROM invoice_items_history WHERE invoice_id = ? AND version = ?').get(invoiceId, version) as { items_snapshot: string } | undefined;
+    if (!snap) return res.status(404).json({ error: 'Версия не найдена' });
+    const items = JSON.parse(snap.items_snapshot) as any[];
+    saveSnapshot(invoiceId, `rollback_to_v${version}`, db);
+    db.transaction(() => {
+      db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      const ins = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery, is_manual, needs_unit_review, original_price, original_unit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      for (const item of items) {
+        ins.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, item.is_delivery ?? 0, item.is_manual ?? 0, item.needs_unit_review ?? 0, item.original_price ?? null, item.original_unit ?? null);
+      }
+    })();
+    res.json({ restored: items.length });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/rollback error:', error);
+    res.status(500).json({ error: 'Ошибка при откате', details: error instanceof Error ? error.message : 'Unknown' });
+  }
+});
+
+// POST /api/invoices/:id/calculate-prices
+router.post('/api/invoices/:id/calculate-prices', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id FROM invoices WHERE id = ?').get(invoiceId);
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+    saveSnapshot(invoiceId, 'calculate_prices', db);
+    const result = db.prepare(`
+      UPDATE invoice_items SET price = amount / quantity
+      WHERE invoice_id = ? AND price IS NULL AND amount IS NOT NULL AND quantity IS NOT NULL AND quantity > 0
+    `).run(invoiceId);
+    res.json({ updated: result.changes });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/calculate-prices error:', error);
+    res.status(500).json({ error: 'Ошибка при расчёте цен' });
   }
 });
 

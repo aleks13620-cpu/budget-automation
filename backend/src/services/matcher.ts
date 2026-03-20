@@ -14,6 +14,8 @@ interface SpecItemRow {
   name: string;
   characteristics: string | null;
   equipment_code: string | null;
+  article: string | null;
+  product_code: string | null;
   unit: string | null;
   quantity: number | null;
   section: string | null;
@@ -50,6 +52,26 @@ const STOP_WORDS = new Set([
   'для', 'из', 'по', 'от', 'до',
 ]);
 
+let _synonymCache: Map<string,string> | null = null;
+
+function getSynonymMap(): Map<string,string> {
+  if (_synonymCache) return _synonymCache;
+  const db = getDatabase();
+  const rows = db.prepare('SELECT synonym, canonical FROM size_synonyms').all() as {synonym:string;canonical:string}[];
+  _synonymCache = new Map(rows.map(r => [r.synonym.toLowerCase(), r.canonical.toLowerCase()]));
+  return _synonymCache;
+}
+
+function normalizeSizeTerms(text: string): string {
+  const map = getSynonymMap();
+  let result = text;
+  for (const [syn, can] of map) {
+    const re = new RegExp(`\\b${syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    result = result.replace(re, can);
+  }
+  return result;
+}
+
 /**
  * Normalize a string for fuzzy matching:
  * - lowercase, trim
@@ -57,7 +79,8 @@ const STOP_WORDS = new Set([
  * - remove stop words
  */
 export function normalizeForMatching(text: string): string {
-  let s = text.toLowerCase().trim();
+  let s = normalizeSizeTerms(text);
+  s = s.toLowerCase().trim();
   // Remove punctuation except letters, digits, spaces
   s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ');
   // Collapse whitespace
@@ -65,6 +88,12 @@ export function normalizeForMatching(text: string): string {
   // Remove stop words
   const words = s.split(' ').filter(w => w.length > 0 && !STOP_WORDS.has(w));
   return words.join(' ');
+}
+
+function extractEntityWords(text: string): string {
+  const m = text.match(/^(.*?)(?:\s+(?:DN|Ду|d=|D=|du)?\s*\d|\s+\d{2,}[xX×\/]|\s+\d+\s*(?:мм|mm))/i);
+  if (m) return m[1].trim().toLowerCase();
+  return text.toLowerCase();
 }
 
 /**
@@ -108,6 +137,19 @@ function matchSpecItems(
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
 
+      // 0. Spec article vs invoice article (confidence 0.98)
+      if (spec.article && inv.article) {
+        if (spec.article.trim().toLowerCase() === inv.article.trim().toLowerCase()) {
+          bestConfidence = 0.98; bestType = 'exact_article';
+        }
+      }
+      // 0b. Spec product_code vs invoice article (confidence 0.95)
+      if (bestConfidence < 0.98 && spec.product_code && inv.article) {
+        if (spec.product_code.trim().toLowerCase() === inv.article.trim().toLowerCase()) {
+          bestConfidence = 0.95; bestType = 'exact_article';
+        }
+      }
+
       // 1. Exact article match
       if (specCode && inv.article) {
         const invArticle = inv.article.trim();
@@ -150,6 +192,13 @@ function matchSpecItems(
             confidence += 0.05;
           }
           confidence = Math.min(confidence, 0.94); // Cap below exact article
+          // Entity word check: penalize if entity words differ significantly
+          const specEntity = extractEntityWords(specNormName);
+          const invEntity = extractEntityWords(inv.normalizedName);
+          if (specEntity.length > 3 && invEntity.length > 3) {
+            const entitySim = stringSimilarity.compareTwoStrings(specEntity, invEntity);
+            if (entitySim < 0.4) confidence *= 0.5;
+          }
           if (confidence > bestConfidence) {
             bestConfidence = confidence;
             bestType = 'name_similarity';
@@ -192,7 +241,7 @@ function matchSpecItems(
   return allCandidates;
 }
 
-const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, unit, quantity, section, parent_item_id, full_name FROM specification_items WHERE project_id = ?';
+const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, article, product_code, unit, quantity, section, parent_item_id, full_name FROM specification_items WHERE project_id = ?';
 const INVOICE_ITEMS_SQL = `
   SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
          i.supplier_id, 'invoice' as source

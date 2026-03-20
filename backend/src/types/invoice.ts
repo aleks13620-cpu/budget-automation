@@ -36,6 +36,7 @@ export interface InvoiceMetadata {
   buyerINN: string | null;
   totalWithVat: number | null;
   vatAmount: number | null;
+  vat_rate: number | null;
 }
 
 /** Оценка уверенности на каждом этапе парсинга (0–100) */
