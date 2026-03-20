@@ -206,6 +206,7 @@ export function extractExcelMetadata(rows: string[][]): InvoiceMetadata {
     buyerINN,
     totalWithVat,
     vatAmount: typeof vatAmount === 'number' ? vatAmount : null,
+    vat_rate: 22,
   };
 }
 
@@ -306,7 +307,7 @@ export function parseExcelInvoice(filePath: string, savedMapping?: SavedMapping)
     const emptyMeta: InvoiceMetadata = {
       documentNumber: null, documentDate: null, supplierName: null,
       supplierINN: null, buyerName: null, buyerINN: null,
-      totalWithVat: null, vatAmount: null,
+      totalWithVat: null, vatAmount: null, vat_rate: 22,
     };
     const emptyConf: ParsingConfidence = {
       headerDetection: 0, columnMapping: {}, metadataExtraction: 0, dataExtraction: 0, overall: 0,

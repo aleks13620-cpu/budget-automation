@@ -118,22 +118,39 @@ function parseNumber(value: unknown): number | null {
 /** DN child row pattern: empty position_number AND name is a short DN/diameter designator */
 const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
 
+/**
+ * Continuation keyword pattern — строки, начинающиеся с этих слов,
+ * являются продолжением описания предыдущей позиции даже если имеют
+ * собственные единицы/количество (например, детализация размера/материала).
+ */
+const CONTINUATION_KEYWORD_PATTERN = /^(толщиной|толщ\.|сечение|сеч\.|длиной|дл\.|шириной|высотой|диаметром|ø|h=|l=|w=|b=|с\s+нанесением|с\s+покрытием|класса\s+герметичности)/i;
+
 function isDnChild(item: SpecificationRow): boolean {
   return !item.position_number && DN_CHILD_PATTERN.test(item.name.trim());
+}
+
+function isContinuationByKeyword(item: SpecificationRow): boolean {
+  return item.position_number === null && CONTINUATION_KEYWORD_PATTERN.test(item.name.trim());
 }
 
 function mergeMultilineItems(items: SpecificationRow[]): SpecificationRow[] {
   const result: SpecificationRow[] = [];
   for (const item of items) {
-    const isContinuation =
+    // Явное продолжение по ключевым словам — объединяем в предыдущую позицию
+    // даже если у строки есть своя единица/кол-во (берём данные родителя)
+    const isByKeyword = isContinuationByKeyword(item) && !isDnChild(item);
+    // Классическое продолжение — нет позиции, кол-ва и единицы
+    const isByEmpty =
       item.position_number === null &&
       item.quantity === null &&
       item.unit === null &&
       !isDnChild(item);
-    if (isContinuation && result.length > 0) {
+
+    if ((isByKeyword || isByEmpty) && result.length > 0) {
       const last = result[result.length - 1];
       last.name = last.name + ' ' + item.name;
       if (last.full_name) last.full_name = last.full_name + ' ' + item.name;
+      // при keyword-продолжении: данные родителя сохраняются
     } else {
       result.push(item);
     }

@@ -48,7 +48,7 @@ export function SpecificationEditor({ specId, onBack }: Props) {
         setMergeMultiline(data.config.merge_multiline !== 0);
       }
     }).catch(() => {
-      setMessage({ type: 'error', text: 'Не удалось загрузить сырые данные. Возможно, спецификация была загружена до v2.0.' });
+      // raw_data нет — спецификация загружена до v2.0
     }).finally(() => setLoading(false));
   }, [specId]);
 
@@ -93,7 +93,16 @@ export function SpecificationEditor({ specId, onBack }: Props) {
       )}
 
       {rows.length === 0 ? (
-        <p className="muted">Сырые данные не сохранены для этой спецификации (загружена до v2.0)</p>
+        <div style={{ background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6, padding: '1rem' }}>
+          <strong>Редактор недоступен</strong>
+          <p style={{ margin: '0.5rem 0 0' }}>
+            Эта спецификация была загружена до версии 2.0 — исходный файл Excel не сохранён в базе.
+          </p>
+          <p style={{ margin: '0.5rem 0 0', color: '#666' }}>
+            <strong>Решение:</strong> удалите спецификацию в разделе проекта и загрузите Excel-файл повторно.
+            После этого редактор будет доступен.
+          </p>
+        </div>
       ) : (
         <>
           <div style={{ marginBottom: '1rem' }}>
