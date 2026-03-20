@@ -27,12 +27,17 @@ export function SpecificationEditor({ specId, onBack }: Props) {
     api.get(`/specifications/${specId}/raw-data`).then(({ data }) => {
       setRows(data.rows || []);
       if (data.config) {
+        // Есть сохранённый конфиг — применяем его
         setHeaderRow(data.config.header_row);
         try {
           const cm = JSON.parse(data.config.column_mapping);
           setMapping({ ...DEFAULT_MAPPING, ...cm });
         } catch {}
         setMergeMultiline(data.config.merge_multiline !== 0);
+      } else if (data.detectedMapping) {
+        // Нет конфига — применяем авто-детект
+        setHeaderRow(data.detectedMapping.headerRow);
+        setMapping({ ...DEFAULT_MAPPING, ...data.detectedMapping.columnMapping });
       }
     }).catch(() => {
       // raw_data нет — спецификация загружена до v2.0

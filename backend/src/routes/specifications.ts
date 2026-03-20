@@ -3,7 +3,7 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
-import { parseExcelFile, parseFromRawData } from '../services/excelParser';
+import { parseExcelFile, parseFromRawData, detectMappingFromRawData } from '../services/excelParser';
 import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 
@@ -415,8 +415,14 @@ router.get('/api/specifications/:id/raw-data', (req: Request, res: Response) => 
     const spec = db.prepare('SELECT id, raw_data FROM specifications WHERE id = ?').get(specId) as { id: number; raw_data: string | null } | undefined;
     if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
     if (!spec.raw_data) return res.status(404).json({ error: 'Сырые данные не сохранены для этой спецификации' });
-    const config = db.prepare('SELECT * FROM specification_parser_configs WHERE specification_id = ?').get(specId);
-    res.json({ rows: JSON.parse(spec.raw_data), config: config || null });
+
+    const rows = JSON.parse(spec.raw_data) as string[][];
+    const config = db.prepare('SELECT * FROM specification_parser_configs WHERE specification_id = ?').get(specId) as any | null;
+
+    // Если сохранённого конфига нет — авто-определяем заголовок и маппинг
+    const detectedMapping = !config ? detectMappingFromRawData(rows) : null;
+
+    res.json({ rows, config: config || null, detectedMapping });
   } catch (error) {
     console.error('GET /api/specifications/:id/raw-data error:', error);
     res.status(500).json({ error: 'Ошибка при получении сырых данных' });
@@ -433,6 +439,12 @@ router.post('/api/specifications/:id/reparse', (req: Request, res: Response) => 
     if (!spec.raw_data) return res.status(400).json({ error: 'Сырые данные не сохранены' });
 
     const { headerRow, columnMapping, mergeMultiline } = req.body as { headerRow: number; columnMapping: ColumnMapping; mergeMultiline: boolean };
+
+    // Защита: нельзя пересобирать без колонки "Наименование"
+    if (columnMapping.name === null || columnMapping.name === undefined) {
+      return res.status(400).json({ error: 'Не выбрана колонка "Наименование". Настройте маппинг перед пересборкой.' });
+    }
+
     const rawRows = JSON.parse(spec.raw_data) as string[][];
     const parseResult = parseFromRawData(rawRows, headerRow, columnMapping, mergeMultiline !== false);
 

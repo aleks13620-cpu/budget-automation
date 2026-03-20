@@ -104,6 +104,48 @@ function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: Co
   return null;
 }
 
+/**
+ * Авто-определение строки заголовка и маппинга колонок из сырых строк (string[][]).
+ * Используется в редакторе спецификации когда нет сохранённого конфига.
+ */
+export function detectMappingFromRawData(rawRows: string[][]): { headerRow: number; columnMapping: ColumnMapping } | null {
+  const normalizeCell = (v: unknown) => String(v ?? '').toLowerCase().trim();
+
+  for (let row = 0; row < Math.min(rawRows.length, 30); row++) {
+    const rowData = rawRows[row];
+    const mapping: ColumnMapping = {
+      position_number: null, name: null, characteristics: null, equipment_code: null,
+      article: null, product_code: null, marking: null, type_size: null,
+      manufacturer: null, unit: null, quantity: null, price: null, amount: null,
+    };
+    let matchCount = 0;
+    const usedCols = new Set<number>();
+
+    for (let col = 0; col < rowData.length; col++) {
+      const cellText = normalizeCell(rowData[col]);
+      if (!cellText) continue;
+
+      for (const [field, keywords] of Object.entries(HEADER_KEYWORDS)) {
+        const key = field as keyof ColumnMapping;
+        if (mapping[key] !== null || usedCols.has(col)) continue;
+        for (const keyword of keywords) {
+          if (cellText.includes(keyword.toLowerCase())) {
+            mapping[key] = col;
+            usedCols.add(col);
+            matchCount++;
+            break;
+          }
+        }
+      }
+    }
+
+    if (mapping.name !== null && matchCount >= 2) {
+      return { headerRow: row, columnMapping: mapping };
+    }
+  }
+  return null;
+}
+
 function getCellValue(sheet: XLSX.WorkSheet, row: number, col: number): string | null {
   const cellAddress = XLSX.utils.encode_cell({ r: row, c: col });
   const cell = sheet[cellAddress];
