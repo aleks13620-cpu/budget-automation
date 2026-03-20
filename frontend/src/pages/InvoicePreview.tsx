@@ -39,11 +39,12 @@ const SEPARATOR_OPTIONS: { value: SeparatorMethod; label: string; description: s
   { value: 'custom', label: 'Свой разделитель', description: 'Указать произвольный символ или строку' },
 ];
 
-function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
+function CategoryBPanel({ invoice, preview, invoiceId, onBack, onReload }: {
   invoice: InvoiceInfo;
   preview: PreviewData;
   invoiceId: number;
   onBack: () => void;
+  onReload: () => Promise<void>;
 }) {
   const [sepMethod, setSepMethod] = useState<SeparatorMethod>('spaces');
   const [customSep, setCustomSep] = useState(';');
@@ -99,8 +100,8 @@ function CategoryBPanel({ invoice, preview, invoiceId, onBack }: {
       if (data.imported === 0) {
         setMessage({ type: 'error', text: 'Позиции не найдены. Попробуйте другой разделитель или настройте колонки.' });
       } else {
-        setMessage({ type: 'success', text: `Пересобрано: ${data.imported} позиций` });
         await api.put(`/invoices/${invoiceId}/status`, { status: 'verified' });
+        await onReload(); // перезагрузить invoice → выйти из CategoryB в CategoryA
       }
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при пересборке' });
@@ -483,24 +484,24 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     } catch { /* non-critical */ }
   };
 
-  useEffect(() => {
-    const load = async () => {
-      setLoading(true);
-      try {
-        const invoiceRes = await api.get(`/invoices/${invoiceId}`);
-        const inv: InvoiceInfo = invoiceRes.data.invoice;
-        setInvoice(inv);
+  const reloadInvoice = async () => {
+    setLoading(true);
+    try {
+      const invoiceRes = await api.get(`/invoices/${invoiceId}`);
+      const inv: InvoiceInfo = invoiceRes.data.invoice;
+      setInvoice(inv);
+      const data = await loadPreview(inv, 0);
+      applyMapping(data);
+      await loadUnitReview();
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка загрузки предпросмотра' });
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        const data = await loadPreview(inv, 0);
-        applyMapping(data);
-        await loadUnitReview();
-      } catch {
-        setMessage({ type: 'error', text: 'Ошибка загрузки предпросмотра' });
-      } finally {
-        setLoading(false);
-      }
-    };
-    load();
+  useEffect(() => {
+    reloadInvoice();
   }, [invoiceId]);
 
   const handleSheetChange = async (newSheet: number) => {
@@ -704,6 +705,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         preview={preview}
         invoiceId={invoiceId}
         onBack={onBack}
+        onReload={reloadInvoice}
       />
     );
   }

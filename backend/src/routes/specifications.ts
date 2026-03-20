@@ -584,6 +584,14 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
       WHERE id = ?
     `);
 
+    const ruleStmt = db.prepare(`
+      INSERT INTO spec_parse_rules (specification_id, field, raw_value, corrected_value, times_used)
+      VALUES (?, ?, ?, ?, 1)
+      ON CONFLICT(specification_id, field, raw_value) DO UPDATE SET
+        corrected_value = excluded.corrected_value,
+        times_used = times_used + 1
+    `);
+
     db.transaction(() => {
       for (const diff of result.diffs) {
         if (!diff.changed) continue;
@@ -595,6 +603,16 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
           diff.after.type_size ?? null,
           item.id,
         );
+        // Сохранить правила (обучение) — каждый изменённый field
+        for (const field of Object.keys(diff.after)) {
+          const rawVal = (diff.before as any)[field];
+          const corrVal = (diff.after as any)[field];
+          if (rawVal !== undefined && corrVal !== undefined && rawVal !== corrVal) {
+            try {
+              ruleStmt.run(specId, field, String(rawVal ?? ''), String(corrVal ?? ''));
+            } catch { /* conflict handled by ON CONFLICT */ }
+          }
+        }
       }
     })();
 

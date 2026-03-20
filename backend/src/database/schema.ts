@@ -188,7 +188,8 @@ CREATE TABLE IF NOT EXISTS spec_parse_rules (
   raw_value TEXT NOT NULL,
   corrected_value TEXT NOT NULL,
   times_used INTEGER DEFAULT 1,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(specification_id, field, raw_value)
 );
 
 `;
@@ -210,5 +211,6 @@ CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(
 CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
 CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);
 CREATE INDEX IF NOT EXISTS idx_spec_parse_rules_spec ON spec_parse_rules(specification_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_parse_rules_unique ON spec_parse_rules(specification_id, field, raw_value);
 CREATE INDEX IF NOT EXISTS idx_spec_items_history_spec ON specification_items_history(specification_id);
 `;
