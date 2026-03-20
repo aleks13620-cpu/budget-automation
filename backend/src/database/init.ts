@@ -38,6 +38,14 @@ function initializeDatabase(): void {
       'ALTER TABLE specification_items ADD COLUMN type_size TEXT',
       'ALTER TABLE invoices ADD COLUMN vat_rate INTEGER DEFAULT 22',
       'ALTER TABLE specifications ADD COLUMN raw_data TEXT',
+      `CREATE TABLE IF NOT EXISTS specification_items_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        specification_id INTEGER NOT NULL REFERENCES specifications(id) ON DELETE CASCADE,
+        version INTEGER NOT NULL,
+        items_snapshot TEXT NOT NULL,
+        action TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

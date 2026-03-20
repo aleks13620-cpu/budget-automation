@@ -9,9 +9,37 @@ const DEFAULT_MAPPING: SpecColumnMapping = {
   manufacturer: null, unit: null, quantity: null, price: null, amount: null,
 };
 
+interface EnrichDiff {
+  idx: number;
+  position_number: string | null;
+  before: Record<string, string | null>;
+  after: Record<string, string | null>;
+  changed: boolean;
+}
+
+interface HistoryEntry {
+  id: number;
+  version: number;
+  action: string;
+  created_at: string;
+  items_count: number;
+}
+
 interface Props {
   specId: number;
   onBack: () => void;
+}
+
+const ACTION_LABELS: Record<string, string> = {
+  gigachat_enrich: 'GigaChat: обогащение',
+  reparse: 'Пересборка',
+  initial_upload: 'Загрузка',
+};
+
+function actionLabel(action: string): string {
+  if (ACTION_LABELS[action]) return ACTION_LABELS[action];
+  if (action.startsWith('rollback_to_v')) return `Откат к v${action.replace('rollback_to_v', '')}`;
+  return action;
 }
 
 export function SpecificationEditor({ specId, onBack }: Props) {
@@ -23,11 +51,22 @@ export function SpecificationEditor({ specId, onBack }: Props) {
   const [reparsing, setReparsing] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // GigaChat enrich
+  const [enriching, setEnriching] = useState(false);
+  const [enrichPreview, setEnrichPreview] = useState<EnrichDiff[] | null>(null);
+  const [enrichStats, setEnrichStats] = useState<{ updated: number; total: number; errors: string[] } | null>(null);
+  const [applying, setApplying] = useState(false);
+
+  // History / rollback
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyData, setHistoryData] = useState<HistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [rollingBack, setRollingBack] = useState(false);
+
   useEffect(() => {
     api.get(`/specifications/${specId}/raw-data`).then(({ data }) => {
       setRows(data.rows || []);
       if (data.config) {
-        // Есть сохранённый конфиг — применяем его
         setHeaderRow(data.config.header_row);
         try {
           const cm = JSON.parse(data.config.column_mapping);
@@ -35,7 +74,6 @@ export function SpecificationEditor({ specId, onBack }: Props) {
         } catch {}
         setMergeMultiline(data.config.merge_multiline !== 0);
       } else if (data.detectedMapping) {
-        // Нет конфига — применяем авто-детект
         setHeaderRow(data.detectedMapping.headerRow);
         setMapping({ ...DEFAULT_MAPPING, ...data.detectedMapping.columnMapping });
       }
@@ -67,14 +105,82 @@ export function SpecificationEditor({ specId, onBack }: Props) {
     }
   };
 
-  // Заголовки колонок из строки headerRow
+  // -------------------------------------------------------------------------
+  // GigaChat enrich
+  // -------------------------------------------------------------------------
+
+  const handleEnrichPreview = async () => {
+    setEnriching(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/specifications/${specId}/gigachat-enrich`, { dryRun: true });
+      setEnrichPreview(data.diffs);
+      setEnrichStats({ updated: data.updated, total: data.diffs.length, errors: data.errors });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при предпросмотре GigaChat' });
+    } finally {
+      setEnriching(false);
+    }
+  };
+
+  const handleEnrichApply = async () => {
+    setApplying(true);
+    try {
+      const { data } = await api.post(`/specifications/${specId}/gigachat-enrich`, { dryRun: false });
+      setEnrichPreview(null);
+      setEnrichStats(null);
+      setMessage({ type: 'success', text: `GigaChat обновил ${data.updated} позиций из ${data.diffs.length}` });
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при применении изменений GigaChat' });
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // History / rollback
+  // -------------------------------------------------------------------------
+
+  const handleOpenHistory = async () => {
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    try {
+      const { data } = await api.get(`/specifications/${specId}/history`);
+      setHistoryData(data.history);
+    } catch {
+      setHistoryData([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleRollback = async (version: number) => {
+    if (!confirm(`Откатить спецификацию к версии ${version}? Текущее состояние будет сохранено в историю.`)) return;
+    setRollingBack(true);
+    try {
+      const { data } = await api.post(`/specifications/${specId}/rollback`, { version });
+      setHistoryOpen(false);
+      setMessage({ type: 'success', text: `Восстановлено ${data.restored} позиций из версии v${version}` });
+      // Refresh history after rollback
+      const { data: h } = await api.get(`/specifications/${specId}/history`);
+      setHistoryData(h.history);
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при откате' });
+    } finally {
+      setRollingBack(false);
+    }
+  };
+
+  // -------------------------------------------------------------------------
+  // Render helpers
+  // -------------------------------------------------------------------------
+
   const columnHeaders: string[] = rows.length > 0 && rows[headerRow]
     ? rows[headerRow].map(c => String(c ?? '').trim())
     : [];
 
   const displayRows = rows.slice(0, 40);
 
-  // Подсвечиваемые колонки (те что выбраны в маппере)
   const mappedCols = new Set(
     Object.values(mapping).filter((v): v is number => v !== null)
   );
@@ -156,6 +262,12 @@ export function SpecificationEditor({ specId, onBack }: Props) {
             <button className="btn btn-secondary" onClick={handleSaveConfig}>
               Сохранить конфиг
             </button>
+            <button className="btn btn-secondary" onClick={handleEnrichPreview} disabled={enriching}>
+              {enriching ? 'Анализ GigaChat...' : 'Улучшить через GigaChat'}
+            </button>
+            <button className="btn btn-secondary" onClick={handleOpenHistory}>
+              История версий
+            </button>
           </div>
 
           {/* Таблица сырых данных */}
@@ -208,6 +320,156 @@ export function SpecificationEditor({ specId, onBack }: Props) {
             )}
           </div>
         </>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Модальное окно: предпросмотр GigaChat                              */}
+      {/* ------------------------------------------------------------------ */}
+      {enrichPreview && enrichStats && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 8, padding: '1.5rem',
+            width: '90%', maxWidth: '900px', maxHeight: '85vh',
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>Предпросмотр улучшений GigaChat</h3>
+              <span className="muted">
+                Изменений: <strong>{enrichStats.updated}</strong> из {enrichStats.total} позиций
+              </span>
+            </div>
+
+            {enrichStats.errors.length > 0 && (
+              <div style={{ background: '#fee2e2', border: '1px solid #fca5a5', borderRadius: 4, padding: '0.5rem', fontSize: '0.85rem', color: '#991b1b' }}>
+                Ошибки: {enrichStats.errors.join('; ')}
+              </div>
+            )}
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8rem' }}>
+                <thead>
+                  <tr style={{ background: '#f8f9fa', position: 'sticky', top: 0 }}>
+                    <th style={{ padding: '6px 8px', border: '1px solid #dee2e6', width: '50px' }}>№ поз.</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}>Поле</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}>Было</th>
+                    <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}>Станет</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {enrichPreview.filter(d => d.changed).length === 0 ? (
+                    <tr>
+                      <td colSpan={4} style={{ padding: '1rem', textAlign: 'center', color: '#666' }}>
+                        Нет изменений — все позиции уже нормализованы
+                      </td>
+                    </tr>
+                  ) : (
+                    enrichPreview.filter(d => d.changed).flatMap(diff =>
+                      Object.keys(diff.after).map(field => (
+                        <tr key={`${diff.idx}-${field}`}>
+                          <td style={{ padding: '4px 8px', border: '1px solid #e0e0e0', textAlign: 'center', color: '#666' }}>
+                            {diff.position_number ?? diff.idx + 1}
+                          </td>
+                          <td style={{ padding: '4px 8px', border: '1px solid #e0e0e0', color: '#666', fontStyle: 'italic' }}>
+                            {field}
+                          </td>
+                          <td style={{ padding: '4px 8px', border: '1px solid #e0e0e0', color: '#666', maxWidth: '300px', wordBreak: 'break-word' }}>
+                            {diff.before[field] ?? '—'}
+                          </td>
+                          <td style={{ padding: '4px 8px', border: '1px solid #e0e0e0', color: '#1a7f64', fontWeight: 500, maxWidth: '300px', wordBreak: 'break-word' }}>
+                            {diff.after[field] ?? '—'}
+                          </td>
+                        </tr>
+                      ))
+                    )
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => { setEnrichPreview(null); setEnrichStats(null); }}>
+                Отмена
+              </button>
+              <button className="btn btn-primary" onClick={handleEnrichApply} disabled={applying || enrichStats.updated === 0}>
+                {applying ? 'Применение...' : `Применить изменения (${enrichStats.updated})`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Модальное окно: история версий                                      */}
+      {/* ------------------------------------------------------------------ */}
+      {historyOpen && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#fff', borderRadius: 8, padding: '1.5rem',
+            width: '600px', maxHeight: '80vh',
+            display: 'flex', flexDirection: 'column', gap: '1rem',
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h3 style={{ margin: 0 }}>История версий спецификации</h3>
+              <button className="btn btn-secondary btn-sm" onClick={() => setHistoryOpen(false)}>✕</button>
+            </div>
+
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {historyLoading ? (
+                <p className="muted">Загрузка...</p>
+              ) : historyData.length === 0 ? (
+                <p className="muted">История пуста. Версии создаются при обогащении GigaChat и откатах.</p>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                  <thead>
+                    <tr style={{ background: '#f8f9fa' }}>
+                      <th style={{ padding: '6px 8px', border: '1px solid #dee2e6', textAlign: 'center' }}>Версия</th>
+                      <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}>Дата</th>
+                      <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}>Действие</th>
+                      <th style={{ padding: '6px 8px', border: '1px solid #dee2e6', textAlign: 'center' }}>Позиций</th>
+                      <th style={{ padding: '6px 8px', border: '1px solid #dee2e6' }}></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyData.map((entry, idx) => (
+                      <tr key={entry.id} style={{ background: idx === 0 ? '#f0fdf4' : undefined }}>
+                        <td style={{ padding: '6px 8px', border: '1px solid #e0e0e0', textAlign: 'center' }}>
+                          v{entry.version}
+                          {idx === 0 && <span style={{ marginLeft: '4px', fontSize: '0.7rem', color: '#16a34a' }}>текущая</span>}
+                        </td>
+                        <td style={{ padding: '6px 8px', border: '1px solid #e0e0e0', color: '#666' }}>
+                          {new Date(entry.created_at).toLocaleString('ru-RU')}
+                        </td>
+                        <td style={{ padding: '6px 8px', border: '1px solid #e0e0e0' }}>
+                          {actionLabel(entry.action)}
+                        </td>
+                        <td style={{ padding: '6px 8px', border: '1px solid #e0e0e0', textAlign: 'center' }}>
+                          {entry.items_count}
+                        </td>
+                        <td style={{ padding: '6px 8px', border: '1px solid #e0e0e0' }}>
+                          {idx !== 0 && (
+                            <button
+                              className="btn btn-secondary btn-sm"
+                              onClick={() => handleRollback(entry.version)}
+                              disabled={rollingBack}
+                            >
+                              Откатить
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

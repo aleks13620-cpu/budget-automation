@@ -6,6 +6,8 @@ import { getDatabase } from '../database';
 import { parseExcelFile, parseFromRawData, detectMappingFromRawData } from '../services/excelParser';
 import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
+import { enrichSpecItems } from '../services/gigachatSpecParser';
+import type { SpecItemInput } from '../services/gigachatSpecParser';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -507,6 +509,175 @@ router.post('/api/specifications/:id/parser-config', (req: Request, res: Respons
   } catch (error) {
     console.error('POST /api/specifications/:id/parser-config error:', error);
     res.status(500).json({ error: 'Ошибка при сохранении конфига' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Helper: save snapshot of specification_items before modification
+// ---------------------------------------------------------------------------
+
+function saveSpecSnapshot(specId: number, action: string, db: ReturnType<typeof getDatabase>): void {
+  const items = db.prepare('SELECT * FROM specification_items WHERE specification_id = ?').all(specId);
+  const maxVerRow = db.prepare(
+    'SELECT MAX(version) as v FROM specification_items_history WHERE specification_id = ?'
+  ).get(specId) as { v: number | null } | undefined;
+  const nextVersion = (maxVerRow?.v ?? 0) + 1;
+  db.prepare(
+    'INSERT INTO specification_items_history (specification_id, version, items_snapshot, action) VALUES (?, ?, ?, ?)'
+  ).run(specId, nextVersion, JSON.stringify(items), action);
+}
+
+// POST /api/specifications/:id/gigachat-enrich
+router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id, project_id, section FROM specifications WHERE id = ?').get(specId) as { id: number; project_id: number; section: string } | undefined;
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+
+    const { dryRun = false, fieldsToUpdate } = req.body as { dryRun?: boolean; fieldsToUpdate?: string[] };
+
+    const dbItems = db.prepare(
+      'SELECT id, position_number, name, characteristics, unit, quantity, manufacturer, article, type_size FROM specification_items WHERE specification_id = ? ORDER BY id'
+    ).all(specId) as Array<{
+      id: number; position_number: string | null; name: string;
+      characteristics: string | null; unit: string | null; quantity: number | null;
+      manufacturer: string | null; article: string | null; type_size: string | null;
+    }>;
+
+    if (dbItems.length === 0) return res.status(400).json({ error: 'Нет позиций для обогащения' });
+
+    const inputs: Array<SpecItemInput & { id: number; position_number: string | null }> = dbItems.map((it, i) => ({
+      idx: i,
+      id: it.id,
+      position_number: it.position_number,
+      name: it.name,
+      characteristics: it.characteristics,
+      unit: it.unit,
+      quantity: it.quantity,
+      manufacturer: it.manufacturer,
+      article: it.article,
+      type_size: it.type_size,
+    }));
+
+    const result = await enrichSpecItems(inputs, fieldsToUpdate as any);
+
+    if (dryRun) {
+      return res.json({
+        dryRun: true,
+        updated: result.updated,
+        skipped: result.skipped,
+        errors: result.errors,
+        diffs: result.diffs,
+      });
+    }
+
+    // Apply changes to DB
+    saveSpecSnapshot(specId, 'gigachat_enrich', db);
+
+    const updateStmt = db.prepare(`
+      UPDATE specification_items
+      SET name = COALESCE(?, name),
+          characteristics = COALESCE(?, characteristics),
+          manufacturer = COALESCE(?, manufacturer),
+          article = COALESCE(?, article),
+          type_size = COALESCE(?, type_size)
+      WHERE id = ?
+    `);
+
+    db.transaction(() => {
+      for (const diff of result.diffs) {
+        if (!diff.changed) continue;
+        const item = inputs[diff.idx];
+        updateStmt.run(
+          diff.after.name ?? null,
+          diff.after.characteristics ?? null,
+          diff.after.manufacturer ?? null,
+          diff.after.article ?? null,
+          diff.after.type_size ?? null,
+          item.id,
+        );
+      }
+    })();
+
+    res.json({
+      dryRun: false,
+      updated: result.updated,
+      skipped: result.skipped,
+      errors: result.errors,
+      diffs: result.diffs,
+    });
+  } catch (error) {
+    console.error('POST /api/specifications/:id/gigachat-enrich error:', error);
+    res.status(500).json({ error: 'Ошибка обогащения через GigaChat', details: error instanceof Error ? error.message : 'Unknown' });
+  }
+});
+
+// GET /api/specifications/:id/history
+router.get('/api/specifications/:id/history', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id FROM specifications WHERE id = ?').get(specId);
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+
+    const history = db.prepare(
+      `SELECT id, version, action, created_at,
+        (SELECT COUNT(*) FROM json_each(items_snapshot)) as items_count
+       FROM specification_items_history
+       WHERE specification_id = ?
+       ORDER BY version DESC`
+    ).all(specId) as Array<{ id: number; version: number; action: string; created_at: string; items_count: number }>;
+
+    res.json({ history });
+  } catch (error) {
+    console.error('GET /api/specifications/:id/history error:', error);
+    res.status(500).json({ error: 'Ошибка при получении истории' });
+  }
+});
+
+// POST /api/specifications/:id/rollback
+router.post('/api/specifications/:id/rollback', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id, project_id, section FROM specifications WHERE id = ?').get(specId) as { id: number; project_id: number; section: string } | undefined;
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+
+    const { version } = req.body as { version: number };
+    const historyEntry = db.prepare(
+      'SELECT items_snapshot FROM specification_items_history WHERE specification_id = ? AND version = ?'
+    ).get(specId, version) as { items_snapshot: string } | undefined;
+    if (!historyEntry) return res.status(404).json({ error: `Версия ${version} не найдена` });
+
+    const snapshot = JSON.parse(historyEntry.items_snapshot) as any[];
+
+    // Save current state before rollback
+    saveSpecSnapshot(specId, `rollback_to_v${version}`, db);
+
+    db.transaction(() => {
+      db.prepare('DELETE FROM specification_items WHERE specification_id = ?').run(specId);
+      const insertStmt = db.prepare(`
+        INSERT INTO specification_items
+          (id, project_id, specification_id, position_number, name, characteristics, equipment_code,
+           article, product_code, marking, type_size, manufacturer, unit, quantity, section,
+           parent_item_id, full_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const item of snapshot) {
+        insertStmt.run(
+          item.id, item.project_id, item.specification_id, item.position_number, item.name,
+          item.characteristics, item.equipment_code, item.article, item.product_code,
+          item.marking, item.type_size, item.manufacturer, item.unit, item.quantity,
+          item.section, item.parent_item_id, item.full_name,
+        );
+      }
+    })();
+
+    res.json({ restored: snapshot.length, version });
+  } catch (error) {
+    console.error('POST /api/specifications/:id/rollback error:', error);
+    res.status(500).json({ error: 'Ошибка при откате', details: error instanceof Error ? error.message : 'Unknown' });
   }
 });
 
