@@ -128,7 +128,7 @@ const INVOICE_PROMPT = `
     { "position": 3, "article": null, "name": "Выключатель ВС10-1-0-Б", "quantity": 30.0, "unit": "шт", "price": 215.00, "discount_percent": null, "total": 6450.00 }
   ],
   "subtotal": 25000.00,
-  "vat_rate": 20,
+  "vat_rate": 22,
   "vat_amount": 5000.00,
   "total_with_vat": 30000.00,
   "vat_included": true
@@ -164,7 +164,7 @@ const INVOICE_PROMPT = `
     }
   ],
   "subtotal": null,
-  "vat_rate": 20,
+  "vat_rate": 22,
   "vat_amount": null,
   "total_with_vat": 1044777.53,
   "vat_included": true

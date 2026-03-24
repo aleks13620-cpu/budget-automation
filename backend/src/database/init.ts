@@ -38,6 +38,7 @@ function initializeDatabase(): void {
       'ALTER TABLE specification_items ADD COLUMN type_size TEXT',
       'ALTER TABLE invoices ADD COLUMN vat_rate INTEGER DEFAULT 22',
       'ALTER TABLE specifications ADD COLUMN raw_data TEXT',
+      'UPDATE suppliers SET vat_rate = 22 WHERE vat_rate = 20',
       `CREATE TABLE IF NOT EXISTS specification_items_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         specification_id INTEGER NOT NULL REFERENCES specifications(id) ON DELETE CASCADE,

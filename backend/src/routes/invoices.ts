@@ -158,7 +158,7 @@ async function processInvoiceFile(
     let supplierIdImg: number | null = null;
     if (supplierNameImg) {
       const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
-      supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierNameImg).lastInsertRowid);
+      supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(supplierNameImg).lastInsertRowid);
     }
     const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -212,7 +212,7 @@ async function processInvoiceFile(
     if (existing) {
       supplierId = existing.id;
     } else {
-      const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
+      const result = db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(supplierName);
       supplierId = Number(result.lastInsertRowid);
     }
   }
@@ -806,7 +806,7 @@ router.post('/api/invoices/:id/ensure-supplier', (req: Request, res: Response) =
       supplierId = existing.id;
       finalName = existing.name;
     } else {
-      const result = db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(supplierName);
+      const result = db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(supplierName);
       supplierId = Number(result.lastInsertRowid);
       finalName = supplierName;
     }
@@ -952,7 +952,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     let resolvedSupplierId: number | null = null;
     if (resolvedSupplierName) {
       const existingS = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(resolvedSupplierName) as { id: number } | undefined;
-      resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name) VALUES (?)').run(resolvedSupplierName).lastInsertRowid);
+      resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(resolvedSupplierName).lastInsertRowid);
     }
 
     const reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null);
