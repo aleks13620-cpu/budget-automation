@@ -162,8 +162,9 @@ async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 
 // Обогащение одного батча
 // ---------------------------------------------------------------------------
 
-const BATCH_SIZE = 15;          // уменьшен для снижения нагрузки
-const INTER_BATCH_DELAY_MS = 3000; // пауза между батчами
+const BATCH_SIZE = 40;           // позиций на батч
+const INTER_BATCH_DELAY_MS = 1000; // пауза между группами батчей
+const CONCURRENCY = 3;             // параллельных батчей одновременно
 
 async function enrichBatch(items: SpecItemInput[]): Promise<SpecItemEnriched[]> {
   const inputJson = JSON.stringify(items, null, 0);
@@ -218,12 +219,11 @@ export async function enrichSpecItems(
   let updated = 0;
   let skipped = 0;
 
-  // Split into batches (with delay between to avoid rate limiting)
+  // Build all batches upfront
+  const allBatches: Array<{ batchStart: number; batch: typeof items; inputs: SpecItemInput[] }> = [];
   for (let batchStart = 0; batchStart < items.length; batchStart += BATCH_SIZE) {
-    if (batchStart > 0) await sleep(INTER_BATCH_DELAY_MS);
-
     const batch = items.slice(batchStart, batchStart + BATCH_SIZE);
-    const batchInputs: SpecItemInput[] = batch.map(it => ({
+    const inputs: SpecItemInput[] = batch.map(it => ({
       idx: it.idx,
       name: it.name,
       characteristics: it.characteristics,
@@ -233,25 +233,32 @@ export async function enrichSpecItems(
       article: it.article,
       type_size: it.type_size,
     }));
+    allBatches.push({ batchStart, batch, inputs });
+  }
 
-    let enriched: SpecItemEnriched[];
-    try {
-      enriched = await enrichBatch(batchInputs);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`Батч ${batchStart}-${batchStart + batch.length - 1}: ${msg}`);
-      // Use originals for this batch
-      enriched = batchInputs.map(it => ({
-        idx: it.idx,
-        name: it.name,
-        characteristics: it.characteristics,
-        unit: it.unit,
-        manufacturer: it.manufacturer,
-        article: it.article,
-        type_size: it.type_size,
-      }));
-      skipped += batch.length;
-    }
+  // Process in parallel groups of CONCURRENCY
+  const enrichedByBatchStart = new Map<number, SpecItemEnriched[]>();
+  for (let g = 0; g < allBatches.length; g += CONCURRENCY) {
+    if (g > 0) await sleep(INTER_BATCH_DELAY_MS);
+    const group = allBatches.slice(g, g + CONCURRENCY);
+    await Promise.all(group.map(async ({ batchStart, batch, inputs }) => {
+      try {
+        enrichedByBatchStart.set(batchStart, await enrichBatch(inputs));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(`Батч ${batchStart}-${batchStart + batch.length - 1}: ${msg}`);
+        enrichedByBatchStart.set(batchStart, inputs.map(it => ({
+          idx: it.idx, name: it.name, characteristics: it.characteristics,
+          unit: it.unit, manufacturer: it.manufacturer, article: it.article, type_size: it.type_size,
+        })));
+        skipped += batch.length;
+      }
+    }));
+  }
+
+  // Process results in original order
+  for (const { batchStart, batch } of allBatches) {
+    const enriched = enrichedByBatchStart.get(batchStart)!;
 
     for (let i = 0; i < batch.length; i++) {
       const original = batch[i];
