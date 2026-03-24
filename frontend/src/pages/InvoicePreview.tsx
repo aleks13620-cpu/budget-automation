@@ -437,6 +437,11 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [showNetPriceForm, setShowNetPriceForm] = useState(false);
   const [applyingNetPrice, setApplyingNetPrice] = useState(false);
   const [showReparseConfirm, setShowReparseConfirm] = useState(false);
+  const [showPriceFormulaModal, setShowPriceFormulaModal] = useState(false);
+  const [priceFormulaNumerator, setPriceFormulaNumerator] = useState('amount');
+  const [priceFormulaDenominator, setPriceFormulaDenominator] = useState('quantity');
+  const [savedPriceFormula, setSavedPriceFormula] = useState<{ numerator: string; denominator: string } | null>(null);
+  const [applyingFormula, setApplyingFormula] = useState(false);
 
   const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
     const currentInvoice = inv || invoice;
@@ -491,6 +496,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
       const invoiceRes = await api.get(`/invoices/${invoiceId}`);
       const inv: InvoiceInfo = invoiceRes.data.invoice;
       setInvoice(inv);
+      if (invoiceRes.data.priceCalcFormula) setSavedPriceFormula(invoiceRes.data.priceCalcFormula);
       const data = await loadPreview(inv, 0);
       applyMapping(data);
       await loadUnitReview();
@@ -647,6 +653,30 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
+  const FIELD_LABELS: Record<string, string> = {
+    amount: 'Сумма', quantity: 'Количество', quantity_packages: 'Количество (упак.)', price: 'Цена',
+  };
+
+  const handleApplyPriceFormula = async (saveForSupplier: boolean) => {
+    setApplyingFormula(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/invoices/${invoiceId}/calculate-price-formula`, {
+        numerator: priceFormulaNumerator,
+        denominator: priceFormulaDenominator,
+        saveForSupplier,
+      });
+      if (saveForSupplier) setSavedPriceFormula({ numerator: priceFormulaNumerator, denominator: priceFormulaDenominator });
+      setShowPriceFormulaModal(false);
+      setMessage({ type: 'success', text: `Цена пересчитана для ${data.updated} позиций (${FIELD_LABELS[data.numerator]} ÷ ${FIELD_LABELS[data.denominator]})` });
+      await loadPreview();
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при расчёте цены' });
+    } finally {
+      setApplyingFormula(false);
+    }
+  };
+
   const handleCalculatePrices = async () => {
     setCalculatingPrices(true);
     setMessage(null);
@@ -737,6 +767,22 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
           <span>⚠️ В счёте обнаружена скидка <strong>{invoice.discount_detected}%</strong>. Применить ко всем позициям?</span>
           <button className="btn btn-primary btn-sm" onClick={() => handleApplyDiscount(true)}>Да, применить</button>
           <button className="btn btn-secondary btn-sm" onClick={() => handleApplyDiscount(false)}>Нет</button>
+        </div>
+      )}
+
+      {savedPriceFormula && (
+        <div style={{
+          background: '#fef9c3', border: '1px solid #ca8a04', borderRadius: '6px',
+          padding: '0.75rem 1rem', marginBottom: '1rem',
+          display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
+        }}>
+          <span>💡 Для этого поставщика обычно пересчитывается цена: <strong>{savedPriceFormula.numerator === 'amount' ? 'Сумма' : savedPriceFormula.numerator} ÷ {savedPriceFormula.denominator === 'quantity' ? 'Количество' : savedPriceFormula.denominator}</strong>. Применить?</span>
+          <button className="btn btn-primary btn-sm" onClick={() => {
+            setPriceFormulaNumerator(savedPriceFormula.numerator);
+            setPriceFormulaDenominator(savedPriceFormula.denominator);
+            handleApplyPriceFormula(false);
+          }}>Применить</button>
+          <button className="btn btn-secondary btn-sm" onClick={() => setSavedPriceFormula(null)}>Не сейчас</button>
         </div>
       )}
 
@@ -836,8 +882,8 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <button className="btn btn-primary" onClick={() => setShowReparseConfirm(true)} disabled={reparsing}>
           {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
         </button>
-        <button className="btn btn-secondary" onClick={handleCalculatePrices} disabled={calculatingPrices}>
-          {calculatingPrices ? 'Расчёт...' : 'Рассчитать цены (сумма ÷ количество)'}
+        <button className="btn btn-secondary" onClick={() => setShowPriceFormulaModal(true)}>
+          Рассчитать цену за единицу
         </button>
         <button className="btn btn-secondary" onClick={handleOpenHistory}>
           История версий
@@ -861,6 +907,42 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         )}
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
+
+      {showPriceFormulaModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 420, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 1rem' }}>Рассчитать цену за единицу</h3>
+            <p style={{ color: '#555', margin: '0 0 1rem', fontSize: '0.9rem' }}>Цена = Числитель ÷ Делитель</p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.25rem' }}>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Числитель (что делим)</span>
+                <select value={priceFormulaNumerator} onChange={e => setPriceFormulaNumerator(e.target.value)} style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #ced4da' }}>
+                  {[['amount','Сумма'],['quantity','Количество'],['quantity_packages','Количество (упак.)'],['price','Цена']].map(([v,l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+              </label>
+              <label style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                <span style={{ fontSize: '0.85rem', fontWeight: 500 }}>Делитель (на что делим)</span>
+                <select value={priceFormulaDenominator} onChange={e => setPriceFormulaDenominator(e.target.value)} style={{ padding: '6px 8px', borderRadius: 4, border: '1px solid #ced4da' }}>
+                  {[['quantity','Количество'],['quantity_packages','Количество (упак.)'],['amount','Сумма'],['price','Цена']].map(([v,l]) => (
+                    <option key={v} value={v}>{l}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary" onClick={() => setShowPriceFormulaModal(false)}>Отмена</button>
+              <button className="btn btn-secondary" onClick={() => handleApplyPriceFormula(false)} disabled={applyingFormula}>
+                {applyingFormula ? 'Расчёт...' : 'Применить'}
+              </button>
+              <button className="btn btn-primary" onClick={() => handleApplyPriceFormula(true)} disabled={applyingFormula}>
+                {applyingFormula ? 'Расчёт...' : 'Применить и запомнить поставщика'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showReparseConfirm && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>

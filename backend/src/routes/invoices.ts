@@ -738,7 +738,18 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
       'SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index'
     ).all(invoiceId);
 
-    res.json({ invoice, items });
+    // Load saved price formula for this supplier
+    let priceCalcFormula: { numerator: string; denominator: string } | null = null;
+    const inv = invoice as any;
+    if (inv.supplier_id) {
+      const cfg = db.prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?').get(inv.supplier_id) as { config: string } | undefined;
+      if (cfg) {
+        const parsed = JSON.parse(cfg.config);
+        if (parsed.price_calc_formula) priceCalcFormula = parsed.price_calc_formula;
+      }
+    }
+
+    res.json({ invoice, items, priceCalcFormula });
   } catch (error) {
     console.error('GET /api/invoices/:id error:', error);
     res.status(500).json({ error: 'Ошибка при получении счёта' });
@@ -1366,6 +1377,49 @@ router.post('/api/invoices/:id/calculate-prices', (req: Request, res: Response) 
   } catch (error) {
     console.error('POST /api/invoices/:id/calculate-prices error:', error);
     res.status(500).json({ error: 'Ошибка при расчёте цен' });
+  }
+});
+
+// POST /api/invoices/:id/calculate-price-formula — recalculate price using operator-chosen columns
+router.post('/api/invoices/:id/calculate-price-formula', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id, supplier_id FROM invoices WHERE id = ?').get(invoiceId) as { id: number; supplier_id: number | null } | undefined;
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+
+    const { numerator, denominator, saveForSupplier = false } = req.body as {
+      numerator: string; denominator: string; saveForSupplier?: boolean;
+    };
+
+    const ALLOWED = new Set(['amount', 'quantity', 'quantity_packages', 'price']);
+    if (!ALLOWED.has(numerator) || !ALLOWED.has(denominator)) {
+      return res.status(400).json({ error: 'Недопустимые колонки для расчёта' });
+    }
+    if (numerator === denominator) {
+      return res.status(400).json({ error: 'Числитель и делитель должны быть разными' });
+    }
+
+    saveSnapshot(invoiceId, `calculate_price_formula_${numerator}_div_${denominator}`, db);
+
+    const result = db.prepare(`
+      UPDATE invoice_items SET price = ${numerator} / ${denominator}
+      WHERE invoice_id = ? AND ${numerator} IS NOT NULL AND ${denominator} IS NOT NULL AND ${denominator} > 0
+    `).run(invoiceId);
+
+    // Save formula to supplier config
+    if (saveForSupplier && invoice.supplier_id) {
+      const existing = db.prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?').get(invoice.supplier_id) as { config: string } | undefined;
+      const config = existing ? JSON.parse(existing.config) : {};
+      config.price_calc_formula = { numerator, denominator };
+      db.prepare('INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?) ON CONFLICT(supplier_id) DO UPDATE SET config = excluded.config')
+        .run(invoice.supplier_id, JSON.stringify(config));
+    }
+
+    res.json({ updated: result.changes, numerator, denominator });
+  } catch (error) {
+    console.error('POST /api/invoices/:id/calculate-price-formula error:', error);
+    res.status(500).json({ error: 'Ошибка при расчёте цены' });
   }
 });
 
