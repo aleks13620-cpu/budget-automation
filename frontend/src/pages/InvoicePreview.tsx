@@ -436,6 +436,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
   const [netPriceDiscount, setNetPriceDiscount] = useState('');
   const [showNetPriceForm, setShowNetPriceForm] = useState(false);
   const [applyingNetPrice, setApplyingNetPrice] = useState(false);
+  const [showReparseConfirm, setShowReparseConfirm] = useState(false);
 
   const loadPreview = async (inv?: InvoiceInfo, sheet?: number) => {
     const currentInvoice = inv || invoice;
@@ -549,7 +550,8 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
     }
   };
 
-  const handleReparse = async () => {
+  const handleReparseConfirmed = async () => {
+    setShowReparseConfirm(false);
     setReparsing(true);
     setMessage(null);
     try {
@@ -831,7 +833,7 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <button className="btn btn-primary" onClick={handleSave} disabled={saving}>
           {saving ? 'Сохранение...' : 'Сохранить настройки'}
         </button>
-        <button className="btn btn-primary" onClick={handleReparse} disabled={reparsing}>
+        <button className="btn btn-primary" onClick={() => setShowReparseConfirm(true)} disabled={reparsing}>
           {reparsing ? 'Пересборка...' : 'Пересобрать счёт'}
         </button>
         <button className="btn btn-secondary" onClick={handleCalculatePrices} disabled={calculatingPrices}>
@@ -859,6 +861,19 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         )}
         <button className="btn btn-secondary" onClick={onBack}>Назад</button>
       </div>
+
+      {showReparseConfirm && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: '1.5rem', width: 380, boxShadow: '0 4px 20px rgba(0,0,0,0.2)' }}>
+            <h3 style={{ margin: '0 0 0.75rem' }}>Пересобрать счёт?</h3>
+            <p style={{ margin: '0 0 1.25rem', color: '#555' }}>Текущие позиции будут заменены. Предыдущая версия сохранится в истории.</p>
+            <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+              <button className="btn btn-secondary" onClick={() => setShowReparseConfirm(false)}>Отмена</button>
+              <button className="btn btn-primary" onClick={handleReparseConfirmed}>Пересобрать</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {historyOpen && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
