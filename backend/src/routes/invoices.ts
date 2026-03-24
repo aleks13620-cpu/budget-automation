@@ -851,6 +851,9 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'Нет настроек колонок — сохраните mapping или укажите в запросе' });
     }
 
+    // Save snapshot before overwriting items
+    saveSnapshot(invoiceId, 'before_reparse', db);
+
     const ext = path.extname(invoice.file_name).toLowerCase();
     let reparseExcelResult: ExcelParseResult | null = null;
     const parseResult = ext === '.pdf'
@@ -908,6 +911,9 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     if (!isGigaChatConfigured()) {
       return res.status(503).json({ error: 'GigaChat не настроен (нет GIGACHAT_AUTH_KEY)' });
     }
+
+    // Save snapshot before overwriting items
+    saveSnapshot(invoiceId, 'before_reparse_gigachat', db);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
 
@@ -1155,6 +1161,9 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
     if (!separatorMethod || !mapping || typeof mapping.headerRow !== 'number') {
       return res.status(400).json({ error: 'Не указаны separatorMethod и/или mapping с headerRow' });
     }
+
+    // Save snapshot before overwriting items
+    saveSnapshot(invoiceId, 'before_reparse_with_separator', db);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
     if (ext !== '.pdf') {
