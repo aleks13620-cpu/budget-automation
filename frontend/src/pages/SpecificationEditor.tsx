@@ -282,8 +282,8 @@ export function SpecificationEditor({ specId, onBack }: Props) {
                   {(rows[0] || []).map((_, ci) => (
                     <th key={ci} style={{
                       padding: '3px 8px',
-                      minWidth: '80px',
-                      maxWidth: '180px',
+                      minWidth: ci === mapping.name ? '280px' : '80px',
+                      maxWidth: ci === mapping.name ? '420px' : '180px',
                       background: mappedCols.has(ci) ? '#0d6efd' : '#343a40',
                       textAlign: 'center',
                     }}>
@@ -303,10 +303,10 @@ export function SpecificationEditor({ specId, onBack }: Props) {
                       <td key={ci} style={{
                         padding: '2px 6px',
                         border: '1px solid #e0e0e0',
-                        whiteSpace: 'nowrap',
+                        whiteSpace: ci === mapping.name ? 'normal' : 'nowrap',
                         overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        maxWidth: '180px',
+                        textOverflow: ci === mapping.name ? 'unset' : 'ellipsis',
+                        maxWidth: ci === mapping.name ? '420px' : '180px',
                         background: mappedCols.has(ci) ? '#e8f0fe' : undefined,
                       }}>
                         {String(cell ?? '')}
