@@ -44,10 +44,14 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
   const [searchMode, setSearchMode] = useState<'similarity' | 'like'>('similarity');
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [selectedSupplier, setSelectedSupplier] = useState<number | null>(null);
+  const [supplierFilter, setSupplierFilter] = useState('');
+  const [showSupplierDropdown, setShowSupplierDropdown] = useState(false);
 
   useEffect(() => {
-    api.get('/suppliers').then(({ data }) => setSuppliers(data.suppliers || [])).catch(() => {});
-  }, []);
+    api.get(`/projects/${projectId}/suppliers`)
+      .then(({ data }) => setSuppliers(data.suppliers || []))
+      .catch(() => {});
+  }, [projectId]);
 
   const doSearch = async (q: string) => {
     if (q.trim().length < 2) {
@@ -121,14 +125,44 @@ export function ManualMatchFromSpec({ projectId, specItem, onClose, onMatched }:
             placeholder="Поиск по счетам..."
             style={{ flex: 1, minWidth: '150px', padding: '0.5rem', width: 'auto' }}
           />
-          <select
-            value={selectedSupplier ?? ''}
-            onChange={e => setSelectedSupplier(e.target.value ? Number(e.target.value) : null)}
-            style={{ width: 'auto', minWidth: '140px' }}
-          >
-            <option value="">Все поставщики</option>
-            {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
+          <div style={{ position: 'relative', minWidth: '180px' }}>
+            <input
+              type="text"
+              value={supplierFilter}
+              onChange={e => { setSupplierFilter(e.target.value); setShowSupplierDropdown(true); }}
+              onFocus={() => setShowSupplierDropdown(true)}
+              onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 150)}
+              placeholder="Поставщик..."
+              style={{ width: '100%', padding: '0.5rem', boxSizing: 'border-box' }}
+            />
+            {selectedSupplier && (
+              <button
+                onClick={() => { setSelectedSupplier(null); setSupplierFilter(''); }}
+                style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#666', fontSize: '1rem' }}
+              >×</button>
+            )}
+            {showSupplierDropdown && (
+              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #ced4da', borderRadius: '0 0 4px 4px', maxHeight: '200px', overflowY: 'auto', zIndex: 100, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }}>
+                <div
+                  onMouseDown={() => { setSelectedSupplier(null); setSupplierFilter(''); setShowSupplierDropdown(false); }}
+                  style={{ padding: '6px 10px', cursor: 'pointer', color: '#666', borderBottom: '1px solid #eee' }}
+                >Все поставщики</div>
+                {suppliers
+                  .filter(s => s.name.toLowerCase().includes(supplierFilter.toLowerCase()))
+                  .map(s => (
+                    <div
+                      key={s.id}
+                      onMouseDown={() => { setSelectedSupplier(s.id); setSupplierFilter(s.name); setShowSupplierDropdown(false); }}
+                      style={{ padding: '6px 10px', cursor: 'pointer', background: selectedSupplier === s.id ? '#e8f0fe' : undefined }}
+                    >{s.name}</div>
+                  ))
+                }
+                {suppliers.filter(s => s.name.toLowerCase().includes(supplierFilter.toLowerCase())).length === 0 && (
+                  <div style={{ padding: '6px 10px', color: '#999' }}>Не найдено</div>
+                )}
+              </div>
+            )}
+          </div>
           <button
             className={`btn btn-sm ${searchMode === 'like' ? 'btn-primary' : 'btn-secondary'}`}
             onClick={() => setSearchMode(prev => prev === 'similarity' ? 'like' : 'similarity')}

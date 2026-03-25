@@ -15,6 +15,25 @@ router.get('/api/suppliers', (_req: Request, res: Response) => {
   }
 });
 
+// GET /api/projects/:id/suppliers — suppliers that have invoices in this project
+router.get('/api/projects/:id/suppliers', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const suppliers = db.prepare(`
+      SELECT DISTINCT s.id, s.name
+      FROM suppliers s
+      JOIN invoices i ON i.supplier_id = s.id
+      WHERE i.project_id = ?
+      ORDER BY s.name
+    `).all(projectId);
+    res.json({ suppliers });
+  } catch (error) {
+    console.error('GET /api/projects/:id/suppliers error:', error);
+    res.status(500).json({ error: 'Ошибка при получении поставщиков проекта' });
+  }
+});
+
 // GET /api/suppliers/:id/parser-config — get saved parser config
 router.get('/api/suppliers/:id/parser-config', (req: Request, res: Response) => {
   try {
