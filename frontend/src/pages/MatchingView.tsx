@@ -85,6 +85,7 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [runningIncremental, setRunningIncremental] = useState(false);
+  const [validatingGigaChat, setValidatingGigaChat] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -208,6 +209,23 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
+  const handleValidateGigaChat = async () => {
+    setValidatingGigaChat(true);
+    setMessage(null);
+    try {
+      const { data } = await api.post(`/projects/${projectId}/matching/validate-gigachat`);
+      setMessage({
+        type: 'success',
+        text: data.message ?? `GigaChat проверил ${data.validated} пар: подтверждено ${data.boosted}, удалено ${data.removed}`,
+      });
+      if (data.validated > 0) { await loadMatching(); await loadSummary(); }
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка GigaChat валидации' });
+    } finally {
+      setValidatingGigaChat(false);
+    }
+  };
+
   if (loading) return <p className="loading">Загрузка...</p>;
 
   // Filter items based on status + search + section
@@ -256,6 +274,14 @@ export function MatchingView({ projectId, onBack }: Props) {
           </button>
           <button className="btn btn-secondary" onClick={handleRunIncremental} disabled={running || runningIncremental}>
             {runningIncremental ? 'Обновление...' : 'Обновить (сохранить подтверждённые)'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleValidateGigaChat}
+            disabled={validatingGigaChat || running}
+            title="Проверить сомнительные матчи (confidence 25–40%) через GigaChat"
+          >
+            {validatingGigaChat ? 'GigaChat...' : '🤖 Проверить (GigaChat)'}
           </button>
           <select
             value={exportMode}

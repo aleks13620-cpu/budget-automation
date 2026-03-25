@@ -4,8 +4,23 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { getDatabase } from '../database';
 import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
+import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 
 const upload = multer({ storage: multer.memoryStorage() });
+
+function saveFeedback(
+  db: ReturnType<typeof getDatabase>,
+  type: string,
+  projectId: number | null,
+  specItemId: number | null,
+  invoiceItemId: number | null,
+) {
+  try {
+    db.prepare(
+      'INSERT INTO operator_feedback (type, project_id, spec_item_id, invoice_item_id) VALUES (?, ?, ?, ?)'
+    ).run(type, projectId, specItemId, invoiceItemId);
+  } catch { /* table may not exist yet — ignore */ }
+}
 
 const router = Router();
 
@@ -246,7 +261,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     const match = db.prepare(`
       SELECT m.id, m.specification_item_id, m.invoice_item_id,
              si.name as spec_name, ii.name as invoice_name,
-             i.supplier_id
+             i.supplier_id, si.project_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
@@ -254,7 +269,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
       WHERE m.id = ?
     `).get(matchId) as {
       id: number; specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string; supplier_id: number | null;
+      spec_name: string; invoice_name: string; supplier_id: number | null; project_id: number;
     } | undefined;
 
     if (!match) {
@@ -289,6 +304,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
       }
     })();
 
+    saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id);
     res.json({ confirmed: true });
   } catch (error) {
     res.status(500).json({
@@ -323,7 +339,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
     // Load match details before deleting (for negative rule creation)
     const match = db.prepare(`
       SELECT m.id, m.is_confirmed, m.specification_item_id, m.invoice_item_id,
-             si.name as spec_name, ii.name as invoice_name, i.supplier_id
+             si.name as spec_name, ii.name as invoice_name, i.supplier_id, si.project_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
@@ -332,7 +348,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
     `).get(matchId) as {
       id: number; is_confirmed: number;
       specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string | null; supplier_id: number | null;
+      spec_name: string; invoice_name: string | null; supplier_id: number | null; project_id: number;
     } | undefined;
 
     if (!match) {
@@ -362,6 +378,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
       }
     })();
 
+    saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id);
     res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({
@@ -553,6 +570,7 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
       return Number(insertResult.lastInsertRowid);
     })();
 
+    saveFeedback(db, 'manual_select', projectId, specItemId, invoiceItemId);
     res.json({
       matchId: result,
       confirmed: true,
@@ -815,6 +833,120 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       error: 'Ошибка при расчёте итогов',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+});
+
+// POST /api/projects/:id/matching/validate-gigachat — Tier5: validate low-confidence pairs via GigaChat
+router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    if (!isGigaChatConfigured()) {
+      return res.status(503).json({ error: 'GigaChat не настроен (нет GIGACHAT_AUTH_KEY)' });
+    }
+
+    // Get unconfirmed low-confidence candidates (0.25–0.4) not yet in cache
+    const candidates = db.prepare(`
+      SELECT m.id, m.specification_item_id, m.invoice_item_id, m.confidence,
+             si.name as spec_name, COALESCE(ii.name, pli.name) as invoice_name
+      FROM matched_items m
+      JOIN specification_items si ON m.specification_item_id = si.id
+      LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
+      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
+      WHERE si.project_id = ?
+        AND m.is_confirmed = 0
+        AND m.confidence >= 0.25
+        AND m.confidence < 0.4
+      ORDER BY m.confidence DESC
+      LIMIT 10
+    `).all(projectId) as Array<{
+      id: number; specification_item_id: number; invoice_item_id: number;
+      confidence: number; spec_name: string; invoice_name: string | null;
+    }>;
+
+    if (candidates.length === 0) {
+      return res.json({ validated: 0, boosted: 0, removed: 0, message: 'Нет кандидатов для проверки' });
+    }
+
+    const checkCache = db.prepare('SELECT is_match FROM gigachat_match_cache WHERE spec_text = ? AND invoice_text = ?');
+    const insertCache = db.prepare('INSERT OR IGNORE INTO gigachat_match_cache (spec_text, invoice_text, is_match) VALUES (?, ?, ?)');
+
+    let boosted = 0;
+    let removed = 0;
+    let validated = 0;
+    const BATCH = 5;
+
+    for (let i = 0; i < Math.min(candidates.length, BATCH); i++) {
+      const c = candidates[i];
+      if (!c.invoice_name) { continue; }
+
+      const specText = normalizeForMatching(c.spec_name);
+      const invText = normalizeForMatching(c.invoice_name);
+
+      // Check cache first
+      const cached = checkCache.get(specText, invText) as { is_match: number } | undefined;
+      let isMatch: boolean;
+
+      if (cached !== undefined) {
+        isMatch = cached.is_match === 1;
+      } else {
+        // Ask GigaChat
+        try {
+          const prompt = `Это одна и та же позиция? Ответь только "да" или "нет".\nСпецификация: "${c.spec_name}"\nСчёт: "${c.invoice_name}"`;
+          const result = await chatCompletion([{ role: 'user', content: prompt }], { maxTokens: 10, temperature: 0 });
+          const answer = result.toLowerCase().trim();
+          isMatch = answer.startsWith('да') || answer.includes('yes');
+          insertCache.run(specText, invText, isMatch ? 1 : 0);
+        } catch {
+          continue; // skip on error
+        }
+      }
+
+      validated++;
+      if (isMatch) {
+        db.prepare('UPDATE matched_items SET confidence = 0.7 WHERE id = ?').run(c.id);
+        boosted++;
+      } else {
+        db.prepare('DELETE FROM matched_items WHERE id = ?').run(c.id);
+        removed++;
+      }
+    }
+
+    res.json({ validated, boosted, removed, total: candidates.length });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при GigaChat валидации',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/feedback — operator feedback signals
+router.get('/api/projects/:id/feedback', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const items = db.prepare(`
+      SELECT f.id, f.type, f.created_at,
+             si.name as spec_name, f.invoice_item_id,
+             COALESCE(ii.name, '') as invoice_name
+      FROM operator_feedback f
+      LEFT JOIN specification_items si ON f.spec_item_id = si.id
+      LEFT JOIN invoice_items ii ON f.invoice_item_id = ii.id
+      WHERE f.project_id = ?
+      ORDER BY f.created_at DESC
+      LIMIT 200
+    `).all(projectId);
+
+    const counts = db.prepare(`
+      SELECT type, COUNT(*) as cnt FROM operator_feedback WHERE project_id = ? GROUP BY type
+    `).all(projectId) as { type: string; cnt: number }[];
+
+    res.json({ items, counts: Object.fromEntries(counts.map(r => [r.type, r.cnt])) });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении feedback', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

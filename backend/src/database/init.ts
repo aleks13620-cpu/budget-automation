@@ -49,6 +49,23 @@ function initializeDatabase(): void {
       )`,
       'ALTER TABLE matching_rules ADD COLUMN is_negative INTEGER DEFAULT 0',
       "ALTER TABLE matching_rules ADD COLUMN source TEXT DEFAULT 'manual'",
+      `CREATE TABLE IF NOT EXISTS operator_feedback (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL,
+        project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        spec_item_id INTEGER REFERENCES specification_items(id) ON DELETE SET NULL,
+        invoice_item_id INTEGER,
+        comment TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
+      `CREATE TABLE IF NOT EXISTS gigachat_match_cache (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        spec_text TEXT NOT NULL,
+        invoice_text TEXT NOT NULL,
+        is_match INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(spec_text, invoice_text)
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
