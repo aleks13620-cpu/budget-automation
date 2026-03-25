@@ -204,6 +204,17 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       };
     });
 
+    // Tier breakdown: count by match_type for selected matches
+    const tierRows = db.prepare(`
+      SELECT match_type, COUNT(DISTINCT specification_item_id) as cnt
+      FROM matched_items
+      WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+        AND is_selected = 1
+      GROUP BY match_type
+    `).all(projectId) as { match_type: string; cnt: number }[];
+    const tierBreakdown: Record<string, number> = {};
+    for (const row of tierRows) tierBreakdown[row.match_type] = row.cnt;
+
     res.json({
       items,
       summary: {
@@ -211,6 +222,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
         matched: matchedCount,
         confirmed: confirmedCount,
         unmatched: specItems.length - matchedCount,
+        tierBreakdown,
       },
     });
   } catch (error) {
@@ -304,12 +316,48 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
     const matchId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
-    const match = db.prepare('SELECT id FROM matched_items WHERE id = ?').get(matchId);
+    // Load match details before deleting (for negative rule creation)
+    const match = db.prepare(`
+      SELECT m.id, m.is_confirmed, m.specification_item_id, m.invoice_item_id,
+             si.name as spec_name, ii.name as invoice_name, i.supplier_id
+      FROM matched_items m
+      JOIN specification_items si ON m.specification_item_id = si.id
+      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      LEFT JOIN invoices i ON ii.invoice_id = i.id
+      WHERE m.id = ?
+    `).get(matchId) as {
+      id: number; is_confirmed: number;
+      specification_item_id: number; invoice_item_id: number;
+      spec_name: string; invoice_name: string | null; supplier_id: number | null;
+    } | undefined;
+
     if (!match) {
       return res.status(404).json({ error: 'Матч не найден' });
     }
 
-    db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
+    db.transaction(() => {
+      db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
+
+      // Create negative rule only for unconfirmed rejections (user rejects system suggestion)
+      if (!match.is_confirmed && match.invoice_name) {
+        const specPattern = normalizeForMatching(match.spec_name);
+        const invoicePattern = normalizeForMatching(match.invoice_name);
+        const existing = db.prepare(
+          'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id IS ? OR supplier_id = ?)'
+        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+
+        if (existing) {
+          db.prepare(
+            "UPDATE matching_rules SET is_negative = 1, source = 'reject', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+          ).run(existing.id);
+        } else {
+          db.prepare(
+            "INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
+          ).run(specPattern, invoicePattern, match.supplier_id);
+        }
+      }
+    })();
+
     res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({

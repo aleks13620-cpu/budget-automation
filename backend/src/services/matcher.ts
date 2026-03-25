@@ -43,6 +43,7 @@ interface MatchingRule {
   confidence: number;
   times_used: number;
   supplier_id: number | null;
+  is_negative: number;
 }
 
 // Stop words to remove during normalization (Russian units, articles, etc.)
@@ -160,8 +161,20 @@ function matchSpecItems(
       }
 
       // 2. Learned rule match (supplier-scoped: same supplier first, then global, skip other suppliers)
+      // First check negative rules — block this pair entirely
+      let isNegativeBlocked = false;
+      for (const rule of normalizedRules) {
+        if (!rule.is_negative) continue;
+        if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) continue;
+        const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
+        const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
+        if (specMatch >= 0.8 && invMatch >= 0.8) { isNegativeBlocked = true; break; }
+      }
+      if (isNegativeBlocked) continue;
+
       if (bestConfidence < 0.95) {
         for (const rule of normalizedRules) {
+          if (rule.is_negative) continue; // skip negative rules in positive matching
           // Skip rules from a different supplier
           if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) {
             continue;
@@ -256,7 +269,7 @@ const PRICE_LIST_ITEMS_SQL = `
   JOIN price_lists pl ON pli.price_list_id = pl.id
   WHERE pl.project_id = ?
 `;
-const RULES_SQL = 'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id FROM matching_rules';
+const RULES_SQL = 'SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id, COALESCE(is_negative,0) as is_negative FROM matching_rules';
 
 function loadAllItems(db: ReturnType<typeof getDatabase>, projectId: number): InvoiceItemRow[] {
   const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];

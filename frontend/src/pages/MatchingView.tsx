@@ -44,6 +44,7 @@ interface Summary {
   matched: number;
   confirmed: number;
   unmatched: number;
+  tierBreakdown?: Record<string, number>;
 }
 
 interface SectionSummary {
@@ -325,6 +326,36 @@ export function MatchingView({ projectId, onBack }: Props) {
           <div className="summary-label">Без матча</div>
         </div>
       </div>
+
+      {/* Coverage progress bar + tier breakdown */}
+      {summary.total > 0 && (
+        <div style={{ margin: '0.75rem 0', padding: '0.75rem 1rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.85rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.35rem' }}>
+            <span style={{ fontWeight: 600 }}>Покрытие спецификации</span>
+            <span style={{ color: '#6b7280' }}>
+              {summary.confirmed} / {summary.total} подтверждено ({Math.round(summary.confirmed / summary.total * 100)}%)
+            </span>
+          </div>
+          <div style={{ height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
+            <div style={{
+              height: '100%', borderRadius: '4px',
+              background: summary.confirmed / summary.total >= 0.8 ? '#16a34a' : summary.confirmed / summary.total >= 0.5 ? '#d97706' : '#3b82f6',
+              width: `${Math.round(summary.confirmed / summary.total * 100)}%`,
+              transition: 'width 0.3s',
+            }} />
+          </div>
+          {summary.tierBreakdown && Object.keys(summary.tierBreakdown).length > 0 && (
+            <div style={{ display: 'flex', gap: '1.25rem', marginTop: '0.5rem', color: '#6b7280' }}>
+              <span>Тиры:</span>
+              {summary.tierBreakdown.exact_article ? <span>Артикул: <b>{summary.tierBreakdown.exact_article}</b></span> : null}
+              {summary.tierBreakdown.learned_rule ? <span>Правила: <b>{summary.tierBreakdown.learned_rule}</b></span> : null}
+              {summary.tierBreakdown.name_similarity ? <span>Схожесть: <b>{summary.tierBreakdown.name_similarity}</b></span> : null}
+              {summary.tierBreakdown.name_characteristics ? <span>Хар-ки: <b>{summary.tierBreakdown.name_characteristics}</b></span> : null}
+              {summary.tierBreakdown.manual ? <span>Вручную: <b>{summary.tierBreakdown.manual}</b></span> : null}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Section totals */}
       {sections.length > 0 && (

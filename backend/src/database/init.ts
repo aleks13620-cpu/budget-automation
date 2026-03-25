@@ -47,6 +47,8 @@ function initializeDatabase(): void {
         action TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
+      'ALTER TABLE matching_rules ADD COLUMN is_negative INTEGER DEFAULT 0',
+      "ALTER TABLE matching_rules ADD COLUMN source TEXT DEFAULT 'manual'",
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
