@@ -929,7 +929,7 @@ router.get('/api/projects/:id/feedback', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const items = db.prepare(`
-      SELECT f.id, f.type, f.created_at,
+      SELECT f.id, f.type, f.created_at, f.comment,
              si.name as spec_name, f.invoice_item_id,
              COALESCE(ii.name, '') as invoice_name
       FROM operator_feedback f
@@ -1062,6 +1062,26 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
       error: 'Ошибка при импорте эталонных матчей',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+});
+
+// POST /api/projects/:id/feedback — submit error report with comment
+router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const { spec_item_id, invoice_item_id, comment } = req.body;
+    if (!comment || !comment.trim()) {
+      res.status(400).json({ error: 'Комментарий обязателен' });
+      return;
+    }
+    const db = getDatabase();
+    db.prepare(`
+      INSERT INTO operator_feedback (type, project_id, spec_item_id, invoice_item_id, comment)
+      VALUES ('error_report', ?, ?, ?, ?)
+    `).run(projectId, spec_item_id || null, invoice_item_id || null, comment.trim());
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при сохранении отзыва', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

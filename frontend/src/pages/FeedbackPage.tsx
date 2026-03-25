@@ -6,6 +6,7 @@ interface FeedbackItem {
   type: string;
   spec_name: string | null;
   invoice_name: string;
+  comment: string | null;
   created_at: string;
 }
 
@@ -65,7 +66,7 @@ export function FeedbackPage({ projectId, onBack }: Props) {
             <tr>
               <th style={{ width: '140px' }}>Действие</th>
               <th>Спецификация</th>
-              <th>Счёт</th>
+              <th>Счёт / Замечание</th>
               <th style={{ width: '140px' }}>Дата</th>
             </tr>
           </thead>
@@ -75,13 +76,13 @@ export function FeedbackPage({ projectId, onBack }: Props) {
                 <td>
                   <span style={{
                     fontSize: '0.8rem', fontWeight: 600,
-                    color: item.type === 'confirm' ? '#16a34a' : item.type === 'reject' ? '#dc2626' : '#6b7280',
+                    color: item.type === 'confirm' ? '#16a34a' : item.type === 'reject' ? '#dc2626' : item.type === 'error_report' ? '#d97706' : '#6b7280',
                   }}>
                     {TYPE_LABELS[item.type] ?? item.type}
                   </span>
                 </td>
                 <td style={{ fontSize: '0.85rem' }}>{item.spec_name || '—'}</td>
-                <td style={{ fontSize: '0.85rem' }}>{item.invoice_name || '—'}</td>
+                <td style={{ fontSize: '0.85rem' }}>{item.comment || item.invoice_name || '—'}</td>
                 <td style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
                   {new Date(item.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
                 </td>

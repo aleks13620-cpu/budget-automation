@@ -86,6 +86,9 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [running, setRunning] = useState(false);
   const [runningIncremental, setRunningIncremental] = useState(false);
   const [validatingGigaChat, setValidatingGigaChat] = useState(false);
+  const [errorReportOpen, setErrorReportOpen] = useState(false);
+  const [errorReportText, setErrorReportText] = useState('');
+  const [submittingReport, setSubmittingReport] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
@@ -209,6 +212,21 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
+  const handleSubmitErrorReport = async () => {
+    if (!errorReportText.trim()) return;
+    setSubmittingReport(true);
+    try {
+      await api.post(`/projects/${projectId}/feedback`, { comment: errorReportText.trim() });
+      setMessage({ type: 'success', text: 'Замечание сохранено. Спасибо!' });
+      setErrorReportText('');
+      setErrorReportOpen(false);
+    } catch {
+      setMessage({ type: 'error', text: 'Ошибка при отправке замечания' });
+    } finally {
+      setSubmittingReport(false);
+    }
+  };
+
   const handleValidateGigaChat = async () => {
     setValidatingGigaChat(true);
     setMessage(null);
@@ -282,6 +300,13 @@ export function MatchingView({ projectId, onBack }: Props) {
             title="Проверить сомнительные матчи (confidence 25–40%) через GigaChat"
           >
             {validatingGigaChat ? 'GigaChat...' : '🤖 Проверить (GigaChat)'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setErrorReportOpen(true)}
+            title="Сообщить об ошибке или недостатке системы"
+          >
+            ⚠ Замечание
           </button>
           <select
             value={exportMode}
@@ -587,6 +612,32 @@ export function MatchingView({ projectId, onBack }: Props) {
             handleRefresh();
           }}
         />
+      )}
+      {/* Modal: error report */}
+      {errorReportOpen && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: '8px', padding: '1.5rem', width: '480px', maxWidth: '90vw' }}>
+            <h3 style={{ margin: '0 0 0.75rem' }}>⚠ Замечание к системе</h3>
+            <p style={{ fontSize: '0.85rem', color: '#6b7280', marginBottom: '0.75rem' }}>
+              Опишите ошибку, недостаток или пожелание. Замечание сохранится в журнале обучения.
+            </p>
+            <textarea
+              value={errorReportText}
+              onChange={e => setErrorReportText(e.target.value)}
+              placeholder="Например: система предлагает задвижки к трубам, это неверно..."
+              style={{ width: '100%', minHeight: '100px', padding: '0.5rem', borderRadius: '4px', border: '1px solid #d1d5db', fontSize: '0.9rem', boxSizing: 'border-box' }}
+              autoFocus
+            />
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '0.75rem' }}>
+              <button className="btn btn-secondary" onClick={() => { setErrorReportOpen(false); setErrorReportText(''); }}>
+                Отмена
+              </button>
+              <button className="btn btn-primary" onClick={handleSubmitErrorReport} disabled={submittingReport || !errorReportText.trim()}>
+                {submittingReport ? 'Отправка...' : 'Отправить'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
