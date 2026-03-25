@@ -888,6 +888,9 @@ export function InvoicePreview({ invoiceId, onBack }: Props) {
         <button className="btn btn-secondary" onClick={handleOpenHistory}>
           История версий
         </button>
+        <button className="btn btn-secondary" onClick={handleCalculatePrices} disabled={calculatingPrices}>
+          {calculatingPrices ? 'Расчёт...' : 'Цена = сумма ÷ кол-во'}
+        </button>
         <button className="btn btn-secondary btn-sm" onClick={() => setShowNetPriceForm(!showNetPriceForm)}>
           Цена без скидки → нетто
         </button>

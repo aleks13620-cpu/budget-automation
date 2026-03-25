@@ -347,6 +347,9 @@ async function processInvoiceFile(
     if (parseResult.items.length > 0) {
       parsingCategory = 'A';
       parsingCategoryReason = `Успешно: ${parseResult.items.length} позиций`;
+    } else if (needsGigaChat) {
+      parsingCategory = 'C';
+      parsingCategoryReason = 'GigaChat не смог распознать позиции';
     } else {
       parsingCategory = 'B';
       parsingCategoryReason = 'Колонки не распознаны';
