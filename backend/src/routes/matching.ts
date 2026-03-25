@@ -1,7 +1,11 @@
 import { Router, Request, Response } from 'express';
 import stringSimilarity from 'string-similarity';
+import multer from 'multer';
+import * as XLSX from 'xlsx';
 import { getDatabase } from '../database';
 import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = Router();
 
@@ -809,6 +813,121 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при расчёте итогов',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// GET /api/projects/:id/matching/stats — lightweight coverage stats (no items)
+router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const total = (db.prepare('SELECT COUNT(*) as cnt FROM specification_items WHERE project_id = ?').get(projectId) as { cnt: number }).cnt;
+    const matched = (db.prepare(`
+      SELECT COUNT(DISTINCT specification_item_id) as cnt FROM matched_items
+      WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+    `).get(projectId) as { cnt: number }).cnt;
+    const confirmed = (db.prepare(`
+      SELECT COUNT(DISTINCT specification_item_id) as cnt FROM matched_items
+      WHERE is_confirmed = 1
+        AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+    `).get(projectId) as { cnt: number }).cnt;
+
+    res.json({ total, matched, confirmed, unmatched: total - matched });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении статистики', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// POST /api/projects/:id/import-matches — bulk import matching rules from Excel
+// Excel columns (detected by keywords): spec_name, invoice_name, supplier (optional)
+router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Проект не найден' });
+
+    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+    const sheet = workbook.Sheets[workbook.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as string[][];
+
+    if (rows.length < 2) return res.status(400).json({ error: 'Файл пустой или содержит только заголовок' });
+
+    // Detect columns by keywords
+    const header = rows[0].map(h => String(h).toLowerCase().trim());
+    const specCol = header.findIndex(h => h.includes('спецификац') || h.includes('spec') || h === 'наименование спец');
+    const invCol = header.findIndex(h => h.includes('счёт') || h.includes('счет') || h.includes('invoice') || h.includes('наименование счет'));
+    const supplierCol = header.findIndex(h => h.includes('поставщик') || h.includes('supplier'));
+
+    if (specCol === -1 || invCol === -1) {
+      return res.status(400).json({
+        error: 'Не найдены колонки. Нужны: «Наименование спецификации» и «Наименование в счёте»',
+        detectedHeaders: rows[0],
+      });
+    }
+
+    // Load suppliers for fuzzy matching
+    const allSuppliers = db.prepare('SELECT id, name FROM suppliers').all() as { id: number; name: string }[];
+
+    const upsert = db.prepare(`
+      INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source)
+      VALUES (?, ?, 0.95, 1, ?, 0, 'import')
+      ON CONFLICT DO NOTHING
+    `);
+    const updateExisting = db.prepare(
+      "UPDATE matching_rules SET confidence = 0.95, is_negative = 0, source = 'import', updated_at = CURRENT_TIMESTAMP WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id IS ? OR supplier_id = ?)"
+    );
+    const findExisting = db.prepare(
+      'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id IS ? OR supplier_id = ?)'
+    );
+
+    let imported = 0;
+    let skipped = 0;
+    const errors: string[] = [];
+
+    const importAll = db.transaction(() => {
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        const specName = String(row[specCol] ?? '').trim();
+        const invName = String(row[invCol] ?? '').trim();
+        if (!specName || !invName) { skipped++; continue; }
+
+        const specPattern = normalizeForMatching(specName);
+        const invPattern = normalizeForMatching(invName);
+        if (!specPattern || !invPattern) { skipped++; continue; }
+
+        let supplierId: number | null = null;
+        if (supplierCol !== -1) {
+          const supplierName = String(row[supplierCol] ?? '').trim();
+          if (supplierName && allSuppliers.length > 0) {
+            const match = stringSimilarity.findBestMatch(supplierName, allSuppliers.map(s => s.name));
+            if (match.bestMatch.rating >= 0.75) {
+              supplierId = allSuppliers[match.bestMatchIndex].id;
+            }
+          }
+        }
+
+        const existing = findExisting.get(specPattern, invPattern, supplierId, supplierId);
+        if (existing) {
+          updateExisting.run(specPattern, invPattern, supplierId, supplierId);
+        } else {
+          upsert.run(specPattern, invPattern, supplierId);
+        }
+        imported++;
+      }
+    });
+    importAll();
+
+    res.json({ imported, skipped, errors, total: rows.length - 1 });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при импорте эталонных матчей',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }

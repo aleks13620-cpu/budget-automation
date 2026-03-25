@@ -67,6 +67,10 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [invoiceItemsMeta, setInvoiceItemsMeta] = useState<any | null>(null);
   const [invoiceItemsLoading, setInvoiceItemsLoading] = useState(false);
+  const [importingMatches, setImportingMatches] = useState(false);
+  const [importMatchesResult, setImportMatchesResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [matchingStats, setMatchingStats] = useState<{ total: number; confirmed: number } | null>(null);
+  const importMatchesRef = useRef<HTMLInputElement>(null);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
   const bulkFileRef = useRef<HTMLInputElement>(null);
   const bulkInvFileRef = useRef<HTMLInputElement>(null);
@@ -86,17 +90,20 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const loadData = async () => {
     setLoading(true);
     try {
-      const [specRes, invRes, delivRes, plRes] = await Promise.all([
+      const [specRes, invRes, delivRes, plRes, statsRes] = await Promise.all([
         api.get(`/projects/${projectId}/specifications`),
         api.get(`/projects/${projectId}/invoices`),
         api.get(`/projects/${projectId}/delivery-total`).catch(() => ({ data: { total: 0 } })),
         api.get(`/projects/${projectId}/price-lists`).catch(() => ({ data: [] })),
+        api.get(`/projects/${projectId}/matching/stats`).catch(() => ({ data: null })),
       ]);
       setSpecifications(specRes.data.specifications || []);
       setSections(specRes.data.sections || []);
       setInvoices(invRes.data.invoices || []);
       setDeliveryTotal(delivRes.data.total > 0 ? delivRes.data.total : null);
       setPriceLists(plRes.data || []);
+      if (statsRes.data && statsRes.data.total > 0) setMatchingStats(statsRes.data);
+      else setMatchingStats(null);
     } catch {
       setMessage({ type: 'error', text: 'Не удалось загрузить данные проекта' });
     } finally {
@@ -285,6 +292,26 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   };
 
   if (loading) return <p className="loading">Загрузка...</p>;
+
+  const handleImportMatches = async () => {
+    const file = importMatchesRef.current?.files?.[0];
+    if (!file) return;
+    setImportingMatches(true);
+    setImportMatchesResult(null);
+    setMessage(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    try {
+      const { data } = await api.post(`/projects/${projectId}/import-matches`, formData);
+      setImportMatchesResult({ imported: data.imported, skipped: data.skipped });
+      setMessage({ type: 'success', text: `Импортировано ${data.imported} правил сопоставления` });
+      if (importMatchesRef.current) importMatchesRef.current.value = '';
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при импорте' });
+    } finally {
+      setImportingMatches(false);
+    }
+  };
 
   // Map section -> specification for quick lookup
   const specBySection: Record<string, Specification> = {};
@@ -867,10 +894,50 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
         )}
       </div>
 
+      {/* Import reference matches section */}
+      <div className="section">
+        <h2>Обучение системы</h2>
+        <p className="muted" style={{ fontSize: '0.85rem', marginBottom: '0.75rem' }}>
+          Загрузите Excel с колонками <b>«Наименование спецификации»</b> и <b>«Наименование в счёте»</b>
+          (опционально: <b>«Поставщик»</b>) — система создаст правила сопоставления.
+        </p>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <input type="file" accept=".xlsx,.xls" ref={importMatchesRef} style={{ fontSize: '0.85rem' }} />
+          <button className="btn btn-primary btn-sm" onClick={handleImportMatches} disabled={importingMatches}>
+            {importingMatches ? 'Импорт...' : 'Импортировать эталонные матчи'}
+          </button>
+        </div>
+        {importMatchesResult && (
+          <p className="success-msg" style={{ marginTop: '0.5rem' }}>
+            Импортировано: {importMatchesResult.imported} правил, пропущено: {importMatchesResult.skipped}
+          </p>
+        )}
+      </div>
+
       {/* Matching section */}
       {specifications.length > 0 && invoices.length > 0 && (
         <div className="section">
           <h2>Сопоставление</h2>
+          {matchingStats && matchingStats.total > 0 && (
+            <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.85rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
+                <span style={{ fontWeight: 600 }}>Покрытие спецификации</span>
+                <span style={{ color: '#6b7280' }}>
+                  {matchingStats.confirmed} / {matchingStats.total} подтверждено
+                  ({Math.round(matchingStats.confirmed / matchingStats.total * 100)}%)
+                </span>
+              </div>
+              <div style={{ height: '8px', background: '#e5e7eb', borderRadius: '4px', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%', borderRadius: '4px',
+                  background: matchingStats.confirmed / matchingStats.total >= 0.8 ? '#16a34a'
+                    : matchingStats.confirmed / matchingStats.total >= 0.5 ? '#d97706' : '#3b82f6',
+                  width: `${Math.round(matchingStats.confirmed / matchingStats.total * 100)}%`,
+                  transition: 'width 0.3s',
+                }} />
+              </div>
+            </div>
+          )}
           <button className="btn btn-primary" onClick={onMatching}>
             Сопоставить позиции
           </button>
