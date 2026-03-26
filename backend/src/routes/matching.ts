@@ -1085,4 +1085,80 @@ router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
   }
 });
 
+// PATCH /api/feedback/:id/resolve — mark error_report as resolved
+router.patch('/api/feedback/:id/resolve', (req: Request, res: Response) => {
+  try {
+    const id = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    db.prepare(`UPDATE operator_feedback SET status = 'resolved' WHERE id = ?`).run(id);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// GET /api/feedback/all — all error_reports across all projects
+router.get('/api/feedback/all', (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const status = req.query.status as string | undefined;
+    const whereParts = [`f.type = 'error_report'`];
+    if (status === 'new') whereParts.push(`COALESCE(f.status, 'new') = 'new'`);
+    if (status === 'resolved') whereParts.push(`f.status = 'resolved'`);
+    const items = db.prepare(`
+      SELECT f.id, f.type, f.comment, f.created_at, COALESCE(f.status, 'new') as status,
+             p.id as project_id, p.name as project_name,
+             si.name as spec_name
+      FROM operator_feedback f
+      LEFT JOIN projects p ON f.project_id = p.id
+      LEFT JOIN specification_items si ON f.spec_item_id = si.id
+      WHERE ${whereParts.join(' AND ')}
+      ORDER BY f.created_at DESC
+      LIMIT 500
+    `).all();
+    const total = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback WHERE type = 'error_report'`).get() as any).cnt;
+    const newCount = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback WHERE type = 'error_report' AND COALESCE(status,'new') = 'new'`).get() as any).cnt;
+    res.json({ items, total, newCount });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// GET /api/feedback/export — download all error_reports as xlsx
+router.get('/api/feedback/export', (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT p.name as project, f.created_at as date, f.comment,
+             COALESCE(f.status,'new') as status, si.name as spec_name
+      FROM operator_feedback f
+      LEFT JOIN projects p ON f.project_id = p.id
+      LEFT JOIN specification_items si ON f.spec_item_id = si.id
+      WHERE f.type = 'error_report'
+      ORDER BY f.created_at DESC
+    `).all() as any[];
+
+    const wsData = [
+      ['Проект', 'Дата', 'Замечание', 'Позиция спецификации', 'Статус'],
+      ...rows.map(r => [
+        r.project || '',
+        r.date ? new Date(r.date).toLocaleString('ru-RU') : '',
+        r.comment || '',
+        r.spec_name || '',
+        r.status === 'resolved' ? 'Разобрано' : 'Новое',
+      ]),
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    ws['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 60 }, { wch: 40 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Замечания');
+    const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="feedback_errors.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buf);
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка экспорта', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 export default router;

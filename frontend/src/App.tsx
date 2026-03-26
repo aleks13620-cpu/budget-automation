@@ -7,8 +7,9 @@ import { MatchingView } from './pages/MatchingView';
 import { UnitTriggers } from './pages/UnitTriggers';
 import { SpecificationEditor } from './pages/SpecificationEditor';
 import { FeedbackPage } from './pages/FeedbackPage';
+import { GlobalFeedbackPage } from './pages/GlobalFeedbackPage';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -52,6 +53,10 @@ function App() {
     setPage('feedback');
   };
 
+  const goToFeedbackAll = () => {
+    setPage('feedback-all');
+  };
+
   return (
     <>
       {/* Breadcrumbs */}
@@ -60,6 +65,9 @@ function App() {
         <span style={{ marginLeft: 'auto' }}>
           <button className="btn btn-secondary btn-sm" onClick={goToUnitTriggers} style={{ fontSize: '0.75rem' }}>
             ⚙ Триггеры единиц
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={goToFeedbackAll} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
+            ⚠ Замечания
           </button>
           {projectId && (
             <button className="btn btn-secondary btn-sm" onClick={goToFeedback} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
@@ -129,6 +137,13 @@ function App() {
         <FeedbackPage
           projectId={projectId}
           onBack={() => goToProject(projectId!, projectName)}
+        />
+      )}
+
+      {page === 'feedback-all' && (
+        <GlobalFeedbackPage
+          onBack={goToProjects}
+          onGoToProject={goToProject}
         />
       )}
 

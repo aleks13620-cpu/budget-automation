@@ -66,6 +66,7 @@ function initializeDatabase(): void {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(spec_text, invoice_text)
       )`,
+      "ALTER TABLE operator_feedback ADD COLUMN status TEXT DEFAULT 'new'",
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
