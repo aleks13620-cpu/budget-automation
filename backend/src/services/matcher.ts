@@ -50,7 +50,7 @@ interface MatchingRule {
 const STOP_WORDS = new Set([
   'мм', 'см', 'м', 'шт', 'кг', 'г', 'л', 'мл', 'компл', 'комплект',
   'набор', 'ед', 'пог', 'кв', 'куб', 'п', 'к', 'и', 'в', 'с', 'на',
-  'для', 'из', 'по', 'от', 'до',
+  'для', 'из', 'по', 'от', 'до', 'счет', 'счете',
 ]);
 
 let _synonymCache: Map<string,string> | null = null;
@@ -73,6 +73,25 @@ function normalizeSizeTerms(text: string): string {
   return result;
 }
 
+function normalizeEngineeringTokens(text: string): string {
+  let result = text.toLowerCase().replace(/ё/g, 'е');
+
+  // Safe canonicalization: apply only explicit engineering token patterns.
+  result = result.replace(/[ø⌀]/g, ' dn ');
+  result = result.replace(/(^|\s)ду\.?\s*(\d{1,4})(?=\s|$)/gi, ' dn $2 ');
+  result = result.replace(/\bdn\.?\s*(\d{1,4})\b/gi, ' dn $1 ');
+  result = result.replace(/\bd\s*=\s*(\d{1,4})\b/gi, ' dn $1 ');
+  result = result.replace(/\bd\s*(\d{1,4})\b/gi, ' dn $1 ');
+
+  // Normalize size separators 500x300, 500×300, 500 X 300.
+  result = result.replace(/(\d)\s*[xх×]\s*(\d)/gi, '$1x$2');
+
+  // Normalize decimal comma in sizes/prices to dot.
+  result = result.replace(/(\d),(\d)/g, '$1.$2');
+
+  return result;
+}
+
 /**
  * Normalize a string for fuzzy matching:
  * - lowercase, trim
@@ -80,7 +99,8 @@ function normalizeSizeTerms(text: string): string {
  * - remove stop words
  */
 export function normalizeForMatching(text: string): string {
-  let s = normalizeSizeTerms(text);
+  let s = normalizeEngineeringTokens(text);
+  s = normalizeSizeTerms(s);
   s = s.toLowerCase().trim();
   // Remove punctuation except letters, digits, spaces
   s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ');
@@ -246,9 +266,10 @@ function matchSpecItems(
       }
     }
 
-    // Sort by confidence DESC, keep top 5
+    // Sort by confidence DESC, keep top K (больше вариантов без смены алгоритма матчинга)
+    const TOP_K = 8;
     candidates.sort((a, b) => b.confidence - a.confidence);
-    allCandidates.push(...candidates.slice(0, 5));
+    allCandidates.push(...candidates.slice(0, TOP_K));
   }
 
   return allCandidates;

@@ -333,25 +333,33 @@ export function MatchingView({ projectId, onBack }: Props) {
       {/* Filters */}
       <div className="matching-filters">
         <button
+          type="button"
           className={`btn ${filterStatus === 'all' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          title="Показать все позиции спецификации"
           onClick={() => setFilterStatus('all')}
         >
           📋 Все ({items.length})
         </button>
         <button
+          type="button"
           className={`btn ${filterStatus === 'confirmed' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          title="Уже согласованные с поставщиком матчи"
           onClick={() => setFilterStatus('confirmed')}
         >
           ✅ Подтверждённые ({summary.confirmed})
         </button>
         <button
+          type="button"
           className={`btn ${filterStatus === 'pending' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          title="Есть кандидаты от системы, но без подтверждения — проверьте в первую очередь после автосопоставления"
           onClick={() => setFilterStatus('pending')}
         >
           ⚠️ Требуют проверки ({summary.matched - summary.confirmed})
         </button>
         <button
+          type="button"
           className={`btn ${filterStatus === 'unmatched' ? 'btn-primary' : 'btn-secondary'} btn-sm`}
+          title="Нет предложенных матчей — начните с этого фильтра, если мало автосопоставлений"
           onClick={() => setFilterStatus('unmatched')}
         >
           ❌ Не найдены ({summary.unmatched})

@@ -89,7 +89,14 @@ export function SpecificationEditor({ specId, onBack }: Props) {
     setMessage(null);
     try {
       const { data } = await api.post(`/specifications/${specId}/reparse`, { headerRow, columnMapping: mapping, mergeMultiline });
-      setMessage({ type: 'success', text: `Импортировано ${data.imported} позиций. Ошибок: ${data.errors?.length ?? 0}` });
+      const errs = (data.errors || []) as string[];
+      const errCount = errs.length;
+      let text = `Импортировано ${data.imported} позиций. Пропусков/ошибок строк: ${errCount}.`;
+      if (errCount > 0) {
+        const preview = errs.slice(0, 5).join(' | ');
+        text += errCount > 5 ? ` Примеры: ${preview} … (ещё ${errCount - 5})` : ` ${preview}`;
+      }
+      setMessage({ type: 'success', text });
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка пересборки' });
     } finally {

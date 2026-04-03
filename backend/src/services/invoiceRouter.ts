@@ -14,6 +14,7 @@ import { validateInvoice } from './invoiceValidator';
 import { isGigaChatConfigured } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata, InvoiceParseResult } from '../types/invoice';
 import { ValidationResult } from '../types/validation';
+import type { GigaChatParseQuality } from './gigachatParseQuality';
 
 // ---------------------------------------------------------------------------
 // Типы
@@ -34,6 +35,8 @@ export interface RouterParseResult {
   confidence: number;
   /** Результат валидации */
   validation?: ValidationResult;
+  /** Если парсинг шёл через GigaChat — эвристики полноты ответа */
+  gigachatParseQuality?: GigaChatParseQuality;
 }
 
 const EXCEL_EXTS = new Set(['.xlsx', '.xls']);
@@ -92,6 +95,7 @@ export async function routeInvoiceFile(
       metadata: gigaResult.metadata,
       confidence: 90,
       validation,
+      gigachatParseQuality: gigaResult.parseQuality,
     };
   }
 
@@ -115,6 +119,7 @@ export async function routeInvoiceFile(
             parseResult: gigaParseResult,
             metadata: gigaResult.metadata,
             confidence: 0,
+            gigachatParseQuality: gigaResult.parseQuality,
           };
         }
         const validation = validateInvoice(gigaParseResult.items, gigaResult.metadata);
@@ -125,6 +130,7 @@ export async function routeInvoiceFile(
           metadata: gigaResult.metadata,
           confidence: 85,
           validation,
+          gigachatParseQuality: gigaResult.parseQuality,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
@@ -169,6 +175,7 @@ export async function routeInvoiceFile(
             parseResult: gigaParseResult,
             metadata: gigaResult.metadata,
             confidence: 0,
+            gigachatParseQuality: gigaResult.parseQuality,
           };
         }
         const validation = validateInvoice(gigaParseResult.items, gigaResult.metadata);
@@ -179,6 +186,7 @@ export async function routeInvoiceFile(
           metadata: gigaResult.metadata,
           confidence: 85,
           validation,
+          gigachatParseQuality: gigaResult.parseQuality,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);

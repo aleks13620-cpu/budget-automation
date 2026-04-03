@@ -9,6 +9,9 @@
 import fs from 'fs';
 import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
+import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigachatParseQuality';
+
+export type { GigaChatParseQuality } from './gigachatParseQuality';
 
 // ---------------------------------------------------------------------------
 // Промпт
@@ -181,6 +184,8 @@ export interface GigaChatInvoiceResult {
   rawResponse: string;
   /** Тип документа из ответа GigaChat — "счёт", "коммерческое_предложение", "спецификация" и т.д. */
   documentType: string | null;
+  /** Пост-оценка полноты/согласованности (для подсказок оператору и needs_amount_review) */
+  parseQuality?: GigaChatParseQuality;
 }
 
 interface GigaChatParsedJSON {
@@ -208,6 +213,8 @@ interface GigaChatParsedJSON {
   vat_amount?: number | null;
   total_with_vat?: number | null;
   vat_included?: boolean;
+  /** Self-check из промпта: «N позиций в документе, N в массиве» */
+  items_count_check?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +354,14 @@ function mapItems(items: GigaChatParsedJSON['items'] = []): InvoiceRow[] {
   return validateArticleNameSwap(mapped);
 }
 
+function buildParseQuality(parsed: GigaChatParsedJSON, items: InvoiceRow[], metadata: InvoiceMetadata): GigaChatParseQuality {
+  return evaluateGigaChatParseQuality(
+    { items: parsed.items, items_count_check: parsed.items_count_check ?? null },
+    items,
+    metadata.totalWithVat,
+  );
+}
+
 /** Конвертирует распарсенный JSON в InvoiceMetadata */
 function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
   return {
@@ -442,16 +457,25 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
           const textItems = mapItems(textParsed.items);
           // Берём текстовый результат если он содержит хоть одну позицию
           if (textItems.length > 0) {
-            return { metadata: mapMetadata(textParsed), items: textItems, rawResponse: textResponse, documentType: textParsed.document_type || null };
+            const textMeta = mapMetadata(textParsed);
+            return {
+              metadata: textMeta,
+              items: textItems,
+              rawResponse: textResponse,
+              documentType: textParsed.document_type || null,
+              parseQuality: buildParseQuality(textParsed, textItems, textMeta),
+            };
           }
         }
       }
 
+      const fileMeta = mapMetadata(parsed);
       return {
-        metadata: mapMetadata(parsed),
+        metadata: fileMeta,
         items,
         rawResponse,
         documentType: parsed.document_type || null,
+        parseQuality: buildParseQuality(parsed, items, fileMeta),
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
@@ -533,12 +557,15 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
 
       const jsonStr = sanitizeJSON(extractJSON(rawResponse));
       const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
+      const excelItems = mapItems(parsed.items);
+      const excelMeta = mapMetadata(parsed);
 
       return {
-        metadata: mapMetadata(parsed),
-        items: mapItems(parsed.items),
+        metadata: excelMeta,
+        items: excelItems,
         rawResponse,
         documentType: parsed.document_type || null,
+        parseQuality: buildParseQuality(parsed, excelItems, excelMeta),
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

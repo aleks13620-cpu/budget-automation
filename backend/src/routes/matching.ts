@@ -32,6 +32,91 @@ function effectivePrice(price: number | null, vatRate: number | null, pricesIncl
   return price;
 }
 
+function normalizeHeaderCell(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function detectImportColumns(headerRow: unknown[]): {
+  specCol: number;
+  invCol: number;
+  supplierCol: number;
+  normalizedHeader: string[];
+  expectedPatterns: Record<string, string[]>;
+} {
+  const normalizedHeader = headerRow.map(normalizeHeaderCell);
+
+  const expectedPatterns = {
+    spec: [
+      'наименование спецификации',
+      'наименование спецификации и материалов',
+      'позиция спецификации',
+      'specification name',
+      'spec name',
+    ],
+    invoice: [
+      'наименование в счете',
+      'наименование в счёте',
+      'наименование счета',
+      'позиция счета',
+      'invoice name',
+      'invoice item',
+    ],
+    supplier: [
+      'поставщик',
+      'наименование поставщика',
+      'supplier',
+      'vendor',
+    ],
+  };
+
+  const findByPredicates = (predicates: Array<(h: string) => boolean>): number => {
+    for (let i = 0; i < normalizedHeader.length; i++) {
+      const h = normalizedHeader[i];
+      if (!h) continue;
+      if (predicates.some(p => p(h))) return i;
+    }
+    return -1;
+  };
+
+  // New extended matching strategy (safe and explicit)
+  let specCol = findByPredicates([
+    h => expectedPatterns.spec.some(p => h.includes(p)),
+    h => h.includes('спецификац') && h.includes('наименование'),
+    h => h.includes('spec') && h.includes('name'),
+    h => h === 'наименование спец',
+  ]);
+
+  let invCol = findByPredicates([
+    h => expectedPatterns.invoice.some(p => h.includes(p)),
+    h => h.includes('счет') && h.includes('наименование'),
+    h => h.includes('счете') && h.includes('наименование'),
+    h => h.includes('invoice') && (h.includes('name') || h.includes('item')),
+    h => h === 'наименование счет',
+  ]);
+
+  let supplierCol = findByPredicates([
+    h => expectedPatterns.supplier.some(p => h.includes(p)),
+  ]);
+
+  // Backward-compatible fallback to legacy keyword rules
+  if (specCol === -1) {
+    specCol = normalizedHeader.findIndex(h => h.includes('спецификац') || h.includes('spec') || h === 'наименование спец');
+  }
+  if (invCol === -1) {
+    invCol = normalizedHeader.findIndex(h => h.includes('счёт') || h.includes('счет') || h.includes('invoice') || h.includes('наименование счет'));
+  }
+  if (supplierCol === -1) {
+    supplierCol = normalizedHeader.findIndex(h => h.includes('поставщик') || h.includes('supplier'));
+  }
+
+  return { specCol, invCol, supplierCol, normalizedHeader, expectedPatterns };
+}
+
 // POST /api/projects/:id/matching/run — run matching algorithm
 // Query param: ?mode=full (default) | incremental (preserves confirmed matches)
 router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
@@ -991,16 +1076,25 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
 
     if (rows.length < 2) return res.status(400).json({ error: 'Файл пустой или содержит только заголовок' });
 
-    // Detect columns by keywords
-    const header = rows[0].map(h => String(h).toLowerCase().trim());
-    const specCol = header.findIndex(h => h.includes('спецификац') || h.includes('spec') || h === 'наименование спец');
-    const invCol = header.findIndex(h => h.includes('счёт') || h.includes('счет') || h.includes('invoice') || h.includes('наименование счет'));
-    const supplierCol = header.findIndex(h => h.includes('поставщик') || h.includes('supplier'));
+    // Detect columns by robust keywords with backward-compatible fallback.
+    const {
+      specCol,
+      invCol,
+      supplierCol,
+      normalizedHeader,
+      expectedPatterns,
+    } = detectImportColumns(rows[0]);
 
     if (specCol === -1 || invCol === -1) {
       return res.status(400).json({
         error: 'Не найдены колонки. Нужны: «Наименование спецификации» и «Наименование в счёте»',
         detectedHeaders: rows[0],
+        normalizedHeaders: normalizedHeader,
+        expectedPatterns: {
+          specification: expectedPatterns.spec,
+          invoice: expectedPatterns.invoice,
+          supplier: expectedPatterns.supplier,
+        },
       });
     }
 
@@ -1021,18 +1115,32 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
 
     let imported = 0;
     let skipped = 0;
+    let processedRows = 0;
     const errors: string[] = [];
+    const skipReasons = {
+      emptyRequiredFields: 0,
+      emptyAfterNormalization: 0,
+    };
 
     const importAll = db.transaction(() => {
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
+        processedRows++;
         const specName = String(row[specCol] ?? '').trim();
         const invName = String(row[invCol] ?? '').trim();
-        if (!specName || !invName) { skipped++; continue; }
+        if (!specName || !invName) {
+          skipped++;
+          skipReasons.emptyRequiredFields++;
+          continue;
+        }
 
         const specPattern = normalizeForMatching(specName);
         const invPattern = normalizeForMatching(invName);
-        if (!specPattern || !invPattern) { skipped++; continue; }
+        if (!specPattern || !invPattern) {
+          skipped++;
+          skipReasons.emptyAfterNormalization++;
+          continue;
+        }
 
         let supplierId: number | null = null;
         if (supplierCol !== -1) {
@@ -1056,7 +1164,15 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
     });
     importAll();
 
-    res.json({ imported, skipped, errors, total: rows.length - 1 });
+    res.json({
+      imported,
+      skipped,
+      errors,
+      total: rows.length - 1,
+      totalRows: rows.length - 1,
+      processedRows,
+      reasons: skipReasons,
+    });
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при импорте эталонных матчей',

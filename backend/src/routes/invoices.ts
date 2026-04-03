@@ -6,6 +6,7 @@ import { getDatabase } from '../database';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
 import { routeInvoiceFile } from '../services/invoiceRouter';
+import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
 import { isGigaChatConfigured } from '../services/gigachatService';
 import stringSimilarity from 'string-similarity';
@@ -160,10 +161,16 @@ async function processInvoiceFile(
       const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
       supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(supplierNameImg).lastInsertRowid);
     }
-    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    let imgReason = `Image/GigaChat confidence=${routerResult.confidence}`;
+    if (routerResult.gigachatParseQuality?.warnings.length) {
+      imgReason += ` | ${routerResult.gigachatParseQuality.warnings.join('; ')}`;
+    }
+    let imgNeedsReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+    if (routerResult.gigachatParseQuality?.suggestElevatedReview) imgNeedsReview = 1;
+    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const invoiceIdImg = db.transaction(() => {
-      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, `Image/GigaChat confidence=${routerResult.confidence}`, null, 22);
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, imgReason, null, imgNeedsReview, 22);
       const iid = Number(r.lastInsertRowid);
       for (const item of parseResult.items) {
         insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
@@ -273,6 +280,7 @@ async function processInvoiceFile(
     (lastExcelResult !== null && lastExcelResult.category === 'C');
 
   let parsedVatRate: number = 22;
+  let lastGigaParseQuality: GigaChatParseQuality | undefined;
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
@@ -321,6 +329,7 @@ async function processInvoiceFile(
           vatAmount: gigaResult.metadata.vatAmount,
           discountDetected: null,
         };
+        lastGigaParseQuality = gigaResult.parseQuality;
         parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
         if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
       }
@@ -356,13 +365,18 @@ async function processInvoiceFile(
     }
   }
 
+  if (lastGigaParseQuality?.warnings.length) {
+    parsingCategoryReason += ` | ${lastGigaParseQuality.warnings.join('; ')}`;
+  }
+
   const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
   const fileName = fixFilename(file.originalname);
 
   console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
 
   // Insert invoice and items in a transaction
-  const needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+  let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+  if (lastGigaParseQuality?.suggestElevatedReview) needsAmountReview = 1;
 
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
@@ -969,7 +983,13 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(resolvedSupplierName).lastInsertRowid);
     }
 
-    const reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null);
+    let reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null);
+    const pq = gigaResult.parseQuality;
+    let reparseReason = `GigaChat reparse, позиций: ${items.length}`;
+    if (pq?.warnings.length) {
+      reparseReason += ` | ${pq.warnings.join('; ')}`;
+    }
+    if (pq?.suggestElevatedReview) reparsedNeedsReview = 1;
 
     db.transaction(() => {
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
@@ -983,7 +1003,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
         meta.totalWithVat,
         meta.vatAmount ?? null,
         items.length > 0 ? 'A' : 'B',
-        `GigaChat reparse, позиций: ${items.length}`,
+        reparseReason,
         reparsedNeedsReview,
         invoiceId,
       );
@@ -994,7 +1014,13 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     })();
 
     console.log(`[GigaChat] Reparse invoice=${invoiceId}, items=${items.length}`);
-    res.json({ success: true, items: items.length, status: newStatus, metadata: meta });
+    res.json({
+      success: true,
+      items: items.length,
+      status: newStatus,
+      metadata: meta,
+      parseQuality: pq ?? null,
+    });
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse-gigachat error:', error);
     res.status(500).json({ error: 'Ошибка GigaChat reparse', details: error instanceof Error ? error.message : 'Unknown error' });

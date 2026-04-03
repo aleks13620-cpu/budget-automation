@@ -28,6 +28,18 @@ interface Invoice {
   created_at: string;
 }
 
+interface ImportMatchesResult {
+  imported: number;
+  skipped: number;
+  total: number;
+  totalRows: number;
+  processedRows: number;
+  reasons?: {
+    emptyRequiredFields?: number;
+    emptyAfterNormalization?: number;
+  };
+}
+
 const VAT_OPTIONS = [0, 5, 7, 10, 20, 22];
 
 interface Props {
@@ -68,7 +80,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const [invoiceItemsMeta, setInvoiceItemsMeta] = useState<any | null>(null);
   const [invoiceItemsLoading, setInvoiceItemsLoading] = useState(false);
   const [importingMatches, setImportingMatches] = useState(false);
-  const [importMatchesResult, setImportMatchesResult] = useState<{ imported: number; skipped: number } | null>(null);
+  const [importMatchesResult, setImportMatchesResult] = useState<ImportMatchesResult | null>(null);
   const [matchingStats, setMatchingStats] = useState<{ total: number; confirmed: number } | null>(null);
   const importMatchesRef = useRef<HTMLInputElement>(null);
   const invoiceFileRef = useRef<HTMLInputElement>(null);
@@ -303,8 +315,18 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
     formData.append('file', file);
     try {
       const { data } = await api.post(`/projects/${projectId}/import-matches`, formData);
-      setImportMatchesResult({ imported: data.imported, skipped: data.skipped });
-      setMessage({ type: 'success', text: `Импортировано ${data.imported} правил сопоставления` });
+      setImportMatchesResult({
+        imported: data.imported ?? 0,
+        skipped: data.skipped ?? 0,
+        total: data.total ?? data.totalRows ?? 0,
+        totalRows: data.totalRows ?? data.total ?? 0,
+        processedRows: data.processedRows ?? data.totalRows ?? data.total ?? 0,
+        reasons: data.reasons || undefined,
+      });
+      setMessage({
+        type: 'success',
+        text: `Импортировано ${data.imported ?? 0} правил сопоставления из ${data.totalRows ?? data.total ?? 0} строк`,
+      });
       if (importMatchesRef.current) importMatchesRef.current.value = '';
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при импорте' });
@@ -677,7 +699,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                             try {
                               setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
                               const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
-                              setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                              let gigaMsg = `GigaChat: найдено ${data.items} позиций`;
+                              if (data.parseQuality?.warnings?.length) {
+                                gigaMsg += `. Внимание: ${data.parseQuality.warnings.join('; ')}`;
+                              }
+                              setMessage({ type: 'success', text: gigaMsg });
                               await loadData();
                             } catch (err: any) {
                               const details = err.response?.data?.details || err.response?.data?.error || err.message || 'Неизвестная ошибка';
@@ -789,7 +815,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                                 try {
                                   setMessage({ type: 'success', text: `Отправляю в GigaChat...` });
                                   const { data } = await api.post(`/invoices/${inv.id}/reparse-gigachat`, {});
-                                  setMessage({ type: 'success', text: `GigaChat: найдено ${data.items} позиций` });
+                                  let gigaMsg2 = `GigaChat: найдено ${data.items} позиций`;
+                                  if (data.parseQuality?.warnings?.length) {
+                                    gigaMsg2 += `. Внимание: ${data.parseQuality.warnings.join('; ')}`;
+                                  }
+                                  setMessage({ type: 'success', text: gigaMsg2 });
                                   setInvoiceItemsView(null);
                                   await loadData();
                                 } catch (err: any) {
@@ -908,9 +938,18 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
           </button>
         </div>
         {importMatchesResult && (
-          <p className="success-msg" style={{ marginTop: '0.5rem' }}>
-            Импортировано: {importMatchesResult.imported} правил, пропущено: {importMatchesResult.skipped}
-          </p>
+          <div className="success-msg" style={{ marginTop: '0.5rem' }}>
+            <div>
+              Обработано строк: {importMatchesResult.processedRows} из {importMatchesResult.totalRows}. Импортировано:{' '}
+              {importMatchesResult.imported}, пропущено: {importMatchesResult.skipped}.
+            </div>
+            {importMatchesResult.reasons && (
+              <div style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                Причины пропуска: пустые обязательные поля — {importMatchesResult.reasons.emptyRequiredFields ?? 0},
+                пусто после нормализации — {importMatchesResult.reasons.emptyAfterNormalization ?? 0}.
+              </div>
+            )}
+          </div>
         )}
       </div>
 
