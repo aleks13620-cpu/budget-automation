@@ -1,5 +1,6 @@
 import { getDatabase, closeDatabase } from './connection';
 import { CREATE_TABLES_SQL, CREATE_INDEXES_SQL } from './schema';
+import { CONSTRUCTION_SYNONYMS_SEED } from './constructionSynonymsSeed';
 
 function initializeDatabase(): void {
   console.log('Initializing database...');
@@ -68,6 +69,15 @@ function initializeDatabase(): void {
       )`,
       "ALTER TABLE operator_feedback ADD COLUMN status TEXT DEFAULT 'new'",
       "ALTER TABLE specifications ADD COLUMN parse_source TEXT DEFAULT 'excel'",
+      `CREATE TABLE IF NOT EXISTS construction_synonyms (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        abbreviation TEXT NOT NULL,
+        full_form TEXT NOT NULL,
+        category TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'seed',
+        times_used INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
@@ -87,6 +97,16 @@ function initializeDatabase(): void {
        ['DN65','ДУ65'],['DN65','Ду65'],['DN80','ДУ80'],['DN80','Ду80'],
        ['DN100','ДУ100'],['DN100','Ду100']
       ].forEach(([c,s]) => ins.run(c, s));
+    }
+
+    const constructionCount = (db.prepare('SELECT COUNT(*) as c FROM construction_synonyms').get() as { c: number }).c;
+    if (constructionCount === 0) {
+      const cins = db.prepare(
+        'INSERT OR IGNORE INTO construction_synonyms (abbreviation, full_form, category, source) VALUES (?, ?, ?, ?)'
+      );
+      for (const [abbr, full, cat] of CONSTRUCTION_SYNONYMS_SEED) {
+        cins.run(abbr, full, cat, 'seed');
+      }
     }
 
     // Verify tables

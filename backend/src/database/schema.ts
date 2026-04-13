@@ -181,6 +181,16 @@ CREATE TABLE IF NOT EXISTS size_synonyms (
   synonym TEXT NOT NULL UNIQUE
 );
 
+CREATE TABLE IF NOT EXISTS construction_synonyms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  abbreviation TEXT NOT NULL,
+  full_form TEXT NOT NULL,
+  category TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'seed',
+  times_used INTEGER DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS gigachat_match_cache (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   spec_text TEXT NOT NULL,
@@ -229,6 +239,7 @@ CREATE INDEX IF NOT EXISTS idx_matching_rules_spec ON matching_rules(specificati
 CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
 CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_construction_syn_unique ON construction_synonyms(abbreviation, full_form, category);
 CREATE INDEX IF NOT EXISTS idx_spec_parse_rules_spec ON spec_parse_rules(specification_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_parse_rules_unique ON spec_parse_rules(specification_id, field, raw_value);
 CREATE INDEX IF NOT EXISTS idx_spec_items_history_spec ON specification_items_history(specification_id);

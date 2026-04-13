@@ -54,6 +54,13 @@ const STOP_WORDS = new Set([
 ]);
 
 let _synonymCache: Map<string,string> | null = null;
+let _constructionSynonymCache: Map<string,string> | null = null;
+
+/** Сброс кешей синонимов после записи в БД (learned). */
+export function invalidateMatcherSynonymCaches(): void {
+  _synonymCache = null;
+  _constructionSynonymCache = null;
+}
 
 function getSynonymMap(): Map<string,string> {
   if (_synonymCache) return _synonymCache;
@@ -63,12 +70,33 @@ function getSynonymMap(): Map<string,string> {
   return _synonymCache;
 }
 
+function getConstructionSynonymMap(): Map<string,string> {
+  if (_constructionSynonymCache) return _constructionSynonymCache;
+  const db = getDatabase();
+  const rows = db.prepare(
+    'SELECT LOWER(TRIM(abbreviation)) as a, LOWER(TRIM(full_form)) as f FROM construction_synonyms'
+  ).all() as { a: string; f: string }[];
+  _constructionSynonymCache = new Map(rows.map(r => [r.a, r.f]));
+  return _constructionSynonymCache;
+}
+
 function normalizeSizeTerms(text: string): string {
   const map = getSynonymMap();
   let result = text;
   for (const [syn, can] of map) {
     const re = new RegExp(`\\b${syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
     result = result.replace(re, can);
+  }
+  return result;
+}
+
+function normalizeConstructionTerms(text: string): string {
+  const map = getConstructionSynonymMap();
+  const entries = [...map.entries()].sort((x, y) => y[0].length - x[0].length);
+  let result = text;
+  for (const [abbr, full] of entries) {
+    const re = new RegExp(`\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    result = result.replace(re, full);
   }
   return result;
 }
@@ -101,6 +129,7 @@ function normalizeEngineeringTokens(text: string): string {
 export function normalizeForMatching(text: string): string {
   let s = normalizeEngineeringTokens(text);
   s = normalizeSizeTerms(s);
+  s = normalizeConstructionTerms(s);
   s = s.toLowerCase().trim();
   // Remove punctuation except letters, digits, spaces
   s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ');
