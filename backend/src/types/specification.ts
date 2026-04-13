@@ -15,9 +15,18 @@ export interface SpecificationRow {
   _parentIndex: number | null;
 }
 
+export interface SpecPdfParseQuality {
+  warnings: string[];
+  suggestElevatedReview: boolean;
+}
+
 export interface ParseResult {
   items: SpecificationRow[];
   errors: string[];
   totalRows: number;
   skippedRows: number;
+  /** PDF: нет извлечённых позиций — можно внести вручную в редакторе */
+  category?: 'C';
+  categoryReason?: string | null;
+  specParseQuality?: SpecPdfParseQuality;
 }

@@ -225,7 +225,7 @@ interface GigaChatParsedJSON {
 // ---------------------------------------------------------------------------
 
 /** Читает PDF как текст через pdf-parse */
-async function readPdfText(filePath: string): Promise<string> {
+export async function readPdfText(filePath: string): Promise<string> {
   const { PDFParse } = require('pdf-parse');
   const data = fs.readFileSync(filePath);
   const parser = new PDFParse({ data: new Uint8Array(data) });

@@ -3,8 +3,13 @@
  */
 
 import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
-import { extractJSON, sanitizeJSON } from './gigachatParser';
+import { extractJSON, sanitizeJSON, readPdfText } from './gigachatParser';
 import type { ParseResult, SpecificationRow } from '../types/specification';
+import { evaluateSpecPdfParseQuality } from './gigachatSpecParseQuality';
+
+const PDF_TEXT_HINT_MAX = 40000;
+/** Меньше символов — считаем сканом (как в плане для счетов). */
+const SCAN_TEXT_THRESHOLD = 200;
 
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
@@ -106,6 +111,22 @@ function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
   return rows;
 }
 
+function buildUserContent(isScan: boolean, pdfText: string): string {
+  if (isScan) {
+    return (
+      'Это скан документа (текст из PDF почти отсутствует). Внимательно разбери изображение вложенного файла ' +
+      'и извлеки таблицу спецификации согласно системной инструкции.'
+    );
+  }
+  const hint = pdfText.slice(0, PDF_TEXT_HINT_MAX);
+  return (
+    'Ниже извлечённый текст из PDF (для ориентира). Обязательно сверь с вложенным файлом и извлеки таблицу спецификации.\n\n' +
+    '---\n' +
+    hint +
+    '\n---'
+  );
+}
+
 /** Сырые строки для specification.raw_data (совместимость с редактором). */
 export function buildRawDataFromPdfItems(rows: SpecificationRow[]): string[][] {
   const header = ['№', 'Наименование', 'Характеристики', 'Ед.', 'Кол-во'];
@@ -119,6 +140,10 @@ export function buildRawDataFromPdfItems(rows: SpecificationRow[]): string[][] {
   return [header, ...body];
 }
 
+export const PDF_SPEC_EMPTY_RAW_DATA: string[][] = [
+  ['№', 'Наименование', 'Характеристики', 'Ед.', 'Кол-во'],
+];
+
 /**
  * Парсит PDF-чертёж: загрузка в Files API + GigaChat (как parsePdfViaFileApi для счетов).
  */
@@ -127,6 +152,15 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   let fileId: string | null = null;
   let rawResponse = '';
   let lastError: Error | null = null;
+
+  let pdfText = '';
+  try {
+    pdfText = (await readPdfText(filePath)).trim();
+  } catch (e) {
+    console.warn(`[parseSpecFromPdf] readPdfText: ${e instanceof Error ? e.message : e}`);
+  }
+  const isScan = pdfText.length <= SCAN_TEXT_THRESHOLD;
+  const userContent = buildUserContent(isScan, pdfText);
 
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
@@ -139,7 +173,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           { role: 'system', content: SPECIFICATION_PROMPT },
           {
             role: 'user',
-            content: 'Выполни инструкцию. Извлеки спецификацию из приложенного PDF-чертежа.',
+            content: userContent,
             attachments: [fileId],
           },
         ],
@@ -149,12 +183,26 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
       const jsonStr = sanitizeJSON(extractJSON(rawResponse));
       const parsed: GigaChatSpecPdfJSON = JSON.parse(jsonStr);
       const items = mapPdfItemsToRows(parsed);
+      const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
+
+      if (items.length === 0) {
+        return {
+          items: [],
+          errors: [],
+          totalRows: 0,
+          skippedRows: 0,
+          category: 'C',
+          categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
+          specParseQuality,
+        };
+      }
 
       return {
         items,
         errors: [],
         totalRows: items.length,
         skippedRows: 0,
+        specParseQuality,
       };
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));

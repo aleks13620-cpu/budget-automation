@@ -163,7 +163,13 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
     formData.append('section', section);
     try {
       const { data } = await api.post(`/projects/${projectId}/specifications`, formData);
-      setMessage({ type: 'success', text: `${section}: импортировано ${data.imported} позиций` });
+      setMessage({
+        type: 'success',
+        text:
+          data.category === 'C' && data.categoryReason
+            ? `${section}: спецификация без позиций. ${data.categoryReason}`
+            : `${section}: импортировано ${data.imported} позиций`,
+      });
       if (input) input.value = '';
       await loadData();
     } catch (err: any) {

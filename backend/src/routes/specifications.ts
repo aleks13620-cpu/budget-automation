@@ -8,7 +8,7 @@ import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 import { enrichSpecItems } from '../services/gigachatSpecParser';
 import type { SpecItemInput } from '../services/gigachatSpecParser';
-import { parseSpecFromPdf, buildRawDataFromPdfItems } from '../services/gigachatSpecFromPdf';
+import { parseSpecFromPdf, buildRawDataFromPdfItems, PDF_SPEC_EMPTY_RAW_DATA } from '../services/gigachatSpecFromPdf';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -105,14 +105,18 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
 
     if (ext === '.pdf') {
       parseResult = await parseSpecFromPdf(req.file.path);
-      if (parseResult.items.length === 0) {
+      if (parseResult.errors.length > 0) {
         fs.unlink(req.file.path, () => {});
         return res.status(400).json({
           error: 'Не удалось извлечь данные из PDF',
           details: parseResult.errors,
         });
       }
-      rawDataStr = JSON.stringify(buildRawDataFromPdfItems(parseResult.items));
+      rawDataStr = JSON.stringify(
+        parseResult.category === 'C'
+          ? PDF_SPEC_EMPTY_RAW_DATA
+          : buildRawDataFromPdfItems(parseResult.items)
+      );
     } else {
       parseResult = parseExcelFile(req.file.path);
       if (parseResult.items.length === 0) {
@@ -192,6 +196,9 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
       errors: parseResult.errors,
       totalRows: parseResult.totalRows,
       skippedRows: parseResult.skippedRows,
+      category: parseResult.category ?? null,
+      categoryReason: parseResult.categoryReason ?? null,
+      specParseQuality: parseResult.specParseQuality ?? null,
     });
   } catch (error) {
     console.error('POST /api/projects/:id/specifications error:', error);
@@ -332,7 +339,7 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
         if (ext === '.pdf') {
           parseResult = await parseSpecFromPdf(file.path);
           parseSource = 'pdf_gigachat';
-          if (parseResult.items.length === 0) {
+          if (parseResult.errors.length > 0) {
             fs.unlink(file.path, () => {});
             results.push({
               fileName,
@@ -343,7 +350,11 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
             });
             continue;
           }
-          rawDataB = JSON.stringify(buildRawDataFromPdfItems(parseResult.items));
+          rawDataB = JSON.stringify(
+            parseResult.category === 'C'
+              ? PDF_SPEC_EMPTY_RAW_DATA
+              : buildRawDataFromPdfItems(parseResult.items)
+          );
         } else {
           parseResult = parseExcelFile(file.path);
           if (parseResult.items.length === 0) {
@@ -357,9 +368,9 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
           rawDataB = JSON.stringify(XLSXb.utils.sheet_to_json(wsb, { header: 1, defval: '' }));
         }
 
-        // Detect section: filename first, then items
+        // Detect section: filename first, then items (для пустого PDF — только имя файла)
         let section = detectSectionFromFilename(fileName);
-        if (!section) {
+        if (!section && parseResult.items.length > 0) {
           section = detectSectionFromItems(parseResult.items.map(it => ({
             name: it.name,
             characteristics: it.characteristics,
@@ -414,7 +425,13 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
         })();
 
         fs.unlink(file.path, () => {});
-        results.push({ fileName, section, imported: result, status: 'ok' });
+        results.push({
+          fileName,
+          section,
+          imported: result,
+          status: 'ok',
+          error: parseResult.category === 'C' ? parseResult.categoryReason ?? undefined : undefined,
+        });
       } catch (err) {
         fs.unlink(file.path, () => {});
         results.push({
