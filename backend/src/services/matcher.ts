@@ -188,7 +188,7 @@ function matchSpecItems(
         if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) continue;
         const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
         const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
-        if (specMatch >= 0.8 && invMatch >= 0.8) { isNegativeBlocked = true; break; }
+        if (specMatch >= 0.65 && invMatch >= 0.65) { isNegativeBlocked = true; break; }
       }
       if (isNegativeBlocked) continue;
 
@@ -201,11 +201,16 @@ function matchSpecItems(
           }
           const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
           const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
-          if (specMatch >= 0.8 && invMatch >= 0.8) {
+          if (specMatch >= 0.65 && invMatch >= 0.65) {
             let ruleConfidence = Math.min(rule.confidence, 0.95);
             // Boost confidence for supplier-specific rules
             if (rule.supplier_id !== null && rule.supplier_id === inv.supplier_id) {
               ruleConfidence = Math.min(ruleConfidence + 0.02, 0.95);
+            }
+            // Мягкий матч (0.65–0.79) — снижаем уверенность
+            const isStrongMatch = specMatch >= 0.8 && invMatch >= 0.8;
+            if (!isStrongMatch) {
+              ruleConfidence = Math.max(0, ruleConfidence - 0.1);
             }
             if (ruleConfidence > bestConfidence) {
               bestConfidence = ruleConfidence;

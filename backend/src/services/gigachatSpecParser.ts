@@ -7,6 +7,7 @@
  */
 
 import { chatCompletion } from './gigachatService';
+import { getDatabase } from '../database';
 
 export interface SpecItemInput {
   idx: number;
@@ -166,12 +167,27 @@ const BATCH_SIZE = 40;           // позиций на батч
 const INTER_BATCH_DELAY_MS = 1000; // пауза между группами батчей
 const CONCURRENCY = 3;             // параллельных батчей одновременно
 
-async function enrichBatch(items: SpecItemInput[]): Promise<SpecItemEnriched[]> {
+function buildSpecParseRulesContext(specificationId: number): string {
+  const db = getDatabase();
+  const rows = db.prepare(
+    'SELECT field, raw_value, corrected_value FROM spec_parse_rules WHERE specification_id = ? ORDER BY times_used DESC, id'
+  ).all(specificationId) as { field: string; raw_value: string; corrected_value: string }[];
+  if (rows.length === 0) return '';
+  const lines = rows.map(
+    r => `- поле "${r.field}": сырой текст «${r.raw_value}» → исправление «${r.corrected_value}»`
+  );
+  return `Уже известные исправления для этой спецификации (учитывай при заполнении пустых полей, не противоречь):\n${lines.join('\n')}`;
+}
+
+async function enrichBatch(items: SpecItemInput[], parseRulesContext: string): Promise<SpecItemEnriched[]> {
   const inputJson = JSON.stringify(items, null, 0);
+  const userContent = parseRulesContext
+    ? `${parseRulesContext}\n\nВходной JSON-массив позиций:\n${inputJson}`
+    : inputJson;
 
   const messages = [
     { role: 'system' as const, content: SPEC_ENRICH_PROMPT },
-    { role: 'user' as const, content: inputJson },
+    { role: 'user' as const, content: userContent },
   ];
 
   const raw = await withRetry(() => chatCompletion(messages, { temperature: 0.1, maxTokens: 4000 }));
@@ -210,14 +226,23 @@ export interface EnrichResult {
   errors: string[];
 }
 
+export interface EnrichSpecItemsOptions {
+  /** Загрузить spec_parse_rules и передать в промпт как контекст исправлений */
+  specificationId?: number;
+}
+
 export async function enrichSpecItems(
   items: Array<SpecItemInput & { position_number: string | null }>,
-  fieldsToUpdate: Array<keyof SpecItemEnriched> = ['type_size', 'manufacturer', 'article', 'characteristics']
+  fieldsToUpdate: Array<keyof SpecItemEnriched> = ['type_size', 'manufacturer', 'article', 'characteristics'],
+  options?: EnrichSpecItemsOptions
 ): Promise<EnrichResult> {
   const diffs: EnrichDiff[] = [];
   const errors: string[] = [];
   let updated = 0;
   let skipped = 0;
+
+  const parseRulesContext =
+    options?.specificationId != null ? buildSpecParseRulesContext(options.specificationId) : '';
 
   // Build all batches upfront
   const allBatches: Array<{ batchStart: number; batch: typeof items; inputs: SpecItemInput[] }> = [];
@@ -243,7 +268,7 @@ export async function enrichSpecItems(
     const group = allBatches.slice(g, g + CONCURRENCY);
     await Promise.all(group.map(async ({ batchStart, batch, inputs }) => {
       try {
-        enrichedByBatchStart.set(batchStart, await enrichBatch(inputs));
+        enrichedByBatchStart.set(batchStart, await enrichBatch(inputs, parseRulesContext));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`Батч ${batchStart}-${batchStart + batch.length - 1}: ${msg}`);

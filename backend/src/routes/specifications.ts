@@ -560,7 +560,7 @@ router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res:
       type_size: it.type_size,
     }));
 
-    const result = await enrichSpecItems(inputs, fieldsToUpdate as any);
+    const result = await enrichSpecItems(inputs, fieldsToUpdate as any, { specificationId: specId });
 
     if (dryRun) {
       return res.json({
