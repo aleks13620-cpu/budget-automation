@@ -542,6 +542,8 @@ function textTo2DArray(text: string): string[][] {
 }
 
 export interface SavedMapping {
+  /** Поставщик ранее успешно парсился через GigaChat (без классического маппинга колонок). */
+  gigachatLearned?: boolean;
   article: number | null;
   name: number | null;
   unit: number | null;

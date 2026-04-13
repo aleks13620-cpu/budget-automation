@@ -87,6 +87,12 @@ function computeNeedsAmountReview(
 // Helper: build supplier context string for GigaChat from saved parser config
 function buildSupplierContext(supplierName: string | null, savedMapping: SavedMapping | undefined): string | undefined {
   if (!savedMapping || !supplierName) return undefined;
+  if (savedMapping.gigachatLearned) {
+    return (
+      `КОНТЕКСТ ПОСТАВЩИКА: счёт от "${supplierName}". ` +
+      'Ранее позиции этого поставщика надёжно извлекались через GigaChat; восстанови полную таблицу товаров из документа.'
+    );
+  }
   const colNames: string[] = [];
   if (savedMapping.name) colNames.push(`наименование (колонка ${savedMapping.name})`);
   if (savedMapping.article) colNames.push(`артикул (колонка ${savedMapping.article})`);
@@ -111,6 +117,9 @@ function loadSavedMapping(supplierId: number): SavedMapping | undefined {
 
   try {
     const config = JSON.parse(row.config);
+    if (config.gigachatLearned === true) {
+      return config as SavedMapping;
+    }
     if (typeof config.headerRow === 'number' && config.name !== undefined) {
       return config as SavedMapping;
     }
@@ -224,11 +233,15 @@ async function processInvoiceFile(
     }
   }
 
+  function isGigaChatOnlyMapping(m: SavedMapping): boolean {
+    return !!m.gigachatLearned && !m.separatorMethod;
+  }
+
   // Check for saved parser config and re-parse if available
   let parseResult = initialResult;
   if (supplierId) {
     const savedMapping = loadSavedMapping(supplierId);
-    if (savedMapping) {
+    if (savedMapping && !isGigaChatOnlyMapping(savedMapping)) {
       if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
         if (savedMapping.separatorMethod) {
           const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
@@ -281,6 +294,7 @@ async function processInvoiceFile(
 
   let parsedVatRate: number = 22;
   let lastGigaParseQuality: GigaChatParseQuality | undefined;
+  let gigachatFallbackSucceeded = false;
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
@@ -329,6 +343,7 @@ async function processInvoiceFile(
           vatAmount: gigaResult.metadata.vatAmount,
           discountDetected: null,
         };
+        gigachatFallbackSucceeded = true;
         lastGigaParseQuality = gigaResult.parseQuality;
         parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
         if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
@@ -424,6 +439,26 @@ async function processInvoiceFile(
 
     return invoiceId;
   })();
+
+  if (gigachatFallbackSucceeded && supplierId && parseResult.items.length >= 3) {
+    const exists = db.prepare('SELECT 1 FROM supplier_parser_configs WHERE supplier_id = ?').get(supplierId);
+    if (!exists) {
+      const learned: SavedMapping = {
+        gigachatLearned: true,
+        headerRow: 0,
+        name: 0,
+        article: null,
+        unit: null,
+        quantity: null,
+        price: null,
+        amount: null,
+      };
+      db.prepare('INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?)').run(
+        supplierId,
+        JSON.stringify(learned),
+      );
+    }
+  }
 
   // Flag items that match unit conversion triggers
   const triggers = db.prepare('SELECT * FROM unit_conversion_triggers').all() as { id: number; keyword: string }[];

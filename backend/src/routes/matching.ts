@@ -4,6 +4,7 @@ import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { getDatabase } from '../database';
 import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
+import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constructionSynonymLearner';
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -344,7 +345,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const match = db.prepare(`
-      SELECT m.id, m.specification_item_id, m.invoice_item_id,
+      SELECT m.id, m.confidence, m.specification_item_id, m.invoice_item_id,
              si.name as spec_name, ii.name as invoice_name,
              i.supplier_id, si.project_id
       FROM matched_items m
@@ -353,8 +354,14 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
       JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
-      id: number; specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string; supplier_id: number | null; project_id: number;
+      id: number;
+      confidence: number | null;
+      specification_item_id: number;
+      invoice_item_id: number;
+      spec_name: string;
+      invoice_name: string;
+      supplier_id: number | null;
+      project_id: number;
     } | undefined;
 
     if (!match) {
@@ -387,6 +394,13 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
           'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.9, 1, ?)'
         ).run(specPattern, invoicePattern, match.supplier_id);
       }
+
+      learnConstructionSynonymsFromConfirmedMatch(
+        db,
+        specPattern,
+        invoicePattern,
+        match.confidence ?? 0,
+      );
     })();
 
     saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id);
