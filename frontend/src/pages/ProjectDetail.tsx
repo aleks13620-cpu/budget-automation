@@ -7,6 +7,8 @@ interface Specification {
   file_name: string | null;
   item_count: number;
   created_at: string;
+  /** excel | pdf_gigachat */
+  parse_source?: string | null;
 }
 
 interface Invoice {
@@ -355,12 +357,12 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
       <div className="section">
         <h2>Массовая загрузка спецификаций</h2>
         <p className="muted" style={{ marginBottom: '0.5rem' }}>
-          Выберите несколько Excel-файлов (.xlsx/.xls). Раздел определяется автоматически по имени файла или содержимому.
+          Выберите файлы: Excel (.xlsx/.xls) или PDF-чертежи. Раздел определяется автоматически по имени файла или содержимому.
         </p>
         <div className="upload-area" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <input
             type="file"
-            accept=".xlsx,.xls"
+            accept=".xlsx,.xls,.pdf"
             multiple
             ref={bulkFileRef}
             style={{ fontSize: '0.85rem' }}
@@ -413,6 +415,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
           <thead>
             <tr>
               <th>Раздел</th>
+              <th>Источник</th>
               <th>Файл</th>
               <th>Позиций</th>
               <th></th>
@@ -426,6 +429,15 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                     <td style={{ fontWeight: 500 }}>{section}</td>
                     {spec ? (
                       <>
+                        <td>
+                          <span
+                            className="muted"
+                            style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+                            title={spec.parse_source === 'pdf_gigachat' ? 'Распознано через GigaChat' : 'Импорт из Excel'}
+                          >
+                            {spec.parse_source === 'pdf_gigachat' ? 'PDF (GigaChat)' : 'Excel'}
+                          </span>
+                        </td>
                         <td>{spec.file_name || '—'}</td>
                         <td>{spec.item_count}</td>
                         <td style={{ display: 'flex', gap: '0.25rem' }}>
@@ -452,11 +464,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                       </>
                     ) : (
                       <>
-                        <td colSpan={2}>
+                        <td colSpan={3}>
                           <span style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                             <input
                               type="file"
-                              accept=".xlsx,.xls"
+                              accept=".xlsx,.xls,.pdf"
                               ref={el => { specFileRefs.current[section] = el; }}
                               style={{ maxWidth: '220px', fontSize: '0.8rem' }}
                             />
@@ -475,7 +487,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                   </tr>
                   {spec && specItemsView === spec.id && (
                     <tr>
-                      <td colSpan={4} style={{ padding: '0.5rem 1rem', background: '#f8f9fa' }}>
+                      <td colSpan={5} style={{ padding: '0.5rem 1rem', background: '#f8f9fa' }}>
                         {specItemsLoading ? (
                           <p className="muted">Загрузка позиций...</p>
                         ) : (

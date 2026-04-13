@@ -67,6 +67,7 @@ function initializeDatabase(): void {
         UNIQUE(spec_text, invoice_text)
       )`,
       "ALTER TABLE operator_feedback ADD COLUMN status TEXT DEFAULT 'new'",
+      "ALTER TABLE specifications ADD COLUMN parse_source TEXT DEFAULT 'excel'",
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

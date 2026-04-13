@@ -130,12 +130,13 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
     }
 
     const fileName = fixFilename(req.file.originalname);
+    const parseSource = ext === '.pdf' ? 'pdf_gigachat' : 'excel';
 
     // Insert specification + items in a transaction
     const result = db.transaction(() => {
       const specResult = db.prepare(
-        'INSERT INTO specifications (project_id, section, file_name, raw_data) VALUES (?, ?, ?, ?)'
-      ).run(projectId, section, fileName, rawDataStr);
+        'INSERT INTO specifications (project_id, section, file_name, raw_data, parse_source) VALUES (?, ?, ?, ?, ?)'
+      ).run(projectId, section, fileName, rawDataStr, parseSource);
       const specificationId = Number(specResult.lastInsertRowid);
 
       const insertStmt = db.prepare(`
@@ -214,6 +215,7 @@ router.get('/api/projects/:id/specifications', (req: Request, res: Response) => 
 
     const specs = db.prepare(`
       SELECT s.id, s.section, s.file_name, s.created_at,
+             COALESCE(s.parse_source, 'excel') as parse_source,
              (SELECT COUNT(*) FROM specification_items WHERE specification_id = s.id) as item_count
       FROM specifications s
       WHERE s.project_id = ?
@@ -295,7 +297,7 @@ router.delete('/api/specifications/:id', (req: Request, res: Response) => {
 });
 
 // POST /api/projects/:id/specifications/bulk — upload multiple spec files with auto-detect section
-router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), (req: Request, res: Response) => {
+router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
@@ -320,14 +322,39 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
 
     for (const file of files) {
       const fileName = fixFilename(file.originalname);
+      const ext = path.extname(fileName).toLowerCase();
 
       try {
-        // Parse file
-        const parseResult = parseExcelFile(file.path);
-        if (parseResult.items.length === 0) {
-          fs.unlink(file.path, () => {});
-          results.push({ fileName, section: null, imported: 0, status: 'parse_error', error: 'Не удалось извлечь данные' });
-          continue;
+        let parseResult: ReturnType<typeof parseExcelFile>;
+        let rawDataB: string;
+        let parseSource: 'excel' | 'pdf_gigachat' = 'excel';
+
+        if (ext === '.pdf') {
+          parseResult = await parseSpecFromPdf(file.path);
+          parseSource = 'pdf_gigachat';
+          if (parseResult.items.length === 0) {
+            fs.unlink(file.path, () => {});
+            results.push({
+              fileName,
+              section: null,
+              imported: 0,
+              status: 'parse_error',
+              error: parseResult.errors[0] || 'Не удалось извлечь данные из PDF',
+            });
+            continue;
+          }
+          rawDataB = JSON.stringify(buildRawDataFromPdfItems(parseResult.items));
+        } else {
+          parseResult = parseExcelFile(file.path);
+          if (parseResult.items.length === 0) {
+            fs.unlink(file.path, () => {});
+            results.push({ fileName, section: null, imported: 0, status: 'parse_error', error: 'Не удалось извлечь данные' });
+            continue;
+          }
+          const XLSXb = require('xlsx');
+          const wbb = XLSXb.readFile(file.path);
+          const wsb = wbb.Sheets[wbb.SheetNames[0]];
+          rawDataB = JSON.stringify(XLSXb.utils.sheet_to_json(wsb, { header: 1, defval: '' }));
         }
 
         // Detect section: filename first, then items
@@ -356,17 +383,11 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
           continue;
         }
 
-        // Read raw data for storage
-        const XLSXb = require('xlsx');
-        const wbb = XLSXb.readFile(file.path);
-        const wsb = wbb.Sheets[wbb.SheetNames[0]];
-        const rawDataB = JSON.stringify(XLSXb.utils.sheet_to_json(wsb, { header: 1, defval: '' }));
-
         // Insert specification + items
         const result = db.transaction(() => {
           const specResult = db.prepare(
-            'INSERT INTO specifications (project_id, section, file_name, raw_data) VALUES (?, ?, ?, ?)'
-          ).run(projectId, section, fileName, rawDataB);
+            'INSERT INTO specifications (project_id, section, file_name, raw_data, parse_source) VALUES (?, ?, ?, ?, ?)'
+          ).run(projectId, section, fileName, rawDataB, parseSource);
           const specificationId = Number(specResult.lastInsertRowid);
 
           const insertStmt = db.prepare(`
