@@ -13,6 +13,9 @@ import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigac
 
 export type { GigaChatParseQuality } from './gigachatParseQuality';
 
+/** Максимальная длина текста документа, отправляемого в GigaChat (Excel / PDF text fallback) */
+const MAX_TEXT_LENGTH = 40000;
+
 // ---------------------------------------------------------------------------
 // Промпт
 // ---------------------------------------------------------------------------
@@ -303,7 +306,39 @@ function sanitizeJSON(json: string): string {
   // Trailing commas: ,} и ,] — убираем
   result = result.replace(/,(\s*[}\]])/g, '$1');
 
-  return result;
+  return balanceJsonBrackets(result);
+}
+
+/** Дописывает недостающие `}` / `]` с учётом вложенности (вне строковых литералов). */
+function balanceJsonBrackets(s: string): string {
+  let inString = false;
+  let escape = false;
+  const stack: string[] = [];
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (inString) {
+      if (ch === '\\') escape = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') stack.push('}');
+    else if (ch === '[') stack.push(']');
+    else if (ch === '}' || ch === ']') {
+      const top = stack[stack.length - 1];
+      if (top === ch) stack.pop();
+    }
+  }
+
+  return s + stack.reverse().join('');
 }
 
 // Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга
@@ -448,7 +483,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
           const textResponse = await chatCompletion(
             [
               { role: 'system', content: INVOICE_PROMPT },
-              { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
+              { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}` },
             ],
             { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
           );
@@ -550,7 +585,7 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
       rawResponse = await chatCompletion(
         [
           { role: 'system',    content: INVOICE_PROMPT },
-          { role: 'user',      content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, 20000)}` },
+          { role: 'user',      content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}` },
         ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );

@@ -23,7 +23,11 @@ const MODELS_URL = 'https://gigachat.devices.sberbank.ru/api/v1/models';
 const FILES_URL  = 'https://gigachat.devices.sberbank.ru/api/v1/files';
 
 /** Игнорировать проверку сертификата Сбербанка (не в стандартном CA-bundle) */
-const tlsAgent = new https.Agent({ rejectUnauthorized: false });
+const tlsAgent = new https.Agent({
+  rejectUnauthorized: false,
+  keepAlive: true,
+  maxSockets: 5,
+});
 
 // ---------------------------------------------------------------------------
 // Типы
