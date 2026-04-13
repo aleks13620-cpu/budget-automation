@@ -8,6 +8,7 @@ import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 import { enrichSpecItems } from '../services/gigachatSpecParser';
 import type { SpecItemInput } from '../services/gigachatSpecParser';
+import { parseSpecFromPdf, buildRawDataFromPdfItems } from '../services/gigachatSpecFromPdf';
 
 const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
@@ -30,10 +31,10 @@ const upload = multer({
   storage,
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.xlsx' || ext === '.xls') {
+    if (ext === '.xlsx' || ext === '.xls' || ext === '.pdf') {
       cb(null, true);
     } else {
-      cb(new Error('Допустимы только файлы .xlsx и .xls'));
+      cb(new Error('Допустимы только файлы .xlsx, .xls и .pdf'));
     }
   },
   limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
@@ -70,7 +71,7 @@ router.get('/api/sections', (_req: Request, res: Response) => {
 });
 
 // POST /api/projects/:id/specifications — upload spec for a section
-router.post('/api/projects/:id/specifications', upload.single('file'), (req: Request, res: Response) => {
+router.post('/api/projects/:id/specifications', upload.single('file'), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
     const section = req.body.section;
@@ -98,25 +99,37 @@ router.post('/api/projects/:id/specifications', upload.single('file'), (req: Req
       return res.status(409).json({ error: `Раздел «${section}» уже загружен. Удалите старый перед загрузкой нового.` });
     }
 
-    // Parse Excel
-    const parseResult = parseExcelFile(req.file.path);
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    let parseResult: ReturnType<typeof parseExcelFile>;
+    let rawDataStr: string;
 
-    if (parseResult.items.length === 0) {
-      fs.unlink(req.file.path, () => {});
-      return res.status(400).json({
-        error: 'Не удалось извлечь данные из файла',
-        details: parseResult.errors,
-      });
+    if (ext === '.pdf') {
+      parseResult = await parseSpecFromPdf(req.file.path);
+      if (parseResult.items.length === 0) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({
+          error: 'Не удалось извлечь данные из PDF',
+          details: parseResult.errors,
+        });
+      }
+      rawDataStr = JSON.stringify(buildRawDataFromPdfItems(parseResult.items));
+    } else {
+      parseResult = parseExcelFile(req.file.path);
+      if (parseResult.items.length === 0) {
+        fs.unlink(req.file.path, () => {});
+        return res.status(400).json({
+          error: 'Не удалось извлечь данные из файла',
+          details: parseResult.errors,
+        });
+      }
+      const XLSX2 = require('xlsx');
+      const wb2 = XLSX2.readFile(req.file.path);
+      const ws2 = wb2.Sheets[wb2.SheetNames[0]];
+      const rawData2 = XLSX2.utils.sheet_to_json(ws2, { header: 1, defval: '' }) as string[][];
+      rawDataStr = JSON.stringify(rawData2);
     }
 
     const fileName = fixFilename(req.file.originalname);
-
-    // Read raw data for storage
-    const XLSX2 = require('xlsx');
-    const wb2 = XLSX2.readFile(req.file.path);
-    const ws2 = wb2.Sheets[wb2.SheetNames[0]];
-    const rawData2 = XLSX2.utils.sheet_to_json(ws2, { header: 1, defval: '' }) as string[][];
-    const rawDataStr = JSON.stringify(rawData2);
 
     // Insert specification + items in a transaction
     const result = db.transaction(() => {

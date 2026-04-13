@@ -238,7 +238,7 @@ async function readPdfText(filePath: string): Promise<string> {
 }
 
 /** Извлекает JSON из ответа GigaChat (может содержать ```json ... ```) */
-function extractJSON(text: string): string {
+export function extractJSON(text: string): string {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (fenced) return fenced[1].trim();
   const brace = text.indexOf('{');
@@ -261,7 +261,7 @@ function extractJSON(text: string): string {
  * - управляющие символы (0x00–0x1F кроме допустимых) → убираем
  * - trailing commas перед } и ]
  */
-function sanitizeJSON(json: string): string {
+export function sanitizeJSON(json: string): string {
   let result = '';
   let inString = false;
   const VALID_ESCAPES = new Set(['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']);
