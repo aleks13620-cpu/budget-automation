@@ -32,12 +32,14 @@ const SPECIFICATION_PROMPT = `
 - «Экспликация»
 - «Спецификация»
 
+Если документ многостраничный — ищи продолжение таблицы на всех страницах.
 Если несколько таблиц — объедини релевантные строки в один массив items (оборудование и материалы по разделу).
+Если внутри таблицы есть строки-заголовки разделов (например «I. Оборудование», «II. Материалы»), пропускай их — бери только строки с конкретным наименованием и количеством.
 
 ═══════════════════════════════════════
 ПРОВЕРЬ СЕБЯ ПЕРЕД ОТВЕТОМ:
 ═══════════════════════════════════════
-1. Посчитай строки с номерами позиций в таблице документа
+1. Посчитай строки с номерами позиций в таблице документа (по всем страницам!)
 2. Посчитай элементы в массиве items
 3. Числа должны совпадать (если в документе явные пропуски номеров — сохрани номера как в документе)
 4. У каждой позиции должно быть непустое name
@@ -45,11 +47,15 @@ const SPECIFICATION_PROMPT = `
 ═══════════════════════════════════════
 ПРАВИЛА:
 ═══════════════════════════════════════
-- position — номер позиции из первой колонки таблицы (целое число)
+- position — номер позиции из первой колонки. Может быть числом (1) или строкой ("1а", "3.1") — передавай как есть
 - name — наименование / обозначение
 - characteristics — технические данные, марка, ГОСТ, если в отдельной колонке; иначе null
+- manufacturer — завод-изготовитель / производитель, если указан; иначе null
+- marking — маркировка / артикул, если указан в отдельной колонке; иначе null
+- type_size — типоразмер (Ду, DN, диаметр и т.п.), если указан в отдельной колонке; иначе null
 - unit — единица измерения (м, шт, компл, кг и т.д.) или null
 - quantity — число; если не указано, null
+- note — примечание, если есть колонка «Примечание»; иначе null
 - Числа в JSON: 10.5 без кавычек
 - Дробная запятая в документе → точка в JSON
 
@@ -65,8 +71,12 @@ const SPECIFICATION_PROMPT = `
       "position": 1,
       "name": "наименование",
       "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
       "unit": "шт",
-      "quantity": 2.0
+      "quantity": 2.0,
+      "note": null
     }
   ]
 }
@@ -79,8 +89,12 @@ interface GigaChatSpecPdfJSON {
     position?: number | string | null;
     name?: string | null;
     characteristics?: string | null;
+    manufacturer?: string | null;
+    marking?: string | null;
+    type_size?: string | null;
     unit?: string | null;
     quantity?: number | null;
+    note?: string | null;
   }>;
 }
 
@@ -100,9 +114,9 @@ function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
       equipment_code: null,
       article: null,
       product_code: null,
-      marking: null,
-      type_size: null,
-      manufacturer: null,
+      marking: it.marking?.trim() || null,
+      type_size: it.type_size?.trim() || null,
+      manufacturer: it.manufacturer?.trim() || null,
       unit: it.unit?.trim() || null,
       quantity: typeof it.quantity === 'number' ? it.quantity : null,
       full_name: null,
@@ -173,81 +187,81 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   const isScan = pdfText.length <= SCAN_TEXT_THRESHOLD;
   const userContent = buildUserContent(isScan, pdfText);
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      if (!fileId) {
-        fileId = await uploadFile(filePath, mimeType);
-      }
+  try {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        if (!fileId) {
+          fileId = await uploadFile(filePath, mimeType);
+        }
 
-      rawResponse = await chatCompletion(
-        [
-          { role: 'system', content: SPECIFICATION_PROMPT },
-          {
-            role: 'user',
-            content: userContent,
-            attachments: [fileId],
-          },
-        ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
-      );
+        rawResponse = await chatCompletion(
+          [
+            { role: 'system', content: SPECIFICATION_PROMPT },
+            {
+              role: 'user',
+              content: userContent,
+              attachments: [fileId],
+            },
+          ],
+          { model: 'GigaChat-2', temperature: 0.1, maxTokens: 16384 }
+        );
 
-      const jsonStr = sanitizeJSON(extractJSON(rawResponse));
-      const parsed: GigaChatSpecPdfJSON = JSON.parse(jsonStr);
-      const items = mapPdfItemsToRows(parsed);
-      const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
+        const jsonStr = sanitizeJSON(extractJSON(rawResponse));
+        const parsed: GigaChatSpecPdfJSON = JSON.parse(jsonStr);
+        const items = mapPdfItemsToRows(parsed);
+        const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
 
-      if (items.length === 0) {
-        const emptyRes: ParseResult = {
-          items: [],
+        if (items.length === 0) {
+          const emptyRes: ParseResult = {
+            items: [],
+            errors: [],
+            totalRows: 0,
+            skippedRows: 0,
+            category: 'C',
+            categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
+            specParseQuality,
+          };
+          try {
+            setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+          } catch (e) {
+            console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+          }
+          return emptyRes;
+        }
+
+        const okRes: ParseResult = {
+          items,
           errors: [],
-          totalRows: 0,
+          totalRows: items.length,
           skippedRows: 0,
-          category: 'C',
-          categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
           specParseQuality,
         };
         try {
-          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
         } catch (e) {
           console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
         }
-        return emptyRes;
-      }
-
-      const okRes: ParseResult = {
-        items,
-        errors: [],
-        totalRows: items.length,
-        skippedRows: 0,
-        specParseQuality,
-      };
-      try {
-        setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
-      } catch (e) {
-        console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
-      }
-      return okRes;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[parseSpecFromPdf] attempt ${attempt} failed: ${lastError.message}`);
-      if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
-    } finally {
-      if (attempt === 2 && fileId) {
-        await deleteFile(fileId).catch(e => console.warn(`[parseSpecFromPdf] deleteFile: ${e.message}`));
+        return okRes;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`[parseSpecFromPdf] attempt ${attempt} failed: ${lastError.message}`);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
       }
     }
-  }
 
-  if (fileId) {
-    await deleteFile(fileId).catch(() => {});
+    return {
+      items: [],
+      errors: [
+        `GigaChat (спецификация PDF): не удалось распознать после 2 попыток. ${lastError?.message ?? ''}`.trim(),
+      ],
+      totalRows: 0,
+      skippedRows: 0,
+    };
+  } finally {
+    if (fileId) {
+      await deleteFile(fileId).catch(e =>
+        console.warn(`[parseSpecFromPdf] deleteFile: ${e instanceof Error ? e.message : e}`)
+      );
+    }
   }
-
-  return {
-    items: [],
-    errors: [
-      `GigaChat (спецификация PDF): не удалось распознать после 2 попыток. ${lastError?.message ?? ''}`.trim(),
-    ],
-    totalRows: 0,
-    skippedRows: 0,
-  };
 }
