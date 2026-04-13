@@ -191,6 +191,14 @@ CREATE TABLE IF NOT EXISTS construction_synonyms (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS gigachat_file_cache (
+  file_hash TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  response_json TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (file_hash, purpose)
+);
+
 CREATE TABLE IF NOT EXISTS gigachat_match_cache (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   spec_text TEXT NOT NULL,

@@ -13,6 +13,7 @@ let db: Database.Database | null = null;
 export function getDatabase(): Database.Database {
   if (!db) {
     db = new Database(dbPath);
+    // WAL — лучше для параллельных чтений (bulk upload и т.д.)
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
   }

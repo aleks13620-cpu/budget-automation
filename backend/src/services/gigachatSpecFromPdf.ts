@@ -4,6 +4,7 @@
 
 import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { extractJSON, sanitizeJSON, readPdfText } from './gigachatParser';
+import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
 import type { ParseResult, SpecificationRow } from '../types/specification';
 import { evaluateSpecPdfParseQuality } from './gigachatSpecParseQuality';
 
@@ -148,6 +149,16 @@ export const PDF_SPEC_EMPTY_RAW_DATA: string[][] = [
  * Парсит PDF-чертёж: загрузка в Files API + GigaChat (как parsePdfViaFileApi для счетов).
  */
 export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
+  try {
+    const cached = getGigaChatFileCache(sha256File(filePath), 'spec_pdf');
+    if (cached) {
+      console.log('[parseSpecFromPdf] spec_pdf cache hit');
+      return JSON.parse(cached) as ParseResult;
+    }
+  } catch (e) {
+    console.warn(`[parseSpecFromPdf] cache read failed: ${e instanceof Error ? e.message : e}`);
+  }
+
   const mimeType = 'application/pdf';
   let fileId: string | null = null;
   let rawResponse = '';
@@ -186,7 +197,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
       const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
 
       if (items.length === 0) {
-        return {
+        const emptyRes: ParseResult = {
           items: [],
           errors: [],
           totalRows: 0,
@@ -195,15 +206,27 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
           specParseQuality,
         };
+        try {
+          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+        } catch (e) {
+          console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+        }
+        return emptyRes;
       }
 
-      return {
+      const okRes: ParseResult = {
         items,
         errors: [],
         totalRows: items.length,
         skippedRows: 0,
         specParseQuality,
       };
+      try {
+        setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
+      } catch (e) {
+        console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+      }
+      return okRes;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.warn(`[parseSpecFromPdf] attempt ${attempt} failed: ${lastError.message}`);

@@ -10,11 +10,26 @@ import fs from 'fs';
 import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
 import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigachatParseQuality';
+import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
 
 export type { GigaChatParseQuality } from './gigachatParseQuality';
 
 /** Максимальная длина текста документа, отправляемого в GigaChat (Excel / PDF text fallback) */
 const MAX_TEXT_LENGTH = 40000;
+/** Меньше символов из pdf-parse — считаем сканом (не делаем бесполезный text fallback). */
+const SCAN_PDF_TEXT_THRESHOLD = 200;
+
+function cacheGigaChatInvoice(
+  filePath: string,
+  purpose: 'invoice_pdf' | 'invoice_excel',
+  data: GigaChatInvoiceResult,
+): void {
+  try {
+    setGigaChatFileCache(sha256File(filePath), purpose, JSON.stringify(data));
+  } catch (e) {
+    console.warn(`[GigaChatParser] cache write failed: ${e instanceof Error ? e.message : e}`);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Промпт
@@ -454,6 +469,19 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
 
   const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
 
+  if (mimeType === 'application/pdf') {
+    try {
+      const cached = getGigaChatFileCache(sha256File(filePath), 'invoice_pdf');
+      if (cached) {
+        const parsed = JSON.parse(cached) as GigaChatInvoiceResult;
+        console.log('[GigaChatParser] invoice_pdf cache hit');
+        return parsed;
+      }
+    } catch (e) {
+      console.warn(`[GigaChatParser] cache read failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       // Загружаем файл (только при первой попытке)
@@ -461,10 +489,20 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
         fileId = await uploadFile(filePath, mimeType);
       }
 
+      let pdfIsScan = false;
+      if (mimeType === 'application/pdf') {
+        const extracted = (await readPdfText(filePath)).trim();
+        pdfIsScan = extracted.length <= SCAN_PDF_TEXT_THRESHOLD;
+      }
+
+      const firstUser = pdfIsScan
+        ? `${contextPrefix}Это скан счёта или PDF без извлекаемого текста. Внимательно разбери изображение и извлеки таблицу товаров.`
+        : `${contextPrefix}Выполни инструкцию. Распознай документ.`;
+
       rawResponse = await chatCompletion(
         [
           { role: 'system', content: INVOICE_PROMPT },
-          { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай документ.`, attachments: [fileId] },
+          { role: 'user',   content: firstUser, attachments: [fileId] },
         ],
         { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
       );
@@ -475,11 +513,12 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
       const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
       const items = mapItems(parsed.items);
 
-      // Если File API вернул мало позиций — пробуем через текст
+      // Если File API вернул мало позиций — текстовый fallback (только если PDF текстовый)
       if (items.length < 3 && mimeType === 'application/pdf') {
-        console.log(`[GigaChatParser] File API items=${items.length} < 3 — fallback to text extraction`);
         const docText = await readPdfText(filePath);
-        if (docText.trim()) {
+        const textLen = docText.trim().length;
+        if (textLen > SCAN_PDF_TEXT_THRESHOLD) {
+          console.log(`[GigaChatParser] File API items=${items.length} < 3 — fallback to text extraction`);
           const textResponse = await chatCompletion(
             [
               { role: 'system', content: INVOICE_PROMPT },
@@ -490,28 +529,57 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
           console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
           const textParsed: GigaChatParsedJSON = JSON.parse(sanitizeJSON(extractJSON(textResponse)));
           const textItems = mapItems(textParsed.items);
-          // Берём текстовый результат если он содержит хоть одну позицию
           if (textItems.length > 0) {
             const textMeta = mapMetadata(textParsed);
-            return {
+            const out: GigaChatInvoiceResult = {
               metadata: textMeta,
               items: textItems,
               rawResponse: textResponse,
               documentType: textParsed.document_type || null,
               parseQuality: buildParseQuality(textParsed, textItems, textMeta),
             };
+            cacheGigaChatInvoice(filePath, 'invoice_pdf', out);
+            return out;
           }
+        } else if (pdfIsScan) {
+          console.log(`[GigaChatParser] Scan PDF items=${items.length} < 3 — second File API pass`);
+          rawResponse = await chatCompletion(
+            [
+              { role: 'system', content: INVOICE_PROMPT },
+              {
+                role: 'user',
+                content: `${contextPrefix}Документ — скан. Повтори разбор изображения PDF и извлеки максимально полную таблицу позиций счёта.`,
+                attachments: [fileId],
+              },
+            ],
+            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
+          );
+          const jsonScan = sanitizeJSON(extractJSON(rawResponse));
+          const parsedScan: GigaChatParsedJSON = JSON.parse(jsonScan);
+          const itemsScan = mapItems(parsedScan.items);
+          const metaScan = mapMetadata(parsedScan);
+          const outScan: GigaChatInvoiceResult = {
+            metadata: metaScan,
+            items: itemsScan,
+            rawResponse,
+            documentType: parsedScan.document_type || null,
+            parseQuality: buildParseQuality(parsedScan, itemsScan, metaScan),
+          };
+          cacheGigaChatInvoice(filePath, 'invoice_pdf', outScan);
+          return outScan;
         }
       }
 
       const fileMeta = mapMetadata(parsed);
-      return {
+      const outFile: GigaChatInvoiceResult = {
         metadata: fileMeta,
         items,
         rawResponse,
         documentType: parsed.document_type || null,
         parseQuality: buildParseQuality(parsed, items, fileMeta),
       };
+      cacheGigaChatInvoice(filePath, 'invoice_pdf', outFile);
+      return outFile;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.warn(`[GigaChatParser] File API attempt ${attempt} failed: ${lastError.message}`);
@@ -576,6 +644,16 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
     throw new Error(`Не удалось извлечь текст из Excel-файла: ${filePath}`);
   }
 
+  try {
+    const cached = getGigaChatFileCache(sha256File(filePath), 'invoice_excel');
+    if (cached) {
+      console.log('[GigaChatParser] invoice_excel cache hit');
+      return JSON.parse(cached) as GigaChatInvoiceResult;
+    }
+  } catch (e) {
+    console.warn(`[GigaChatParser] cache read (excel) failed: ${e instanceof Error ? e.message : e}`);
+  }
+
   const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
   let rawResponse = '';
   let lastError: Error | null = null;
@@ -595,13 +673,15 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
       const excelItems = mapItems(parsed.items);
       const excelMeta = mapMetadata(parsed);
 
-      return {
+      const out: GigaChatInvoiceResult = {
         metadata: excelMeta,
         items: excelItems,
         rawResponse,
         documentType: parsed.document_type || null,
         parseQuality: buildParseQuality(parsed, excelItems, excelMeta),
       };
+      cacheGigaChatInvoice(filePath, 'invoice_excel', out);
+      return out;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err));
       console.warn(`[GigaChatParser] Excel attempt ${attempt} failed: ${lastError.message}`);

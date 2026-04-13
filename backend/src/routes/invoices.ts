@@ -545,29 +545,38 @@ router.post('/api/projects/:id/invoices/bulk', upload.array('files', 100), async
       error?: string;
     }[] = [];
 
-    for (const file of files) {
-      const fileName = fixFilename(file.originalname);
-      try {
-        const result = await processInvoiceFile(file, projectId, db);
-        results.push({
-          fileName,
-          invoiceId: result.invoiceId,
-          supplierName: result.supplierName,
-          imported: result.imported,
-          parsingCategory: result.parsingCategory,
-          status: result.status === 'needs_mapping' ? 'needs_mapping' : 'ok',
-        });
-      } catch (err) {
-        results.push({
-          fileName,
-          invoiceId: null,
-          supplierName: null,
-          imported: 0,
-          parsingCategory: null,
-          status: 'error',
-          error: err instanceof Error ? err.message : 'Неизвестная ошибка',
-        });
-      }
+    const BULK_CONCURRENCY = 3;
+    for (let i = 0; i < files.length; i += BULK_CONCURRENCY) {
+      const chunk = files.slice(i, i + BULK_CONCURRENCY);
+      const settled = await Promise.allSettled(
+        chunk.map(file => processInvoiceFile(file, projectId, db)),
+      );
+      settled.forEach((out, idx) => {
+        const file = chunk[idx]!;
+        const fileName = fixFilename(file.originalname);
+        if (out.status === 'fulfilled') {
+          const result = out.value;
+          results.push({
+            fileName,
+            invoiceId: result.invoiceId,
+            supplierName: result.supplierName,
+            imported: result.imported,
+            parsingCategory: result.parsingCategory,
+            status: result.status === 'needs_mapping' ? 'needs_mapping' : 'ok',
+          });
+        } else {
+          const err = out.reason;
+          results.push({
+            fileName,
+            invoiceId: null,
+            supplierName: null,
+            imported: 0,
+            parsingCategory: null,
+            status: 'error',
+            error: err instanceof Error ? err.message : 'Неизвестная ошибка',
+          });
+        }
+      });
     }
 
     const summary = {

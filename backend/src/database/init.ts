@@ -69,6 +69,13 @@ function initializeDatabase(): void {
       )`,
       "ALTER TABLE operator_feedback ADD COLUMN status TEXT DEFAULT 'new'",
       "ALTER TABLE specifications ADD COLUMN parse_source TEXT DEFAULT 'excel'",
+      `CREATE TABLE IF NOT EXISTS gigachat_file_cache (
+        file_hash TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (file_hash, purpose)
+      )`,
       `CREATE TABLE IF NOT EXISTS construction_synonyms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         abbreviation TEXT NOT NULL,
