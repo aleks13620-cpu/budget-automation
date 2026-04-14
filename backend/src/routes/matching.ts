@@ -167,6 +167,7 @@ function detectImportColumns(headerRow: unknown[]): {
 // Query param: ?mode=full (default) | incremental (preserves confirmed matches)
 router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
   try {
+    const debugRunId = `matching_run_${Date.now()}`;
     const projectId = parseInt(String(req.params.id), 10);
     const mode = String(req.query.mode || 'full');
     const db = getDatabase();
@@ -214,6 +215,18 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       candidates = runMatching(projectId);
     }
 
+    sendDebugLog(
+      'backend/src/routes/matching.ts:matching/run:after-runMatching',
+      'matching/run candidates generated',
+      {
+        projectId,
+        mode,
+        candidatesCount: Array.isArray(candidates) ? candidates.length : null,
+      },
+      debugRunId,
+      'H_MATCH_2',
+    );
+
     // Insert new candidates
     const insert = db.prepare(`
       INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
@@ -255,6 +268,20 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
     `).get(projectId) as { cnt: number };
     const matched = totalMatchedRows.cnt;
     const unmatched = totalSpec - matched;
+
+    sendDebugLog(
+      'backend/src/routes/matching.ts:matching/run:response',
+      'matching/run response summary',
+      {
+        projectId,
+        mode,
+        totalSpec,
+        matched,
+        unmatched,
+      },
+      debugRunId,
+      'H_MATCH_3',
+    );
 
     res.json({ total: totalSpec, matched, unmatched, mode });
   } catch (error) {
