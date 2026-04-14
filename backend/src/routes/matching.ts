@@ -45,6 +45,7 @@ function normalizeHeaderCell(value: unknown): string {
 function detectImportColumns(headerRow: unknown[]): {
   specCol: number;
   invCol: number;
+  invCols: number[];
   supplierCol: number;
   normalizedHeader: string[];
   expectedPatterns: Record<string, string[]>;
@@ -84,7 +85,24 @@ function detectImportColumns(headerRow: unknown[]): {
     return -1;
   };
 
-  // New extended matching strategy (safe and explicit)
+  const findAllByPredicates = (predicates: Array<(h: string) => boolean>): number[] => {
+    const result: number[] = [];
+    for (let i = 0; i < normalizedHeader.length; i++) {
+      const h = normalizedHeader[i];
+      if (!h) continue;
+      if (predicates.some(p => p(h))) result.push(i);
+    }
+    return result;
+  };
+
+  const invPredicates: Array<(h: string) => boolean> = [
+    h => expectedPatterns.invoice.some(p => h.includes(p)),
+    h => h.includes('счет') && h.includes('наименование'),
+    h => h.includes('счете') && h.includes('наименование'),
+    h => h.includes('invoice') && (h.includes('name') || h.includes('item')),
+    h => h === 'наименование счет',
+  ];
+
   let specCol = findByPredicates([
     h => expectedPatterns.spec.some(p => h.includes(p)),
     h => h.includes('спецификац') && h.includes('наименование'),
@@ -92,30 +110,25 @@ function detectImportColumns(headerRow: unknown[]): {
     h => h === 'наименование спец',
   ]);
 
-  let invCol = findByPredicates([
-    h => expectedPatterns.invoice.some(p => h.includes(p)),
-    h => h.includes('счет') && h.includes('наименование'),
-    h => h.includes('счете') && h.includes('наименование'),
-    h => h.includes('invoice') && (h.includes('name') || h.includes('item')),
-    h => h === 'наименование счет',
-  ]);
+  let invCols = findAllByPredicates(invPredicates);
+  let invCol = invCols.length > 0 ? invCols[0] : -1;
 
   let supplierCol = findByPredicates([
     h => expectedPatterns.supplier.some(p => h.includes(p)),
   ]);
 
-  // Backward-compatible fallback to legacy keyword rules
   if (specCol === -1) {
     specCol = normalizedHeader.findIndex(h => h.includes('спецификац') || h.includes('spec') || h === 'наименование спец');
   }
   if (invCol === -1) {
     invCol = normalizedHeader.findIndex(h => h.includes('счёт') || h.includes('счет') || h.includes('invoice') || h.includes('наименование счет'));
+    if (invCol !== -1) invCols = [invCol];
   }
   if (supplierCol === -1) {
     supplierCol = normalizedHeader.findIndex(h => h.includes('поставщик') || h.includes('supplier'));
   }
 
-  return { specCol, invCol, supplierCol, normalizedHeader, expectedPatterns };
+  return { specCol, invCol, invCols, supplierCol, normalizedHeader, expectedPatterns };
 }
 
 // POST /api/projects/:id/matching/run — run matching algorithm
@@ -1094,6 +1107,7 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
     const {
       specCol,
       invCol,
+      invCols,
       supplierCol,
       normalizedHeader,
       expectedPatterns,
@@ -1127,30 +1141,33 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
       'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id IS ? OR supplier_id = ?)'
     );
 
-    let imported = 0;
+    let newRules = 0;
+    let updatedRules = 0;
     let skipped = 0;
     let processedRows = 0;
+    let processedPairs = 0;
     const errors: string[] = [];
     const skipReasons = {
       emptyRequiredFields: 0,
       emptyAfterNormalization: 0,
     };
 
+    // Use all detected invoice columns (handles XLS with multiple "Наименование в счёте")
+    const effectiveInvCols = invCols.length > 0 ? invCols : [invCol];
+
     const importAll = db.transaction(() => {
       for (let i = 1; i < rows.length; i++) {
         const row = rows[i];
         processedRows++;
         const specName = String(row[specCol] ?? '').trim();
-        const invName = String(row[invCol] ?? '').trim();
-        if (!specName || !invName) {
+        if (!specName) {
           skipped++;
           skipReasons.emptyRequiredFields++;
           continue;
         }
 
         const specPattern = normalizeForMatching(specName);
-        const invPattern = normalizeForMatching(invName);
-        if (!specPattern || !invPattern) {
+        if (!specPattern) {
           skipped++;
           skipReasons.emptyAfterNormalization++;
           continue;
@@ -1167,24 +1184,46 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
           }
         }
 
-        const existing = findExisting.get(specPattern, invPattern, supplierId, supplierId);
-        if (existing) {
-          updateExisting.run(specPattern, invPattern, supplierId, supplierId);
-        } else {
-          upsert.run(specPattern, invPattern, supplierId);
+        let rowHadPair = false;
+        for (const colIdx of effectiveInvCols) {
+          const invName = String(row[colIdx] ?? '').trim();
+          if (!invName) continue;
+          const invPattern = normalizeForMatching(invName);
+          if (!invPattern) continue;
+
+          processedPairs++;
+          rowHadPair = true;
+
+          const existing = findExisting.get(specPattern, invPattern, supplierId, supplierId);
+          if (existing) {
+            updateExisting.run(specPattern, invPattern, supplierId, supplierId);
+            updatedRules++;
+          } else {
+            upsert.run(specPattern, invPattern, supplierId);
+            newRules++;
+          }
         }
-        imported++;
+
+        if (!rowHadPair) {
+          skipped++;
+          skipReasons.emptyRequiredFields++;
+        }
       }
     });
     importAll();
 
+    const imported = newRules + updatedRules;
     res.json({
       imported,
+      newRules,
+      updatedRules,
       skipped,
       errors,
       total: rows.length - 1,
       totalRows: rows.length - 1,
       processedRows,
+      processedPairs,
+      invoiceColumnsUsed: effectiveInvCols.length,
       reasons: skipReasons,
     });
   } catch (error) {

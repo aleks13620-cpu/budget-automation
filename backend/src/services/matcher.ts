@@ -163,11 +163,12 @@ function matchSpecItems(
     normalizedName: normalizeForMatching(item.name),
   }));
 
-  // Pre-normalize rules
+  // Pre-normalize rules; extract raw tokens for substring fallback
   const normalizedRules = rules.map(rule => ({
     ...rule,
     normalizedSpec: normalizeForMatching(rule.specification_pattern),
     normalizedInvoice: normalizeForMatching(rule.invoice_pattern),
+    invTokens: normalizeForMatching(rule.invoice_pattern).split(' ').filter(t => t.length >= 3),
   }));
 
   const allCandidates: MatchCandidate[] = [];
@@ -223,23 +224,41 @@ function matchSpecItems(
 
       if (bestConfidence < 0.95) {
         for (const rule of normalizedRules) {
-          if (rule.is_negative) continue; // skip negative rules in positive matching
-          // Skip rules from a different supplier
+          if (rule.is_negative) continue;
           if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) {
             continue;
           }
           const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
           const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
-          if (specMatch >= 0.65 && invMatch >= 0.65) {
+
+          let matched = specMatch >= 0.65 && invMatch >= 0.65;
+          let isFallback = false;
+
+          // Fallback: if rule invoice pattern looks like a short code/model (< 50 chars),
+          // check if its significant tokens appear inside the invoice item name.
+          // This handles training files where "Наименование в счёте" contains model codes
+          // like "TDU.5R DN50-5" while real invoices say "Ридан Узел TDU.5R DN50-5..."
+          if (!matched && specMatch >= 0.55 && rule.normalizedInvoice.length < 50 && rule.invTokens.length >= 2) {
+            const invLower = inv.normalizedName;
+            const tokensHit = rule.invTokens.filter(t => invLower.includes(t)).length;
+            const tokenRatio = tokensHit / rule.invTokens.length;
+            if (tokenRatio >= 0.6) {
+              matched = true;
+              isFallback = true;
+            }
+          }
+
+          if (matched) {
             let ruleConfidence = Math.min(rule.confidence, 0.95);
-            // Boost confidence for supplier-specific rules
             if (rule.supplier_id !== null && rule.supplier_id === inv.supplier_id) {
               ruleConfidence = Math.min(ruleConfidence + 0.02, 0.95);
             }
-            // Мягкий матч (0.65–0.79) — снижаем уверенность
             const isStrongMatch = specMatch >= 0.8 && invMatch >= 0.8;
             if (!isStrongMatch) {
               ruleConfidence = Math.max(0, ruleConfidence - 0.1);
+            }
+            if (isFallback) {
+              ruleConfidence = Math.min(ruleConfidence, 0.80);
             }
             if (ruleConfidence > bestConfidence) {
               bestConfidence = ruleConfidence;
