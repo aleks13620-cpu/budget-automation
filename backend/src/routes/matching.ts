@@ -42,6 +42,33 @@ function normalizeHeaderCell(value: unknown): string {
     .trim();
 }
 
+function sendDebugLog(
+  location: string,
+  message: string,
+  data: Record<string, unknown>,
+  runId: string,
+  hypothesisId: string,
+): void {
+  // #region agent log
+  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Debug-Session-Id': '2c5606',
+    },
+    body: JSON.stringify({
+      sessionId: '2c5606',
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+}
+
 function detectImportColumns(headerRow: unknown[]): {
   specCol: number;
   invCol: number;
@@ -56,6 +83,7 @@ function detectImportColumns(headerRow: unknown[]): {
     spec: [
       'наименование спецификации',
       'наименование спецификации и материалов',
+      'наименование и техническая характеристика',
       'позиция спецификации',
       'specification name',
       'spec name',
@@ -64,6 +92,8 @@ function detectImportColumns(headerRow: unknown[]): {
       'наименование в счете',
       'наименование в счёте',
       'наименование счета',
+      'тип марка обозначение документа опросного листа',
+      'тип марка обозначение документа',
       'позиция счета',
       'invoice name',
       'invoice item',
@@ -99,6 +129,7 @@ function detectImportColumns(headerRow: unknown[]): {
     h => expectedPatterns.invoice.some(p => h.includes(p)),
     h => h.includes('счет') && h.includes('наименование'),
     h => h.includes('счете') && h.includes('наименование'),
+    h => h.includes('тип') && h.includes('марка') && h.includes('обознач'),
     h => h.includes('invoice') && (h.includes('name') || h.includes('item')),
     h => h === 'наименование счет',
   ];
@@ -106,6 +137,7 @@ function detectImportColumns(headerRow: unknown[]): {
   let specCol = findByPredicates([
     h => expectedPatterns.spec.some(p => h.includes(p)),
     h => h.includes('спецификац') && h.includes('наименование'),
+    h => h.includes('техническ') && h.includes('характерист'),
     h => h.includes('spec') && h.includes('name'),
     h => h === 'наименование спец',
   ]);
@@ -1089,6 +1121,7 @@ router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => 
 // Excel columns (detected by keywords): spec_name, invoice_name, supplier (optional)
 router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Request, res: Response) => {
   try {
+    const debugRunId = `import_matches_${Date.now()}`;
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
@@ -1100,6 +1133,20 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as string[][];
+
+    sendDebugLog(
+      'backend/src/routes/matching.ts:import-matches:workbook',
+      'import-matches workbook loaded',
+      {
+        projectId,
+        fileName: req.file.originalname,
+        sheetName: workbook.SheetNames[0],
+        totalRows: rows.length,
+        headerPreview: Array.isArray(rows[0]) ? rows[0].slice(0, 12) : null,
+      },
+      debugRunId,
+      'H1',
+    );
 
     if (rows.length < 2) return res.status(400).json({ error: 'Файл пустой или содержит только заголовок' });
 
@@ -1113,7 +1160,47 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
       expectedPatterns,
     } = detectImportColumns(rows[0]);
 
+    const relaxedSpecCandidates = normalizedHeader
+      .map((h, idx) => ({ idx, h }))
+      .filter(x => x.h.includes('наименование') || x.h.includes('характерист') || x.h.includes('spec'));
+    const relaxedInvoiceCandidates = normalizedHeader
+      .map((h, idx) => ({ idx, h }))
+      .filter(x => x.h.includes('счет') || x.h.includes('invoice') || x.h.includes('тип марка') || x.h.includes('обозначение'));
+
+    sendDebugLog(
+      'backend/src/routes/matching.ts:import-matches:detect',
+      'import-matches column detection',
+      {
+        projectId,
+        fileName: req.file.originalname,
+        specCol,
+        invCol,
+        invCols,
+        supplierCol,
+        normalizedHeaderPreview: normalizedHeader.slice(0, 12),
+        relaxedSpecCandidates,
+        relaxedInvoiceCandidates,
+      },
+      debugRunId,
+      'H2',
+    );
+
     if (specCol === -1 || invCol === -1) {
+      sendDebugLog(
+        'backend/src/routes/matching.ts:import-matches:400',
+        'import-matches rejected by required columns validation',
+        {
+          projectId,
+          fileName: req.file.originalname,
+          detectedHeaders: rows[0],
+          normalizedHeaders: normalizedHeader,
+          specCol,
+          invCol,
+          invCols,
+        },
+        debugRunId,
+        'H3',
+      );
       return res.status(400).json({
         error: 'Не найдены колонки. Нужны: «Наименование спецификации» и «Наименование в счёте»',
         detectedHeaders: rows[0],
