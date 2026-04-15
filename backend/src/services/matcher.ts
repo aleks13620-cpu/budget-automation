@@ -272,11 +272,15 @@ function matchSpecItems(
       }
 
       // 1c. Equipment code (e.g. "C22-400-600") substring in invoice name/article.
+      // Also try space-collapsed form to handle "C22" vs "C 22" variants.
       if (bestConfidence < 0.95 && specCode && specCode.length >= 4) {
         const normCode = normalizeForMatching(specCode);
-        if (normCode.length >= 4) {
-          const inArt = inv.article && normalizeForMatching(inv.article).includes(normCode);
-          const inName = inv.normalizedName.includes(normCode);
+        const compactCode = normCode.replace(/\s+/g, '');
+        if (compactCode.length >= 4) {
+          const invNameCompact = inv.normalizedName.replace(/\s+/g, '');
+          const invArtCompact = inv.article ? normalizeForMatching(inv.article).replace(/\s+/g, '') : '';
+          const inArt = invArtCompact.includes(compactCode);
+          const inName = invNameCompact.includes(compactCode);
           if (inArt || inName) {
             bestConfidence = Math.max(bestConfidence, 0.92);
             bestType = 'exact_article';
