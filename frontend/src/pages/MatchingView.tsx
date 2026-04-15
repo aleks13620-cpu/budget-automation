@@ -261,8 +261,9 @@ export function MatchingView({ projectId, onBack }: Props) {
       const q = searchQuery.toLowerCase();
       const nameMatch = row.specItem.name.toLowerCase().includes(q);
       const charMatch = row.specItem.characteristics?.toLowerCase().includes(q);
+      const codeMatch = row.specItem.equipment_code?.toLowerCase().includes(q);
       const invoiceMatch = row.matches.some(m => m.invoiceName.toLowerCase().includes(q) || m.article?.toLowerCase().includes(q));
-      if (!nameMatch && !charMatch && !invoiceMatch) return false;
+      if (!nameMatch && !charMatch && !codeMatch && !invoiceMatch) return false;
     }
 
     return true;

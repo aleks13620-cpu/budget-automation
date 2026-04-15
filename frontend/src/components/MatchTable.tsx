@@ -137,6 +137,9 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                   <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
                     <div style={{ flex: '0 0 25%', paddingRight: '0.75rem', paddingLeft: row.specItem.parentItemId ? '1.5rem' : undefined }}>
                       <div>{row.specItem.fullName || row.specItem.name}</div>
+                      {row.specItem.equipment_code && (
+                        <div className="muted" style={{ fontSize: '0.75rem', color: '#2563eb' }}>Код: {row.specItem.equipment_code}</div>
+                      )}
                       {!row.specItem.fullName && row.specItem.characteristics && (
                         <div className="muted" style={{ fontSize: '0.75rem' }}>{row.specItem.characteristics}</div>
                       )}
