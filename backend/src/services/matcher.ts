@@ -148,6 +148,15 @@ function extractEntityWords(text: string): string {
   return text.toLowerCase();
 }
 
+function isParameterizedSpecName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return false;
+  if (/^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}/i.test(n)) return true;
+  if (/^\d{2,4}\s*[xх×]\s*\d{2,4}(\s|$)/i.test(n)) return true;
+  if (/^[a-zа-я]{0,4}\d{2,4}[-xх×]\d{2,4}([-\s]\d{2,4})?$/i.test(n)) return true;
+  return false;
+}
+
 /**
  * Core matching algorithm: match given spec items against invoice items using rules.
  * Extracted to allow both full and incremental matching to share the same logic.
@@ -158,6 +167,21 @@ function matchSpecItems(
   rules: MatchingRule[],
 ): MatchCandidate[] {
   if (specItems.length === 0 || invoiceItems.length === 0) return [];
+
+  // Build synthetic full names for parameter rows when parser did not persist full_name.
+  const synthesizedNameById = new Map<number, string>();
+  let lastParentByPosition = new Map<string, string>();
+  for (const spec of specItems) {
+    const position = (spec.position_number || '').trim().toLowerCase();
+    const hasPosition = position.length > 0;
+    const isParam = isParameterizedSpecName(spec.name);
+    if (hasPosition && isParam) {
+      const parent = lastParentByPosition.get(position);
+      if (parent) synthesizedNameById.set(spec.id, `${parent} ${spec.name}`.trim());
+    } else if (hasPosition) {
+      lastParentByPosition.set(position, spec.full_name || spec.name);
+    }
+  }
 
   // Pre-normalize invoice items
   const normalizedInvoice = invoiceItems.map(item => ({
@@ -178,7 +202,7 @@ function matchSpecItems(
 
   for (const spec of specItems) {
     // Use full_name (parent.name + child.name) for DN sub-rows, otherwise use name
-    const nameForMatching = spec.full_name || spec.name;
+    const nameForMatching = spec.full_name || synthesizedNameById.get(spec.id) || spec.name;
     const specNormName = normalizeForMatching(nameForMatching);
     const specNormFull = spec.characteristics
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
@@ -210,8 +234,9 @@ function matchSpecItems(
       }
 
       // 0. Spec article vs invoice article (confidence 0.98)
-      if (spec.article && inv.article) {
-        if (spec.article.trim().toLowerCase() === inv.article.trim().toLowerCase()) {
+      const specArticle = spec.article?.trim() || spec.product_code?.trim() || null;
+      if (specArticle && inv.article) {
+        if (specArticle.toLowerCase() === inv.article.trim().toLowerCase()) {
           bestConfidence = 0.98; bestType = 'exact_article';
         }
       }
