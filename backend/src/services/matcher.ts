@@ -11,6 +11,7 @@ export interface MatchCandidate {
 
 interface SpecItemRow {
   id: number;
+  position_number: string | null;
   name: string;
   characteristics: string | null;
   equipment_code: string | null;
@@ -45,33 +46,6 @@ interface MatchingRule {
   supplier_id: number | null;
   is_negative: number;
   source?: string;
-}
-
-function sendDebugLog(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  runId: string,
-  hypothesisId: string,
-): void {
-  // #region agent log
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Debug-Session-Id': '2c5606',
-    },
-    body: JSON.stringify({
-      sessionId: '2c5606',
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
 }
 
 // Stop words to remove during normalization (Russian units, articles, etc.)
@@ -184,11 +158,6 @@ function matchSpecItems(
   rules: MatchingRule[],
 ): MatchCandidate[] {
   if (specItems.length === 0 || invoiceItems.length === 0) return [];
-  const debugRunId = `match_${Date.now()}`;
-  let supplierRuleSkips = 0;
-  let strictRuleMatches = 0;
-  let fallbackRuleMatches = 0;
-  let negativeBlocks = 0;
 
   // Pre-normalize invoice items
   const normalizedInvoice = invoiceItems.map(item => ({
@@ -205,6 +174,7 @@ function matchSpecItems(
   }));
 
   const allCandidates: MatchCandidate[] = [];
+  let unmatchedLogged = 0;
 
   for (const spec of specItems) {
     // Use full_name (parent.name + child.name) for DN sub-rows, otherwise use name
@@ -214,12 +184,30 @@ function matchSpecItems(
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
       : specNormName;
     const specCode = spec.equipment_code?.trim() || null;
+    const specPositionNumber = spec.position_number?.trim() || null;
+    const positionToken = specPositionNumber && /[a-zA-Zа-яА-Я]/.test(specPositionNumber)
+      ? normalizeForMatching(specPositionNumber)
+      : '';
 
     const candidates: MatchCandidate[] = [];
+    let negativeBlockedCount = 0;
+    let bestRawNameSim = 0;
+    let bestRawFullSim = 0;
+    let bestRawInvName = '';
+    const isCompactSpec = /\bcompact\b/i.test(nameForMatching);
 
     for (const inv of normalizedInvoice) {
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
+      const rawNameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
+      if (rawNameSim > bestRawNameSim) {
+        bestRawNameSim = rawNameSim;
+        bestRawInvName = inv.name;
+      }
+      if (spec.characteristics) {
+        const rawFullSim = stringSimilarity.compareTwoStrings(specNormFull, inv.normalizedName);
+        if (rawFullSim > bestRawFullSim) bestRawFullSim = rawFullSim;
+      }
 
       // 0. Spec article vs invoice article (confidence 0.98)
       if (spec.article && inv.article) {
@@ -243,6 +231,20 @@ function matchSpecItems(
         }
       }
 
+      // 1b. Position number token appears in invoice article/name.
+      // Helps disambiguate spec rows where model/code lives in the first spec column.
+      if (
+        bestConfidence < 0.95 &&
+        positionToken.length >= 3 &&
+        (
+          (inv.article && normalizeForMatching(inv.article).includes(positionToken)) ||
+          inv.normalizedName.includes(positionToken)
+        )
+      ) {
+        bestConfidence = 0.88;
+        bestType = 'exact_article';
+      }
+
       // 2. Learned rule match (supplier-scoped: same supplier first, then global, skip other suppliers)
       // First check negative rules — block this pair entirely
       let isNegativeBlocked = false;
@@ -254,7 +256,7 @@ function matchSpecItems(
         if (specMatch >= 0.65 && invMatch >= 0.65) { isNegativeBlocked = true; break; }
       }
       if (isNegativeBlocked) {
-        negativeBlocks++;
+        negativeBlockedCount++;
         continue;
       }
 
@@ -262,7 +264,6 @@ function matchSpecItems(
         for (const rule of normalizedRules) {
           if (rule.is_negative) continue;
           if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) {
-            supplierRuleSkips++;
             continue;
           }
           const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
@@ -285,9 +286,20 @@ function matchSpecItems(
             }
           }
 
+          // Fallback2: whole normalized invoice pattern is a short substring of the real invoice line
+          // (training column often holds a fragment; token split can leave <2 tokens of length >= 3).
+          if (
+            !matched &&
+            specMatch >= 0.6 &&
+            rule.normalizedInvoice.length >= 8 &&
+            rule.normalizedInvoice.length < 60 &&
+            inv.normalizedName.includes(rule.normalizedInvoice)
+          ) {
+            matched = true;
+            isFallback = true;
+          }
+
           if (matched) {
-            if (isFallback) fallbackRuleMatches++;
-            else strictRuleMatches++;
             let ruleConfidence = Math.min(rule.confidence, 0.95);
             if (rule.supplier_id !== null && rule.supplier_id === inv.supplier_id) {
               ruleConfidence = Math.min(ruleConfidence + 0.02, 0.95);
@@ -362,31 +374,36 @@ function matchSpecItems(
     const TOP_K = 8;
     candidates.sort((a, b) => b.confidence - a.confidence);
     allCandidates.push(...candidates.slice(0, TOP_K));
+
+    if (isCompactSpec) {
+      // #region agent log
+      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H2',location:'backend/src/services/matcher.ts:compact_spec_diagnostics',message:'Compact spec diagnostics',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,candidateCountBeforeTopK:candidates.length,selectedAfterTopK:Math.min(candidates.length,TOP_K),negativeBlockedCount},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    }
+
+    if (positionToken.length >= 3 && candidates.length > 0) {
+      const top = candidates[0];
+      // #region agent log
+      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H5',location:'backend/src/services/matcher.ts:position_number_signal',message:'Position number used as matching signal',data:{specId:spec.id,specName:spec.name,positionNumber:spec.position_number,positionToken,topCandidateInvoiceId:top.invoiceItemId,topCandidateConfidence:top.confidence,topCandidateType:top.matchType,candidateCountBeforeTopK:candidates.length},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    }
+
+    if (candidates.length === 0 && unmatchedLogged < 25) {
+      unmatchedLogged++;
+      // #region agent log
+      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H3',location:'backend/src/services/matcher.ts:unmatched_spec_diagnostics',message:'Spec produced zero candidates',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,characteristics:spec.characteristics,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,negativeBlockedCount},timestamp:Date.now()})}).catch(()=>{});
+      // #endregion
+    }
   }
 
-  sendDebugLog(
-    'backend/src/services/matcher.ts:matchSpecItems',
-    'matching run stats',
-    {
-      specItems: specItems.length,
-      invoiceItems: invoiceItems.length,
-      rulesTotal: rules.length,
-      rulesImport: rules.filter(r => r.source === 'import').length,
-      rulesManual: rules.filter(r => r.source === 'manual').length,
-      supplierRuleSkips,
-      strictRuleMatches,
-      fallbackRuleMatches,
-      negativeBlocks,
-      candidatesProduced: allCandidates.length,
-    },
-    debugRunId,
-    'H_MATCH_1',
-  );
+  // #region agent log
+  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H4',location:'backend/src/services/matcher.ts:match_summary',message:'Matching output summary',data:{specItemsCount:specItems.length,invoiceItemsCount:invoiceItems.length,totalCandidates:allCandidates.length,specsWithoutCandidatesLogged:unmatchedLogged},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
 
   return allCandidates;
 }
 
-const SPEC_ITEMS_SQL = 'SELECT id, name, characteristics, equipment_code, article, product_code, unit, quantity, section, parent_item_id, full_name FROM specification_items WHERE project_id = ?';
+const SPEC_ITEMS_SQL = 'SELECT id, position_number, name, characteristics, equipment_code, article, product_code, unit, quantity, section, parent_item_id, full_name FROM specification_items WHERE project_id = ?';
 const INVOICE_ITEMS_SQL = `
   SELECT ii.id, ii.invoice_id, ii.article, ii.name, ii.unit, ii.quantity, ii.price, ii.amount,
          i.supplier_id, 'invoice' as source
@@ -417,6 +434,9 @@ export function runMatching(projectId: number): MatchCandidate[] {
   const specItems = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
   const allItems = loadAllItems(db, projectId);
   const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
+  // #region agent log
+  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H1',location:'backend/src/services/matcher.ts:runMatching',message:'runMatching inputs',data:{projectId,specItemsCount:specItems.length,invoiceAndPriceItemsCount:allItems.length,rulesCount:rules.length,invoiceOnlyCount:allItems.filter(i=>i.source==='invoice').length,priceListCount:allItems.filter(i=>i.source==='price_list').length},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   return matchSpecItems(specItems, allItems, rules);
 }
 

@@ -38,8 +38,21 @@ function normalizeText(text: unknown): string {
   return String(text).toLowerCase().trim();
 }
 
+function postDebugLog(payload: {
+  runId: string;
+  hypothesisId: string;
+  location: string;
+  message: string;
+  data: Record<string, unknown>;
+}): void {
+  // #region agent log
+  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:payload.runId,hypothesisId:payload.hypothesisId,location:payload.location,message:payload.message,data:payload.data,timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
+}
+
 function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: ColumnMapping } | null {
   const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+  const candidates: Array<{ row: number; matchCount: number; mapping: ColumnMapping; preview: string[] }> = [];
 
   for (let row = range.s.r; row <= Math.min(range.e.r, 30); row++) {
     const mapping: ColumnMapping = {
@@ -97,9 +110,43 @@ function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: Co
 
     // Require at least "name" and one more column to consider it a header
     if (mapping.name !== null && matchCount >= 2) {
+      const candidate = {
+        row,
+        matchCount,
+        mapping: { ...mapping },
+        preview: Array.from({ length: Math.min(10, range.e.c - range.s.c + 1) }, (_, i) => {
+          const cell = sheet[XLSX.utils.encode_cell({ r: row, c: range.s.c + i })];
+          return String(cell?.v ?? '').trim();
+        }),
+      };
+      candidates.push(candidate);
+      postDebugLog({
+        runId: 'spec-mapping',
+        hypothesisId: 'H3',
+        location: 'backend/src/services/excelParser.ts:detectHeaderRow',
+        message: 'Header row selected',
+        data: {
+          selectedRow: row,
+          selectedMatchCount: matchCount,
+          selectedMapping: mapping,
+          selectedPreview: candidate.preview,
+          scannedRows: Math.min(range.e.r, 30) + 1,
+        },
+      });
       return { rowIndex: row, mapping };
     }
   }
+
+  postDebugLog({
+    runId: 'spec-mapping',
+    hypothesisId: 'H3',
+    location: 'backend/src/services/excelParser.ts:detectHeaderRow',
+    message: 'Header row detection fallback details',
+    data: {
+      scannedRows: Math.min(range.e.r, 30) + 1,
+      candidates,
+    },
+  });
 
   return null;
 }
@@ -140,9 +187,30 @@ export function detectMappingFromRawData(rawRows: string[][]): { headerRow: numb
     }
 
     if (mapping.name !== null && matchCount >= 2) {
+      postDebugLog({
+        runId: 'spec-mapping',
+        hypothesisId: 'H1',
+        location: 'backend/src/services/excelParser.ts:detectMappingFromRawData',
+        message: 'Auto mapping detected from raw data',
+        data: {
+          headerRow: row,
+          mapping,
+          headerPreview: rowData.slice(0, 16),
+        },
+      });
       return { headerRow: row, columnMapping: mapping };
     }
   }
+  postDebugLog({
+    runId: 'spec-mapping',
+    hypothesisId: 'H1',
+    location: 'backend/src/services/excelParser.ts:detectMappingFromRawData',
+    message: 'Auto mapping not detected',
+    data: {
+      scannedRows: Math.min(rawRows.length, 30),
+      firstRowPreview: rawRows[0]?.slice(0, 16) ?? [],
+    },
+  });
   return null;
 }
 
@@ -178,6 +246,7 @@ const TO_ZHE_PATTERN = /^то\s+же/i;
  * собственные единицы/количество (например, детализация размера/материала).
  */
 const CONTINUATION_KEYWORD_PATTERN = /^(толщиной|толщ\.|сечение|сеч\.|длиной|дл\.|шириной|высотой|диаметром|ø|h=|l=|w=|b=|с\s+нанесением|с\s+покрытием|класса\s+герметичности)/i;
+const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
 
 function isDnChild(item: SpecificationRow): boolean {
   return !item.position_number && DN_CHILD_PATTERN.test(item.name.trim());
@@ -191,8 +260,30 @@ function isContinuationByKeyword(item: SpecificationRow): boolean {
   return item.position_number === null && CONTINUATION_KEYWORD_PATTERN.test(item.name.trim());
 }
 
+function isParameterizedChild(item: SpecificationRow): boolean {
+  const name = item.name.trim();
+  if (!name) return false;
+  // Parameter rows are typically short size/designation values and should
+  // inherit parent context for matching while staying separate line items.
+  if (PARAMETER_CHILD_PATTERN.test(name)) return true;
+  if (/^[A-Za-zА-Яа-я]{0,4}\d{2,4}[-xх×]\d{2,4}([-\s]\d{2,4})?$/i.test(name)) return true;
+  return false;
+}
+
 function mergeMultilineItems(items: SpecificationRow[]): SpecificationRow[] {
   const result: SpecificationRow[] = [];
+  let mergedByKeyword = 0;
+  let mergedByEmpty = 0;
+  let sizeLikeRowsSeen = 0;
+  let sizeLikeRowsMerged = 0;
+  const sizeLikeRowsSample: Array<{
+    name: string;
+    position_number: string | null;
+    quantity: number | null;
+    unit: string | null;
+    treatedAsKeywordContinuation: boolean;
+    treatedAsEmptyContinuation: boolean;
+  }> = [];
   for (const item of items) {
     // Явное продолжение по ключевым словам — объединяем в предыдущую позицию
     // даже если у строки есть своя единица/кол-во (берём данные родителя)
@@ -203,16 +294,48 @@ function mergeMultilineItems(items: SpecificationRow[]): SpecificationRow[] {
       item.quantity === null &&
       item.unit === null &&
       !isDnChild(item);
+    const looksLikeSizeSuffix = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b/i.test(item.name.trim());
+    if (looksLikeSizeSuffix) {
+      sizeLikeRowsSeen++;
+      if (sizeLikeRowsSample.length < 20) {
+        sizeLikeRowsSample.push({
+          name: item.name,
+          position_number: item.position_number,
+          quantity: item.quantity,
+          unit: item.unit,
+          treatedAsKeywordContinuation: isByKeyword,
+          treatedAsEmptyContinuation: isByEmpty,
+        });
+      }
+    }
 
     if ((isByKeyword || isByEmpty) && result.length > 0) {
       const last = result[result.length - 1];
       last.name = last.name + ' ' + item.name;
       if (last.full_name) last.full_name = last.full_name + ' ' + item.name;
       // при keyword-продолжении: данные родителя сохраняются
+      if (isByKeyword) mergedByKeyword++;
+      if (isByEmpty) mergedByEmpty++;
+      if (looksLikeSizeSuffix) sizeLikeRowsMerged++;
     } else {
       result.push(item);
     }
   }
+  postDebugLog({
+    runId: 'spec-mapping',
+    hypothesisId: 'H6',
+    location: 'backend/src/services/excelParser.ts:mergeMultilineItems',
+    message: 'Multiline merge diagnostics',
+    data: {
+      inputCount: items.length,
+      outputCount: result.length,
+      mergedByKeyword,
+      mergedByEmpty,
+      sizeLikeRowsSeen,
+      sizeLikeRowsMerged,
+      sizeLikeRowsSample,
+    },
+  });
   return result;
 }
 
@@ -225,6 +348,7 @@ function mergeMultilineItems(items: SpecificationRow[]): SpecificationRow[] {
  */
 function linkDnChildren(items: SpecificationRow[]): void {
   let lastFullIndex: number | null = null;
+  let parameterChildrenExpanded = 0;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
     if (isDnChild(item)) {
@@ -254,6 +378,18 @@ function linkDnChildren(items: SpecificationRow[]): void {
       }
       // "То же" сам становится родителем для следующего "То же"
       lastFullIndex = i;
+    } else if (
+      lastFullIndex !== null &&
+      isParameterizedChild(item) &&
+      item.position_number !== null &&
+      items[lastFullIndex].position_number === item.position_number
+    ) {
+      // Parameterized child line (e.g. "δ=30мм Ø22", "04x018"):
+      // keep it as a separate row, but enrich with parent context in full_name.
+      item._parentIndex = lastFullIndex;
+      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+      item.full_name = `${parentName} ${item.name}`.trim();
+      parameterChildrenExpanded++;
     } else {
       // Обычная позиция — становится новым родителем
       lastFullIndex = i;
@@ -261,6 +397,16 @@ function linkDnChildren(items: SpecificationRow[]): void {
       item.full_name = null;
     }
   }
+  postDebugLog({
+    runId: 'spec-mapping',
+    hypothesisId: 'H7',
+    location: 'backend/src/services/excelParser.ts:linkDnChildren',
+    message: 'Parent context expansion for parameter child rows',
+    data: {
+      totalItems: items.length,
+      parameterChildrenExpanded,
+    },
+  });
 }
 
 export function parseExcelFile(filePath: string): ParseResult {
@@ -397,5 +543,39 @@ export function parseFromRawData(
 
   const processed = mergeMultiline ? mergeMultilineItems(items) : items;
   linkDnChildren(processed);
+
+  let articleFilled = 0;
+  let productCodeFilled = 0;
+  let equipmentCodeFilled = 0;
+  let compactRows = 0;
+  let compactRowsWithCodeSignals = 0;
+  for (const item of processed) {
+    if (item.article) articleFilled++;
+    if (item.product_code) productCodeFilled++;
+    if (item.equipment_code) equipmentCodeFilled++;
+    if (/\bcompact\b/i.test(item.name)) {
+      compactRows++;
+      if (item.article || item.product_code || item.equipment_code || /\bcv?\s*\d{2}[-\s]?\d{2,4}[-\s]?\d{2,4}\b/i.test(item.name)) {
+        compactRowsWithCodeSignals++;
+      }
+    }
+  }
+
+  postDebugLog({
+    runId: 'spec-mapping',
+    hypothesisId: 'H2',
+    location: 'backend/src/services/excelParser.ts:parseFromRawData',
+    message: 'Parsed spec fields distribution after mapping',
+    data: {
+      headerRow,
+      mapping,
+      totalParsed: processed.length,
+      articleFilled,
+      productCodeFilled,
+      equipmentCodeFilled,
+      compactRows,
+      compactRowsWithCodeSignals,
+    },
+  });
   return { items: processed, errors, totalRows, skippedRows };
 }
