@@ -201,8 +201,10 @@ function matchSpecItems(
   let unmatchedLogged = 0;
 
   for (const spec of specItems) {
-    // Use full_name (parent.name + child.name) for DN sub-rows, otherwise use name
-    const nameForMatching = spec.full_name || synthesizedNameById.get(spec.id) || spec.name;
+    const nameBase = spec.full_name || synthesizedNameById.get(spec.id) || spec.name;
+    const codeTokens = [spec.equipment_code, spec.product_code, spec.article]
+      .map(v => v?.trim()).filter(Boolean).join(' ');
+    const nameForMatching = codeTokens ? `${nameBase} ${codeTokens}` : nameBase;
     const specNormName = normalizeForMatching(nameForMatching);
     const specNormFull = spec.characteristics
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
@@ -257,7 +259,6 @@ function matchSpecItems(
       }
 
       // 1b. Position number token appears in invoice article/name.
-      // Helps disambiguate spec rows where model/code lives in the first spec column.
       if (
         bestConfidence < 0.95 &&
         positionToken.length >= 3 &&
@@ -268,6 +269,19 @@ function matchSpecItems(
       ) {
         bestConfidence = 0.88;
         bestType = 'exact_article';
+      }
+
+      // 1c. Equipment code (e.g. "C22-400-600") substring in invoice name/article.
+      if (bestConfidence < 0.95 && specCode && specCode.length >= 4) {
+        const normCode = normalizeForMatching(specCode);
+        if (normCode.length >= 4) {
+          const inArt = inv.article && normalizeForMatching(inv.article).includes(normCode);
+          const inName = inv.normalizedName.includes(normCode);
+          if (inArt || inName) {
+            bestConfidence = Math.max(bestConfidence, 0.92);
+            bestType = 'exact_article';
+          }
+        }
       }
 
       // 2. Learned rule match (supplier-scoped: same supplier first, then global, skip other suppliers)
@@ -402,7 +416,7 @@ function matchSpecItems(
 
     if (isCompactSpec) {
       // #region agent log
-      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H2',location:'backend/src/services/matcher.ts:compact_spec_diagnostics',message:'Compact spec diagnostics',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,candidateCountBeforeTopK:candidates.length,selectedAfterTopK:Math.min(candidates.length,TOP_K),negativeBlockedCount},timestamp:Date.now()})}).catch(()=>{});
+      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'v2',hypothesisId:'H2',location:'backend/src/services/matcher.ts:compact_spec_diagnostics',message:'Compact spec diagnostics',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,equipmentCode:spec.equipment_code,nameUsedForMatching:nameForMatching,specNormName,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,candidateCountBeforeTopK:candidates.length,selectedAfterTopK:Math.min(candidates.length,TOP_K),negativeBlockedCount,topCandidateType:candidates[0]?.matchType,topCandidateConf:candidates[0]?.confidence},timestamp:Date.now()})}).catch(()=>{});
       // #endregion
     }
 
@@ -422,7 +436,14 @@ function matchSpecItems(
   }
 
   // #region agent log
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H4',location:'backend/src/services/matcher.ts:match_summary',message:'Matching output summary',data:{specItemsCount:specItems.length,invoiceItemsCount:invoiceItems.length,totalCandidates:allCandidates.length,specsWithoutCandidatesLogged:unmatchedLogged},timestamp:Date.now()})}).catch(()=>{});
+  const tierCount: Record<string,number> = {};
+  const uniqueSpecs = new Set(allCandidates.map(c => c.specItemId));
+  for (const c of allCandidates) { tierCount[c.matchType] = (tierCount[c.matchType] || 0) + 1; }
+  const specsWithEquipCode = specItems.filter(s => s.equipment_code?.trim()).length;
+  const specsWithFullName = specItems.filter(s => s.full_name?.trim()).length;
+  const specsWithArticle = specItems.filter(s => s.article?.trim()).length;
+  const specsWithProductCode = specItems.filter(s => s.product_code?.trim()).length;
+  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'v2',hypothesisId:'H4',location:'backend/src/services/matcher.ts:match_summary',message:'Matching output summary v2',data:{specItemsCount:specItems.length,invoiceItemsCount:invoiceItems.length,totalCandidates:allCandidates.length,uniqueSpecsMatched:uniqueSpecs.size,specsWithoutCandidatesLogged:unmatchedLogged,tierCount,specsWithEquipCode,specsWithFullName,specsWithArticle,specsWithProductCode},timestamp:Date.now()})}).catch(()=>{});
   // #endregion
 
   return allCandidates;

@@ -21,7 +21,7 @@ const HEADER_KEYWORDS: Record<keyof ColumnMapping, string[]> = {
   position_number: ['№', 'п/п', 'поз', 'номер'],
   name: ['наименование', 'название', 'товар', 'материал'],
   characteristics: ['характеристик', 'описание', 'параметр'],
-  equipment_code: ['код', 'article'],
+  equipment_code: ['код', 'article', 'в кс', 'в ks'],
   article:       ['артикул', 'арт.', 'арт ', 'sku'],
   product_code:  ['код продукции', 'код товара', 'код позиции'],
   marking:       ['маркировка', 'обозначение', 'марк'],
