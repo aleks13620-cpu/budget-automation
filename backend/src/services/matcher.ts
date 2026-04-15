@@ -271,12 +271,12 @@ function matchSpecItems(
         bestType = 'exact_article';
       }
 
-      // 1c. Equipment code (e.g. "C22-400-600") substring in invoice name/article.
+      // 1c. Equipment code (e.g. "C22-400-600", "MVT") substring in invoice name/article.
       // Also try space-collapsed form to handle "C22" vs "C 22" variants.
-      if (bestConfidence < 0.95 && specCode && specCode.length >= 4) {
+      if (bestConfidence < 0.95 && specCode && specCode.length >= 3) {
         const normCode = normalizeForMatching(specCode);
         const compactCode = normCode.replace(/\s+/g, '');
-        if (compactCode.length >= 4) {
+        if (compactCode.length >= 3) {
           const invNameCompact = inv.normalizedName.replace(/\s+/g, '');
           const invArtCompact = inv.article ? normalizeForMatching(inv.article).replace(/\s+/g, '') : '';
           const inArt = invArtCompact.includes(compactCode);
@@ -363,9 +363,11 @@ function matchSpecItems(
       }
 
       // 3. Name similarity (Dice coefficient)
+      // Lower threshold when spec has equipment_code (double signal: name + code)
+      const simThreshold = specCode ? 0.45 : 0.6;
       if (bestConfidence < 0.95) {
         const nameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
-        if (nameSim >= 0.6) {
+        if (nameSim >= simThreshold) {
           let confidence = nameSim * 0.9;
           // Bonus if units match
           if (spec.unit && inv.unit && spec.unit.toLowerCase().trim() === inv.unit.toLowerCase().trim()) {
