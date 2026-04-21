@@ -4,6 +4,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase, initializeDatabase } from './database';
+import { safeUnlink } from './utils/safeUnlink';
 import specificationRoutes from './routes/specifications';
 import invoiceRoutes from './routes/invoices';
 import supplierRoutes from './routes/suppliers';
@@ -149,7 +150,7 @@ app.delete('/api/projects/:id', (req, res) => {
     // Clean up invoice files from disk
     for (const { file_path } of invoiceFiles) {
       if (file_path) {
-        fs.unlink(file_path, () => {});
+        safeUnlink(file_path);
       }
     }
 

@@ -42,33 +42,6 @@ function normalizeHeaderCell(value: unknown): string {
     .trim();
 }
 
-function sendDebugLog(
-  location: string,
-  message: string,
-  data: Record<string, unknown>,
-  runId: string,
-  hypothesisId: string,
-): void {
-  // #region agent log
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Debug-Session-Id': '2c5606',
-    },
-    body: JSON.stringify({
-      sessionId: '2c5606',
-      runId,
-      hypothesisId,
-      location,
-      message,
-      data,
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-}
-
 function detectImportColumns(headerRow: unknown[]): {
   specCol: number;
   invCol: number;
@@ -167,7 +140,6 @@ function detectImportColumns(headerRow: unknown[]): {
 // Query param: ?mode=full (default) | incremental (preserves confirmed matches)
 router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
   try {
-    const debugRunId = `matching_run_${Date.now()}`;
     const projectId = parseInt(String(req.params.id), 10);
     const mode = String(req.query.mode || 'full');
     const db = getDatabase();
@@ -215,18 +187,6 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       candidates = runMatching(projectId);
     }
 
-    sendDebugLog(
-      'backend/src/routes/matching.ts:matching/run:after-runMatching',
-      'matching/run candidates generated',
-      {
-        projectId,
-        mode,
-        candidatesCount: Array.isArray(candidates) ? candidates.length : null,
-      },
-      debugRunId,
-      'H_MATCH_2',
-    );
-
     // Insert new candidates
     const insert = db.prepare(`
       INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
@@ -268,20 +228,6 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
     `).get(projectId) as { cnt: number };
     const matched = totalMatchedRows.cnt;
     const unmatched = totalSpec - matched;
-
-    sendDebugLog(
-      'backend/src/routes/matching.ts:matching/run:response',
-      'matching/run response summary',
-      {
-        projectId,
-        mode,
-        totalSpec,
-        matched,
-        unmatched,
-      },
-      debugRunId,
-      'H_MATCH_3',
-    );
 
     res.json({ total: totalSpec, matched, unmatched, mode });
   } catch (error) {
@@ -1046,6 +992,7 @@ router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request,
     let boosted = 0;
     let removed = 0;
     let validated = 0;
+    let skipped = 0;
     const BATCH = 5;
 
     for (let i = 0; i < Math.min(candidates.length, BATCH); i++) {
@@ -1069,7 +1016,13 @@ router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request,
           const answer = result.toLowerCase().trim();
           isMatch = answer.startsWith('да') || answer.includes('yes');
           insertCache.run(specText, invText, isMatch ? 1 : 0);
-        } catch {
+        } catch (error) {
+          skipped++;
+          console.error('gigachat_validation_skipped', {
+            timestamp: new Date().toISOString(),
+            matchId: c.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
           continue; // skip on error
         }
       }
@@ -1084,7 +1037,7 @@ router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request,
       }
     }
 
-    res.json({ validated, boosted, removed, total: candidates.length });
+    res.json({ validated, boosted, removed, skipped, total: candidates.length });
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при GigaChat валидации',
@@ -1148,7 +1101,6 @@ router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => 
 // Excel columns (detected by keywords): spec_name, invoice_name, supplier (optional)
 router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Request, res: Response) => {
   try {
-    const debugRunId = `import_matches_${Date.now()}`;
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
@@ -1160,20 +1112,6 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' }) as string[][];
-
-    sendDebugLog(
-      'backend/src/routes/matching.ts:import-matches:workbook',
-      'import-matches workbook loaded',
-      {
-        projectId,
-        fileName: req.file.originalname,
-        sheetName: workbook.SheetNames[0],
-        totalRows: rows.length,
-        headerPreview: Array.isArray(rows[0]) ? rows[0].slice(0, 12) : null,
-      },
-      debugRunId,
-      'H1',
-    );
 
     if (rows.length < 2) return res.status(400).json({ error: 'Файл пустой или содержит только заголовок' });
 
@@ -1187,47 +1125,7 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
       expectedPatterns,
     } = detectImportColumns(rows[0]);
 
-    const relaxedSpecCandidates = normalizedHeader
-      .map((h, idx) => ({ idx, h }))
-      .filter(x => x.h.includes('наименование') || x.h.includes('характерист') || x.h.includes('spec'));
-    const relaxedInvoiceCandidates = normalizedHeader
-      .map((h, idx) => ({ idx, h }))
-      .filter(x => x.h.includes('счет') || x.h.includes('invoice') || x.h.includes('тип марка') || x.h.includes('обозначение'));
-
-    sendDebugLog(
-      'backend/src/routes/matching.ts:import-matches:detect',
-      'import-matches column detection',
-      {
-        projectId,
-        fileName: req.file.originalname,
-        specCol,
-        invCol,
-        invCols,
-        supplierCol,
-        normalizedHeaderPreview: normalizedHeader.slice(0, 12),
-        relaxedSpecCandidates,
-        relaxedInvoiceCandidates,
-      },
-      debugRunId,
-      'H2',
-    );
-
     if (specCol === -1 || invCol === -1) {
-      sendDebugLog(
-        'backend/src/routes/matching.ts:import-matches:400',
-        'import-matches rejected by required columns validation',
-        {
-          projectId,
-          fileName: req.file.originalname,
-          detectedHeaders: rows[0],
-          normalizedHeaders: normalizedHeader,
-          specCol,
-          invCol,
-          invCols,
-        },
-        debugRunId,
-        'H3',
-      );
       return res.status(400).json({
         error: 'Не найдены колонки. Нужны: «Наименование спецификации» и «Наименование в счёте»',
         detectedHeaders: rows[0],

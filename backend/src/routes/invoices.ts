@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
-import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
+import { safeUnlink } from '../utils/safeUnlink';
+import { createUploadMiddleware, fixFilename, parseJsonSafe } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
 import { routeInvoiceFile } from '../services/invoiceRouter';
@@ -12,50 +13,13 @@ import { isGigaChatConfigured } from '../services/gigachatService';
 import stringSimilarity from 'string-similarity';
 import type { ExcelParseResult } from '../types/invoice';
 
-const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
-
-// Ensure upload directory exists
-if (!fs.existsSync(UPLOAD_PATH)) {
-  fs.mkdirSync(UPLOAD_PATH, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, UPLOAD_PATH);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
-
-const upload = multer({
-  storage,
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    const allowed = ['.pdf', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.tiff', '.bmp'];
-    if (allowed.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Допустимы только файлы .pdf, .xlsx, .xls, .jpg, .jpeg, .png, .tiff, .bmp'));
-    }
-  },
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+const upload = createUploadMiddleware({
+  allowedExtensions: ['.pdf', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.tiff', '.bmp'],
+  errorMessage: 'Допустимы только файлы .pdf, .xlsx, .xls, .jpg, .jpeg, .png, .tiff, .bmp',
+  maxFileSizeBytes: 50 * 1024 * 1024,
 });
 
 const router = Router();
-
-// Fix garbled Cyrillic filenames (multer on Windows may encode as latin1)
-function fixFilename(originalname: string): string {
-  try {
-    const fixed = Buffer.from(originalname, 'latin1').toString('utf8');
-    // If result contains replacement chars, keep original
-    if (fixed.includes('\ufffd')) return originalname;
-    return fixed;
-  } catch {
-    return originalname;
-  }
-}
 
 const DELIVERY_KEYWORDS = [
   'доставка', 'транспортные расходы', 'транспортные услуги',
@@ -805,7 +769,11 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
     if (inv.supplier_id) {
       const cfg = db.prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?').get(inv.supplier_id) as { config: string } | undefined;
       if (cfg) {
-        const parsed = JSON.parse(cfg.config);
+        const parsed = parseJsonSafe<Record<string, any>>(
+          cfg.config,
+          {},
+          'GET /api/invoices/:id supplier_parser_configs'
+        );
         if (parsed.price_calc_formula) priceCalcFormula = parsed.price_calc_formula;
       }
     }
@@ -834,7 +802,7 @@ router.delete('/api/invoices/:id', (req: Request, res: Response) => {
 
     // Delete file from disk
     if (invoice.file_path) {
-      fs.unlink(invoice.file_path, () => {});
+      safeUnlink(invoice.file_path);
     }
 
     res.json({ deleted: true });
@@ -1483,7 +1451,13 @@ router.post('/api/invoices/:id/calculate-price-formula', (req: Request, res: Res
     // Save formula to supplier config
     if (saveForSupplier && invoice.supplier_id) {
       const existing = db.prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?').get(invoice.supplier_id) as { config: string } | undefined;
-      const config = existing ? JSON.parse(existing.config) : {};
+      const config = existing
+        ? parseJsonSafe<Record<string, any>>(
+          existing.config,
+          {},
+          'POST /api/invoices/:id/calculate-price-formula supplier_parser_configs'
+        )
+        : {};
       config.price_calc_formula = { numerator, denominator };
       db.prepare('INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?) ON CONFLICT(supplier_id) DO UPDATE SET config = excluded.config')
         .run(invoice.supplier_id, JSON.stringify(config));

@@ -44,7 +44,7 @@ budget-automation/
 │           └── ColumnMapper.tsx  — настройка колонок парсера
 ├── database/         # SQLite файл БД
 ├── data/uploads/     # Загруженные файлы
-└── docs.md           # План реализации
+└── docs/plans/       # Планы проекта (active/archive/references)
 ```
 
 ## Быстрый старт

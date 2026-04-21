@@ -11,6 +11,7 @@ import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
 import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigachatParseQuality';
 import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
+import { balanceJsonBrackets } from './gigachatUtils';
 
 export type { GigaChatParseQuality } from './gigachatParseQuality';
 
@@ -322,38 +323,6 @@ export function sanitizeJSON(json: string): string {
   result = result.replace(/,(\s*[}\]])/g, '$1');
 
   return balanceJsonBrackets(result);
-}
-
-/** Дописывает недостающие `}` / `]` с учётом вложенности (вне строковых литералов). */
-function balanceJsonBrackets(s: string): string {
-  let inString = false;
-  let escape = false;
-  const stack: string[] = [];
-
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (escape) {
-      escape = false;
-      continue;
-    }
-    if (inString) {
-      if (ch === '\\') escape = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') {
-      inString = true;
-      continue;
-    }
-    if (ch === '{') stack.push('}');
-    else if (ch === '[') stack.push(']');
-    else if (ch === '}' || ch === ']') {
-      const top = stack[stack.length - 1];
-      if (top === ch) stack.pop();
-    }
-  }
-
-  return s + stack.reverse().join('');
 }
 
 // Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга

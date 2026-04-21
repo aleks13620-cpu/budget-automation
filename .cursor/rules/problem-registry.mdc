@@ -1,0 +1,25 @@
+---
+description: Keep problem registry and DB structure up to date
+globs:
+  - "**/*"
+alwaysApply: false
+---
+
+- When a bug or technical issue is discovered, register it in `docs/problem-registry.yaml` unless it already exists.
+- Every issue must include user-facing impact in `user_impact` (plain language: what user/business pain it creates).
+- Keep scoring fields (`impact`, `urgency`, `frequency`, `confidence`, `effort`, `risk`) up to date and run prioritization.
+- Before finishing a task that modified the registry, run `npm run problem-registry:validate` from `backend`.
+- If issue scoring changed, run `npm run problem-registry:prioritize` from `backend`.
+- If issue statuses changed, regenerate the report with `npm run problem-registry:report` from `backend`.
+- If DB schema changed (tables, columns, indexes), refresh `docs/database-structure.md` with `npm run problem-registry:db:snapshot` from `backend`.
+- Never create duplicate issue IDs or duplicate normalized titles in `docs/problem-registry.yaml`.
+- If user asks about project problems ("проблемы", "что не так", "болевые точки", "риски"), do this flow:
+  1) run `npm run problem-registry:scan` in `backend`,
+  2) run `npm run problem-registry:prioritize` in `backend`,
+  3) run `npm run problem-registry:report` in `backend`,
+  4) answer in plain human language:
+     - what is wrong now (top P0/P1 first),
+     - what user/business impact each top issue has,
+     - what to do next (`next_action`),
+     - what can wait (P2/P3).
+- For problem questions, avoid only raw JSON output; provide a concise narrative summary in Russian.

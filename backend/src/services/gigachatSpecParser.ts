@@ -8,6 +8,7 @@
 
 import { chatCompletion } from './gigachatService';
 import { getDatabase } from '../database';
+import { balanceJsonBrackets } from './gigachatUtils';
 
 export interface SpecItemInput {
   idx: number;
@@ -134,6 +135,32 @@ function sanitizeJson(raw: string): string {
   return s;
 }
 
+function cleanInvoiceText(text: string): string {
+  const lines = text.split('\n');
+  const filtered = lines.filter(line => {
+    const l = line.trim();
+    if (l.length === 0) return false;
+    const skipPatterns = [
+      /^инн[:\s]/i,
+      /^кпп[:\s]/i,
+      /^р\/с[:\s]/i,
+      /^к\/с[:\s]/i,
+      /^бик[:\s]/i,
+      /^огрн[:\s]/i,
+      /^директор/i,
+      /^подпись/i,
+      /^итого[:\s]/i,
+      /^ндс[:\s]/i,
+      /^в том числе/i,
+      /^всего к оплате/i,
+      /^счёт на оплату №/i,
+      /^счет на оплату №/i,
+    ];
+    return !skipPatterns.some(p => p.test(l));
+  });
+  return filtered.join('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Утилиты: задержка и retry
 // ---------------------------------------------------------------------------
@@ -184,20 +211,32 @@ async function enrichBatch(items: SpecItemInput[], parseRulesContext: string): P
   const userContent = parseRulesContext
     ? `${parseRulesContext}\n\nВходной JSON-массив позиций:\n${inputJson}`
     : inputJson;
+  const cleanedUserContent = cleanInvoiceText(userContent);
 
   const messages = [
     { role: 'system' as const, content: SPEC_ENRICH_PROMPT },
-    { role: 'user' as const, content: userContent },
+    { role: 'user' as const, content: cleanedUserContent },
   ];
 
-  const raw = await withRetry(() => chatCompletion(messages, { temperature: 0.1, maxTokens: 4000 }));
-
-  let parsed: SpecItemEnriched[];
-  try {
-    const jsonStr = sanitizeJson(extractJsonArray(raw));
-    parsed = JSON.parse(jsonStr);
-  } catch (e) {
-    throw new Error(`GigaChat returned invalid JSON: ${e}. Raw: ${raw.slice(0, 300)}`);
+  let parsed: SpecItemEnriched[] | null = null;
+  let raw = '';
+  let lastJsonError: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    raw = await withRetry(() => chatCompletion(messages, { temperature: 0.1, maxTokens: 16000 }));
+    try {
+      const jsonStr = sanitizeJson(extractJsonArray(raw));
+      const balancedJson = balanceJsonBrackets(jsonStr);
+      parsed = JSON.parse(balancedJson);
+      break;
+    } catch (e) {
+      lastJsonError = e;
+      if (attempt < 2) {
+        console.warn(`GigaChat enrichBatch invalid JSON on attempt ${attempt}, retrying once`);
+      }
+    }
+  }
+  if (!parsed) {
+    throw new Error(`GigaChat returned invalid JSON after 2 attempts: ${lastJsonError}. Raw: ${raw.slice(0, 300)}`);
   }
 
   // Validate length

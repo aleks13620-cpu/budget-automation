@@ -1,37 +1,20 @@
 import { Router, Request, Response } from 'express';
-import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
+import { safeUnlink } from '../utils/safeUnlink';
+import { createUploadMiddleware, fixFilename } from '../utils/fileUtils';
 import {
   parsePdfFile, parsePdfFromExtracted, extractRawRows,
   detectColumns, SavedMapping, categorizeParsingResult,
 } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData } from '../services/excelInvoiceParser';
 
-const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
-if (!fs.existsSync(UPLOAD_PATH)) fs.mkdirSync(UPLOAD_PATH, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_PATH),
-  filename: (_req, file, cb) => cb(null, Date.now() + '-' + Math.round(Math.random() * 1e9) + path.extname(file.originalname)),
+const upload = createUploadMiddleware({
+  allowedExtensions: ['.pdf', '.xlsx', '.xls'],
+  errorMessage: 'Допустимы только .pdf, .xlsx, .xls',
+  maxFileSizeBytes: 50 * 1024 * 1024,
 });
-const upload = multer({
-  storage,
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (['.pdf', '.xlsx', '.xls'].includes(ext)) cb(null, true);
-    else cb(new Error('Допустимы только .pdf, .xlsx, .xls'));
-  },
-  limits: { fileSize: 50 * 1024 * 1024 },
-});
-
-function fixFilename(originalname: string): string {
-  try {
-    const fixed = Buffer.from(originalname, 'latin1').toString('utf8');
-    return fixed.includes('\ufffd') ? originalname : fixed;
-  } catch { return originalname; }
-}
 
 const router = Router();
 
@@ -128,7 +111,7 @@ router.delete('/api/price-lists/:id', (req: Request, res: Response) => {
     const row = db.prepare('SELECT id, file_path FROM price_lists WHERE id = ?').get(id) as { id: number; file_path: string } | undefined;
     if (!row) return res.status(404).json({ error: 'Прайс не найден' });
     db.prepare('DELETE FROM price_lists WHERE id = ?').run(id);
-    if (row.file_path) fs.unlink(row.file_path, () => {});
+    if (row.file_path) safeUnlink(row.file_path);
     res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при удалении', details: error instanceof Error ? error.message : 'Unknown error' });

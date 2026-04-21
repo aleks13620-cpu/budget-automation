@@ -1,8 +1,9 @@
 import { Router, Request, Response } from 'express';
-import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
+import { safeUnlink } from '../utils/safeUnlink';
+import { createUploadMiddleware, fixFilename } from '../utils/fileUtils';
 import { parseExcelFile, parseFromRawData, detectMappingFromRawData } from '../services/excelParser';
 import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
@@ -10,34 +11,10 @@ import { enrichSpecItems } from '../services/gigachatSpecParser';
 import type { SpecItemInput } from '../services/gigachatSpecParser';
 import { parseSpecFromPdf, buildRawDataFromPdfItems, PDF_SPEC_EMPTY_RAW_DATA } from '../services/gigachatSpecFromPdf';
 
-const UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
-
-// Ensure upload directory exists
-if (!fs.existsSync(UPLOAD_PATH)) {
-  fs.mkdirSync(UPLOAD_PATH, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, UPLOAD_PATH);
-  },
-  filename: (_req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
-  },
-});
-
-const upload = multer({
-  storage,
-  fileFilter: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (ext === '.xlsx' || ext === '.xls' || ext === '.pdf') {
-      cb(null, true);
-    } else {
-      cb(new Error('Допустимы только файлы .xlsx, .xls и .pdf'));
-    }
-  },
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+const upload = createUploadMiddleware({
+  allowedExtensions: ['.xlsx', '.xls', '.pdf'],
+  errorMessage: 'Допустимы только файлы .xlsx, .xls и .pdf',
+  maxFileSizeBytes: 50 * 1024 * 1024,
 });
 
 const router = Router();
@@ -53,17 +30,6 @@ const SECTIONS = [
   'Электрика',
   'Слаботочка',
 ];
-
-// Fix garbled Cyrillic filenames (multer on Windows may encode as latin1)
-function fixFilename(originalname: string): string {
-  try {
-    const fixed = Buffer.from(originalname, 'latin1').toString('utf8');
-    if (fixed.includes('\ufffd')) return originalname;
-    return fixed;
-  } catch {
-    return originalname;
-  }
-}
 
 // GET /api/sections — list available sections
 router.get('/api/sections', (_req: Request, res: Response) => {
@@ -187,7 +153,7 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
     })();
 
     // Clean up uploaded file
-    fs.unlink(req.file.path, () => {});
+    safeUnlink(req.file.path);
 
     res.status(201).json({
       specificationId: result.specificationId,
