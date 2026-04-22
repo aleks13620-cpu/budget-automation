@@ -174,6 +174,7 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                     <div style={{ flex: '0 0 80px', paddingRight: '0.75rem' }}>
                       {best && (
                         <span className="confidence-badge" title={MATCH_TYPE_LABELS[best.matchType] || best.matchType}>
+                          {best.matchType === 'learned_rule' && <span title="Запомнено системой">🧠 </span>}
                           {Math.round(best.confidence * 100)}%
                         </span>
                       )}

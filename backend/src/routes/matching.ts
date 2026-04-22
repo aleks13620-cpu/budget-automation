@@ -405,11 +405,11 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
 
       if (existingRule) {
         db.prepare(
-          'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(1.0, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
         ).run(existingRule.id);
       } else {
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.9, 1, ?)'
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
         ).run(specPattern, invoicePattern, match.supplier_id);
       }
 
@@ -680,7 +680,7 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
         ).run(existingRule.id);
       } else {
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.95, 1, ?)'
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.96, 1, ?)'
         ).run(specPattern, invoicePattern, invoiceItem.supplier_id);
       }
 

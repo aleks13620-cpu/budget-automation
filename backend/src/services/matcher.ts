@@ -103,6 +103,23 @@ function normalizeConstructionTerms(text: string): string {
   return result;
 }
 
+function removeGostBrackets(text: string): string {
+  return text
+    .replace(/\([^)]*(?:ГОСТ|ТУ)\s*[\d\s\-\.\/]*[^)]*\)/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeUnitSynonyms(text: string): string {
+  return text
+    .replace(/\bм\.п\.\b/gi, 'м')
+    .replace(/\bм\.пог\.\b/gi, 'м')
+    .replace(/\bпог\.м\.\b/gi, 'м')
+    .replace(/\bпм\b/gi, 'м')
+    .replace(/\bштук[аи]?\b/gi, 'шт')
+    .replace(/\bкомплект[аов]?\b/gi, 'компл');
+}
+
 function normalizeEngineeringTokens(text: string): string {
   let result = text.toLowerCase().replace(/ё/g, 'е');
 
@@ -129,7 +146,9 @@ function normalizeEngineeringTokens(text: string): string {
  * - remove stop words
  */
 export function normalizeForMatching(text: string): string {
-  let s = normalizeEngineeringTokens(text);
+  let s = removeGostBrackets(text);
+  s = normalizeUnitSynonyms(s);
+  s = normalizeEngineeringTokens(s);
   s = normalizeSizeTerms(s);
   s = normalizeConstructionTerms(s);
   s = s.toLowerCase().trim();
