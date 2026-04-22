@@ -98,6 +98,30 @@ interface GigaChatSpecPdfJSON {
   }>;
 }
 
+const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)\b/i;
+
+function isSectionHeaderRow(name: string, quantity: number | null, unit: string | null): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  if (quantity != null) return false;
+  if (unit && unit.trim().length > 0) return false;
+  if (/^(i|ii|iii|iv|v|vi|vii|viii|ix|x)\.?\s+/i.test(normalized)) return true;
+  if (SECTION_HEADER_PATTERN.test(normalized)) return true;
+  return /^[а-яa-z\s/-]{3,40}$/.test(normalized) && normalized.split(/\s+/).length <= 3;
+}
+
+function splitMonsterRow(name: string): string[] {
+  const normalized = name.replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const separators = (normalized.match(/[+;•]/g) || []).length;
+  if (separators < 2) return [normalized];
+  const parts = normalized
+    .split(/[+;•]/)
+    .map(part => part.trim().replace(/^[-–—]\s*/, ''))
+    .filter(part => part.length >= 3);
+  return parts.length >= 2 ? parts : [normalized];
+}
+
 function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
   const items = data.items ?? [];
   const rows: SpecificationRow[] = [];
@@ -107,20 +131,27 @@ function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
     const pos = it.position;
     const position_number =
       pos === null || pos === undefined ? null : String(pos).trim() || null;
-    rows.push({
-      position_number,
-      name,
-      characteristics: it.characteristics?.trim() || null,
-      equipment_code: null,
-      article: null,
-      product_code: null,
-      marking: it.marking?.trim() || null,
-      type_size: it.type_size?.trim() || null,
-      manufacturer: it.manufacturer?.trim() || null,
-      unit: it.unit?.trim() || null,
-      quantity: typeof it.quantity === 'number' ? it.quantity : null,
-      full_name: null,
-      _parentIndex: null,
+    const quantity = typeof it.quantity === 'number' ? it.quantity : null;
+    const unit = it.unit?.trim() || null;
+    if (isSectionHeaderRow(name, quantity, unit)) continue;
+
+    const splitNames = splitMonsterRow(name);
+    splitNames.forEach((splitName, idx) => {
+      rows.push({
+        position_number: idx === 0 ? position_number : null,
+        name: splitName,
+        characteristics: it.characteristics?.trim() || null,
+        equipment_code: null,
+        article: null,
+        product_code: null,
+        marking: it.marking?.trim() || null,
+        type_size: it.type_size?.trim() || null,
+        manufacturer: it.manufacturer?.trim() || null,
+        unit,
+        quantity: idx === 0 ? quantity : null,
+        full_name: null,
+        _parentIndex: null,
+      });
     });
   }
   return rows;

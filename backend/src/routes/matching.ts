@@ -33,6 +33,28 @@ function effectivePrice(price: number | null, vatRate: number | null, pricesIncl
   return price;
 }
 
+function computeUnitPriceWithVat(
+  price: number | null,
+  vatRate: number | null,
+  pricesIncludeVat: number | null,
+  invoiceQuantity: number | null,
+  invoiceAmount: number | null,
+): { unitPriceWithVat: number | null; source: 'raw' | 'derived_unit' } {
+  if (invoiceAmount != null && invoiceQuantity != null && invoiceQuantity > 0) {
+    const lineTotalWithVat = pricesIncludeVat === 0 && vatRate != null && vatRate > 0
+      ? invoiceAmount * (1 + vatRate / 100)
+      : invoiceAmount;
+    return {
+      unitPriceWithVat: Math.round((lineTotalWithVat / invoiceQuantity) * 100) / 100,
+      source: 'derived_unit',
+    };
+  }
+  return {
+    unitPriceWithVat: effectivePrice(price, vatRate, pricesIncludeVat),
+    source: 'raw',
+  };
+}
+
 function normalizeHeaderCell(value: unknown): string {
   return String(value ?? '')
     .toLowerCase()
@@ -40,6 +62,10 @@ function normalizeHeaderCell(value: unknown): string {
     .replace(/[^\p{L}\p{N}\s]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function clearSelectedForSpec(db: ReturnType<typeof getDatabase>, specItemId: number) {
+  db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(specItemId);
 }
 
 function detectImportColumns(headerRow: unknown[]): {
@@ -187,33 +213,38 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       candidates = runMatching(projectId);
     }
 
+    // Select primary by tie-breakers: DN -> quantity -> confidence.
+    const bestCandidateBySpec = new Map<number, typeof candidates[number]>();
+    for (const candidate of candidates) {
+      const current = bestCandidateBySpec.get(candidate.specItemId);
+      if (!current) {
+        bestCandidateBySpec.set(candidate.specItemId, candidate);
+        continue;
+      }
+      const shouldReplace =
+        (candidate.dnScore ?? 0) > (current.dnScore ?? 0)
+        || ((candidate.dnScore ?? 0) === (current.dnScore ?? 0) && (candidate.quantityScore ?? 0) > (current.quantityScore ?? 0))
+        || (
+          (candidate.dnScore ?? 0) === (current.dnScore ?? 0)
+          && (candidate.quantityScore ?? 0) === (current.quantityScore ?? 0)
+          && candidate.confidence > current.confidence
+        );
+      if (shouldReplace) bestCandidateBySpec.set(candidate.specItemId, candidate);
+    }
+
     // Insert new candidates
     const insert = db.prepare(`
       INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
-      VALUES (?, ?, ?, ?, 0, 0, ?)
+      VALUES (?, ?, ?, ?, 0, ?, ?)
     `);
 
     const insertAll = db.transaction(() => {
       for (const c of candidates) {
-        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, c.source ?? 'invoice');
+        const isSelected = bestCandidateBySpec.get(c.specItemId)?.invoiceItemId === c.invoiceItemId ? 1 : 0;
+        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, isSelected, c.source ?? 'invoice');
       }
     });
     insertAll();
-
-    // Auto-select best candidate per spec item (highest confidence, skip already confirmed)
-    const specIds = [...new Set(candidates.map(c => c.specItemId))];
-    const selectBest = db.prepare(`
-      UPDATE matched_items SET is_selected = 1
-      WHERE id = (
-        SELECT id FROM matched_items
-        WHERE specification_item_id = ? AND is_confirmed = 0
-        ORDER BY confidence DESC
-        LIMIT 1
-      )
-    `);
-    for (const specId of specIds) {
-      selectBest.run(specId);
-    }
 
     // Count stats
     const totalSpec = (db.prepare(
@@ -286,7 +317,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     let confirmedCount = 0;
 
     const items = specItems.map(spec => {
-      const matches = getMatches.all(spec.id) as Array<{
+        const matches = getMatches.all(spec.id) as Array<{
         id: number; invoice_item_id: number; confidence: number;
         match_type: string; is_confirmed: number; is_selected: number;
         source: string; is_analog: number;
@@ -300,30 +331,34 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       if (matches.length > 0) matchedCount++;
       if (matches.some(m => m.is_confirmed)) confirmedCount++;
 
-      return {
+        return {
         specItem: {
           ...spec,
           parentItemId: spec.parent_item_id,
           fullName: spec.full_name,
         },
-        matches: matches.map(m => ({
-          id: m.id,
-          invoiceItemId: m.invoice_item_id,
-          invoiceName: m.invoice_name,
-          article: m.article,
-          supplierName: m.source === 'price_list' ? '[Прайс]' : m.supplier_name,
-          unit: m.invoice_unit,
-          quantity: m.invoice_quantity,
-          price: m.price,
-          effectivePrice: effectivePrice(m.price, m.vat_rate, m.prices_include_vat),
-          amount: m.amount,
-          confidence: m.confidence,
-          matchType: m.match_type,
-          isConfirmed: m.is_confirmed === 1,
-          isSelected: m.is_selected === 1,
-          isAnalog: m.is_analog === 1,
-          source: m.source ?? 'invoice',
-        })),
+          matches: matches.map(m => {
+            const pricing = computeUnitPriceWithVat(m.price, m.vat_rate, m.prices_include_vat, m.invoice_quantity, m.amount);
+            return {
+              id: m.id,
+              invoiceItemId: m.invoice_item_id,
+              invoiceName: m.invoice_name,
+              article: m.article,
+              supplierName: m.source === 'price_list' ? '[Прайс]' : m.supplier_name,
+              unit: m.invoice_unit,
+              quantity: m.invoice_quantity,
+              price: m.price,
+              effectivePrice: pricing.unitPriceWithVat,
+              priceSource: pricing.source,
+              amount: m.amount,
+              confidence: m.confidence,
+              matchType: m.match_type,
+              isConfirmed: m.is_confirmed === 1,
+              isSelected: m.is_selected === 1,
+              isAnalog: m.is_analog === 1,
+              source: m.source ?? 'invoice',
+            };
+          }),
       };
     });
 
@@ -431,6 +466,80 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/matching/bulk/confirm — confirm many matches at once
+router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
+  try {
+    const matchIds = Array.isArray(req.body?.matchIds) ? req.body.matchIds.map((id: unknown) => Number(id)).filter(Number.isFinite) : [];
+    if (matchIds.length === 0) {
+      return res.status(400).json({ error: 'matchIds обязательны' });
+    }
+
+    const db = getDatabase();
+    let updated = 0;
+    const failed: number[] = [];
+
+    const runBulk = db.transaction(() => {
+      for (const matchId of matchIds) {
+        const match = db.prepare(`
+          SELECT m.id, m.confidence, m.specification_item_id, m.invoice_item_id,
+                 si.name as spec_name, ii.name as invoice_name,
+                 i.supplier_id, si.project_id
+          FROM matched_items m
+          JOIN specification_items si ON m.specification_item_id = si.id
+          JOIN invoice_items ii ON m.invoice_item_id = ii.id
+          JOIN invoices i ON ii.invoice_id = i.id
+          WHERE m.id = ?
+        `).get(matchId) as {
+          id: number;
+          confidence: number | null;
+          specification_item_id: number;
+          invoice_item_id: number;
+          spec_name: string;
+          invoice_name: string;
+          supplier_id: number | null;
+          project_id: number;
+        } | undefined;
+
+        if (!match) {
+          failed.push(matchId);
+          continue;
+        }
+
+        clearSelectedForSpec(db, match.specification_item_id);
+        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?').run(matchId);
+
+        const specPattern = normalizeForMatching(match.spec_name);
+        const invoicePattern = normalizeForMatching(match.invoice_name);
+        const existingRule = db.prepare(
+          'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+
+        if (existingRule) {
+          db.prepare(
+            'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          ).run(existingRule.id);
+        } else {
+          db.prepare(
+            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
+          ).run(specPattern, invoicePattern, match.supplier_id);
+        }
+
+        learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, match.confidence ?? 0);
+        saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id);
+        updated++;
+      }
+    });
+
+    runBulk();
+    res.json({ updated, failed });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при bulk подтверждении',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // PUT /api/matching/:id/unconfirm — roll back a confirmed match (keep record, just unconfirm)
 router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
   try {
@@ -505,6 +614,73 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/matching/bulk/reject — reject many matches at once
+router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
+  try {
+    const matchIds = Array.isArray(req.body?.matchIds) ? req.body.matchIds.map((id: unknown) => Number(id)).filter(Number.isFinite) : [];
+    if (matchIds.length === 0) {
+      return res.status(400).json({ error: 'matchIds обязательны' });
+    }
+
+    const db = getDatabase();
+    let updated = 0;
+    const failed: number[] = [];
+
+    const runBulk = db.transaction(() => {
+      for (const matchId of matchIds) {
+        const match = db.prepare(`
+          SELECT m.id, m.is_confirmed, m.specification_item_id, m.invoice_item_id,
+                 si.name as spec_name, ii.name as invoice_name, i.supplier_id, si.project_id
+          FROM matched_items m
+          JOIN specification_items si ON m.specification_item_id = si.id
+          LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+          LEFT JOIN invoices i ON ii.invoice_id = i.id
+          WHERE m.id = ?
+        `).get(matchId) as {
+          id: number; is_confirmed: number;
+          specification_item_id: number; invoice_item_id: number;
+          spec_name: string; invoice_name: string | null; supplier_id: number | null; project_id: number;
+        } | undefined;
+
+        if (!match) {
+          failed.push(matchId);
+          continue;
+        }
+
+        db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
+        if (!match.is_confirmed && match.invoice_name) {
+          const specPattern = normalizeForMatching(match.spec_name);
+          const invoicePattern = normalizeForMatching(match.invoice_name);
+          const existing = db.prepare(
+            'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id IS ? OR supplier_id = ?)'
+          ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+
+          if (existing) {
+            db.prepare(
+              "UPDATE matching_rules SET is_negative = 1, source = 'reject', updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+            ).run(existing.id);
+          } else {
+            db.prepare(
+              "INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
+            ).run(specPattern, invoicePattern, match.supplier_id);
+          }
+        }
+
+        saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id);
+        updated++;
+      }
+    });
+
+    runBulk();
+    res.json({ updated, failed });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при bulk отклонении',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // POST /api/matching/:id/confirm-analog — confirm as analog/similar item
 router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) => {
   try {
@@ -561,6 +737,69 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при подтверждении аналога',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// POST /api/matching/bulk/confirm-analog — confirm many matches as analog
+router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) => {
+  try {
+    const matchIds = Array.isArray(req.body?.matchIds) ? req.body.matchIds.map((id: unknown) => Number(id)).filter(Number.isFinite) : [];
+    if (matchIds.length === 0) {
+      return res.status(400).json({ error: 'matchIds обязательны' });
+    }
+
+    const db = getDatabase();
+    let updated = 0;
+    const failed: number[] = [];
+
+    const runBulk = db.transaction(() => {
+      for (const matchId of matchIds) {
+        const match = db.prepare(`
+          SELECT m.id, m.specification_item_id, m.invoice_item_id,
+                 si.name as spec_name, ii.name as invoice_name, i.supplier_id
+          FROM matched_items m
+          JOIN specification_items si ON m.specification_item_id = si.id
+          JOIN invoice_items ii ON m.invoice_item_id = ii.id
+          JOIN invoices i ON ii.invoice_id = i.id
+          WHERE m.id = ?
+        `).get(matchId) as {
+          id: number; specification_item_id: number; invoice_item_id: number;
+          spec_name: string; invoice_name: string; supplier_id: number | null;
+        } | undefined;
+
+        if (!match) {
+          failed.push(matchId);
+          continue;
+        }
+
+        clearSelectedForSpec(db, match.specification_item_id);
+        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?').run(matchId);
+
+        const specPattern = normalizeForMatching(match.spec_name);
+        const invoicePattern = normalizeForMatching(match.invoice_name);
+        const existingRule = db.prepare(
+          'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+
+        if (existingRule) {
+          db.prepare('UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existingRule.id);
+        } else {
+          db.prepare(
+            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.75, 1, ?)'
+          ).run(specPattern, invoicePattern, match.supplier_id);
+        }
+
+        updated++;
+      }
+    });
+
+    runBulk();
+    res.json({ updated, failed });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при bulk подтверждении аналога',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -852,6 +1091,8 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
     const rows = db.prepare(`
       SELECT si.id, si.name, si.unit, si.quantity, si.section,
              COALESCE(ii.price, pli.price) as price,
+             ii.quantity as invoice_quantity,
+             ii.amount as invoice_amount,
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
@@ -866,7 +1107,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       ORDER BY si.section, si.id
     `).all(projectId) as Array<{
       id: number; name: string; unit: string | null; quantity: number | null;
-      section: string | null; price: number | null; invoice_name: string | null;
+      section: string | null; price: number | null; invoice_quantity: number | null; invoice_amount: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
       match_id: number | null; is_confirmed: number | null; is_analog: number;
@@ -876,7 +1117,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
     const sectionMap = new Map<string, {
       items: Array<{
         specId: number; name: string; unit: string | null; quantity: number | null;
-        price: number | null; amount: number | null;
+        price: number | null; amount: number | null; priceSource?: 'raw' | 'derived_unit';
         invoiceName: string | null; article: string | null; supplierName: string | null;
         isConfirmed: boolean; hasMatch: boolean;
       }>;
@@ -896,8 +1137,14 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       }
       const section = sectionMap.get(sectionName)!;
 
-      const price = row.price;
-      const effPrice = effectivePrice(price, row.vat_rate, row.prices_include_vat);
+      const pricing = computeUnitPriceWithVat(
+        row.price,
+        row.vat_rate,
+        row.prices_include_vat,
+        row.invoice_quantity,
+        row.invoice_amount,
+      );
+      const effPrice = pricing.unitPriceWithVat;
       const qty = row.quantity || 0;
       const amount = effPrice != null ? effPrice * qty : null;
 
@@ -920,6 +1167,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
         quantity: row.quantity,
         price: effPrice,
         amount,
+        priceSource: pricing.source,
         invoiceName: row.invoice_name,
         article: row.article,
         supplierName: row.supplier_name,

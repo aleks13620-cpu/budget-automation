@@ -7,6 +7,8 @@ export interface MatchCandidate {
   confidence: number;
   matchType: 'exact_article' | 'learned_rule' | 'name_similarity' | 'name_characteristics';
   source: 'invoice' | 'price_list';
+  quantityScore: -1 | 0 | 1;
+  dnScore: -1 | 0 | 1;
 }
 
 interface SpecItemRow {
@@ -176,6 +178,31 @@ function isParameterizedSpecName(name: string): boolean {
   return false;
 }
 
+function extractDnValue(text: string): number | null {
+  const normalized = normalizeForMatching(text);
+  const match = normalized.match(/\bdn\s*(\d{1,4})\b/i);
+  if (!match) return null;
+  const value = Number(match[1]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function getQuantityScore(specQty: number | null, invQty: number | null): -1 | 0 | 1 {
+  if (specQty == null || invQty == null || specQty <= 0 || invQty <= 0) return 0;
+  const diff = Math.abs(specQty - invQty);
+  if (diff < 0.0001) return 1;
+  const relDiff = diff / Math.max(specQty, invQty);
+  if (relDiff <= 0.05) return 0;
+  return -1;
+}
+
+function getDnScore(specText: string, invText: string): -1 | 0 | 1 {
+  const specDn = extractDnValue(specText);
+  if (specDn == null) return 0;
+  const invDn = extractDnValue(invText);
+  if (invDn == null) return -1;
+  return specDn === invDn ? 1 : -1;
+}
+
 /**
  * Core matching algorithm: match given spec items against invoice items using rules.
  * Extracted to allow both full and incremental matching to share the same logic.
@@ -244,6 +271,8 @@ function matchSpecItems(
     for (const inv of normalizedInvoice) {
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
+      let quantityScore: -1 | 0 | 1 = 0;
+      let dnScore: -1 | 0 | 1 = 0;
       const rawNameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
       if (rawNameSim > bestRawNameSim) {
         bestRawNameSim = rawNameSim;
@@ -423,6 +452,15 @@ function matchSpecItems(
         }
       }
 
+      quantityScore = getQuantityScore(spec.quantity, inv.quantity);
+      dnScore = getDnScore(nameForMatching, inv.name);
+
+      if (quantityScore === 1) bestConfidence += 0.07;
+      if (quantityScore === -1) bestConfidence -= 0.12;
+      if (dnScore === 1) bestConfidence += 0.1;
+      if (dnScore === -1) bestConfidence -= 0.18;
+      bestConfidence = Math.max(0, Math.min(bestConfidence, 0.99));
+
       if (bestConfidence >= 0.3) {
         candidates.push({
           specItemId: spec.id,
@@ -430,13 +468,20 @@ function matchSpecItems(
           confidence: Math.round(bestConfidence * 1000) / 1000,
           matchType: bestType,
           source: inv.source ?? 'invoice',
+          quantityScore,
+          dnScore,
         });
       }
     }
 
     // Sort by confidence DESC, keep top K (больше вариантов без смены алгоритма матчинга)
     const TOP_K = 8;
-    candidates.sort((a, b) => b.confidence - a.confidence);
+    candidates.sort((a, b) =>
+      b.dnScore - a.dnScore
+      || b.quantityScore - a.quantityScore
+      || b.confidence - a.confidence
+      || a.invoiceItemId - b.invoiceItemId
+    );
     allCandidates.push(...candidates.slice(0, TOP_K));
 
     if (isCompactSpec) {

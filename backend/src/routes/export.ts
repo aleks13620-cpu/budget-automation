@@ -4,6 +4,32 @@ import * as XLSX from 'xlsx';
 
 const router = Router();
 
+function computeUnitPriceWithVat(
+  price: number | null,
+  vatRate: number | null,
+  inclVat: number | null,
+  invoiceQuantity: number | null,
+  invoiceAmount: number | null,
+): { unitPriceWithVat: number | null; source: 'raw' | 'derived_unit' } {
+  if (invoiceAmount != null && invoiceQuantity != null && invoiceQuantity > 0) {
+    const lineTotalWithVat = inclVat === 0 && vatRate != null && vatRate > 0
+      ? invoiceAmount * (1 + vatRate / 100)
+      : invoiceAmount;
+    return {
+      unitPriceWithVat: Math.round((lineTotalWithVat / invoiceQuantity) * 100) / 100,
+      source: 'derived_unit',
+    };
+  }
+  if (price == null) return { unitPriceWithVat: null, source: 'raw' };
+  if (inclVat === 0 && vatRate != null && vatRate > 0) {
+    return {
+      unitPriceWithVat: Math.round(price * (1 + vatRate / 100) * 100) / 100,
+      source: 'raw',
+    };
+  }
+  return { unitPriceWithVat: price, source: 'raw' };
+}
+
 // GET /api/projects/:id/export — export final specification as .xlsx
 router.get('/api/projects/:id/export', (req: Request, res: Response) => {
   try {
@@ -28,6 +54,8 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     const rows = db.prepare(`
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
              COALESCE(ii.price, pli.price) as price,
+             ii.quantity as invoice_quantity,
+             ii.amount as invoice_amount,
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat,
@@ -43,19 +71,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     `).all(projectId) as Array<{
       id: number; position_number: string | null; name: string;
       unit: string | null; quantity: number | null; section: string | null;
-      price: number | null; invoice_name: string | null;
+      price: number | null; invoice_quantity: number | null; invoice_amount: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
       is_analog: number;
     }>;
-
-    function effPrice(price: number | null, vatRate: number | null, inclVat: number | null): number | null {
-      if (price == null) return null;
-      if (inclVat === 0 && vatRate != null && vatRate > 0) {
-        return Math.round(price * (1 + vatRate / 100) * 100) / 100;
-      }
-      return price;
-    }
 
     // Group by section
     const sectionMap = new Map<string, typeof rows>();
@@ -95,7 +115,14 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       for (const item of sectionItems) {
         const qty = item.quantity || 0;
         const price = item.price;
-        const priceWithVat = effPrice(price, item.vat_rate, item.prices_include_vat);
+        const pricing = computeUnitPriceWithVat(
+          price,
+          item.vat_rate,
+          item.prices_include_vat,
+          item.invoice_quantity,
+          item.invoice_amount,
+        );
+        const priceWithVat = pricing.unitPriceWithVat;
         const amount = priceWithVat != null ? Math.round(priceWithVat * qty * 100) / 100 : null;
         if (amount != null) sectionTotal += amount;
 

@@ -56,7 +56,9 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
 export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState<number | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [selectedMatchIds, setSelectedMatchIds] = useState<Set<number>>(new Set());
 
   const handleAction = async (matchId: number, action: () => Promise<void>) => {
     setLoading(matchId);
@@ -86,6 +88,32 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
   const handleUnconfirm = (matchId: number) =>
     handleAction(matchId, () => api.put(`/matching/${matchId}/unconfirm`));
 
+  const toggleSelected = (matchId: number) => {
+    setSelectedMatchIds(prev => {
+      const next = new Set(prev);
+      if (next.has(matchId)) next.delete(matchId);
+      else next.add(matchId);
+      return next;
+    });
+  };
+
+  const clearSelected = () => setSelectedMatchIds(new Set());
+
+  const handleBulkAction = async (kind: 'confirm' | 'confirm-analog' | 'reject') => {
+    if (selectedMatchIds.size === 0) return;
+    setActionError(null);
+    setBulkLoading(true);
+    try {
+      await api.post(`/matching/bulk/${kind}`, { matchIds: Array.from(selectedMatchIds) });
+      clearSelected();
+      onRefresh();
+    } catch {
+      setActionError('Ошибка при выполнении массового действия');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
   const toggleExpand = (specId: number) => {
     setExpandedId(prev => prev === specId ? null : specId);
   };
@@ -103,9 +131,19 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
   return (
     <>
     {actionError && <p className="error-msg">{actionError}</p>}
+    {selectedMatchIds.size > 0 && (
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <span className="muted">Выбрано: {selectedMatchIds.size}</span>
+        <button className="btn btn-primary btn-sm" onClick={() => handleBulkAction('confirm')} disabled={bulkLoading}>✓ Подтвердить</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('confirm-analog')} disabled={bulkLoading}>≈ Как аналог</button>
+        <button className="btn btn-secondary btn-sm" onClick={() => handleBulkAction('reject')} disabled={bulkLoading}>✕ Отклонить</button>
+        <button className="btn btn-secondary btn-sm" onClick={clearSelected} disabled={bulkLoading}>Снять выбор</button>
+      </div>
+    )}
     <table>
       <thead>
         <tr>
+          <th style={{ width: '36px' }}></th>
           <th style={{ width: '25%' }}>Спецификация</th>
           <th style={{ width: '80px' }}>Кол-во</th>
           <th style={{ width: '22%' }}>Лучший матч</th>
@@ -120,7 +158,7 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
         <tbody key={group.section}>
           {groupedItems.length > 1 && (
             <tr className="section-header-row">
-              <td colSpan={8} style={{ background: '#f0f4f8', fontWeight: 700, padding: '0.6rem 0.75rem', fontSize: '0.95rem', borderTop: '2px solid #cbd5e1' }}>
+              <td colSpan={9} style={{ background: '#f0f4f8', fontWeight: 700, padding: '0.6rem 0.75rem', fontSize: '0.95rem', borderTop: '2px solid #cbd5e1' }}>
                 {group.section} ({group.rows.length})
               </td>
             </tr>
@@ -132,9 +170,19 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
 
             return (
               <tr key={row.specItem.id} className={getRowClass(row)}>
-                <td colSpan={8} style={{ padding: 0 }}>
+                <td colSpan={9} style={{ padding: 0 }}>
                   {/* Main row */}
                   <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
+                    <div style={{ flex: '0 0 36px', paddingRight: '0.5rem' }}>
+                      {best && !best.isConfirmed && (
+                        <input
+                          type="checkbox"
+                          checked={selectedMatchIds.has(best.id)}
+                          onChange={() => toggleSelected(best.id)}
+                          title="Выбрать для массового действия"
+                        />
+                      )}
+                    </div>
                     <div style={{ flex: '0 0 25%', paddingRight: '0.75rem', paddingLeft: row.specItem.parentItemId ? '1.5rem' : undefined }}>
                       <div>{row.specItem.fullName || row.specItem.name}</div>
                       {row.specItem.equipment_code && (
@@ -246,6 +294,16 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                     <div className="match-candidates">
                       {row.matches.map(m => (
                         <div key={m.id} className={`match-candidate-row ${m.isConfirmed ? 'confirmed' : ''} ${m.isSelected ? 'selected' : ''}`}>
+                          <div style={{ flex: '0 0 36px', paddingRight: '0.5rem' }}>
+                            {!m.isConfirmed && (
+                              <input
+                                type="checkbox"
+                                checked={selectedMatchIds.has(m.id)}
+                                onChange={() => toggleSelected(m.id)}
+                                title="Выбрать для массового действия"
+                              />
+                            )}
+                          </div>
                           <div style={{ flex: '0 0 25%' }}></div>
                           <div style={{ flex: '0 0 80px', paddingRight: '0.75rem', fontSize: '0.75rem', color: '#888' }}>
                             {m.quantity != null ? `${m.quantity} ${m.unit || ''}` : ''}

@@ -48,6 +48,52 @@ function computeNeedsAmountReview(
   return deviation > 0.15 ? 1 : 0;
 }
 
+function hasValidFinancialCore(items: Array<{ quantity: number | null; price: number | null; amount: number | null }>): boolean {
+  return items.some(item =>
+    item.quantity != null && item.quantity > 0
+    && item.price != null && item.price > 0
+    && item.amount != null && item.amount > 0
+  );
+}
+
+function applySupplierHeuristics(
+  supplierName: string | null,
+  items: Array<{ quantity: number | null; price: number | null; amount: number | null }>,
+): void {
+  if (!supplierName || items.length === 0) return;
+  const normalized = supplierName.toLowerCase();
+  if (!normalized.includes('атм')) return;
+
+  for (const item of items) {
+    if ((item.quantity == null || item.quantity <= 0) && item.amount != null && item.price != null && item.price > 0) {
+      item.quantity = Math.round((item.amount / item.price) * 1000) / 1000;
+    }
+    if ((item.price == null || item.price <= 0) && item.amount != null && item.quantity != null && item.quantity > 0) {
+      item.price = Math.round((item.amount / item.quantity) * 100) / 100;
+    }
+    if ((item.amount == null || item.amount <= 0) && item.price != null && item.quantity != null && item.quantity > 0) {
+      item.amount = Math.round((item.price * item.quantity) * 100) / 100;
+    }
+  }
+}
+
+function computeUnitPriceWithVat(
+  price: number | null,
+  amount: number | null,
+  quantity: number | null,
+  vatRate: number | null,
+): { unitPriceWithVat: number | null; source: 'raw' | 'derived_unit' } {
+  if (amount != null && quantity != null && quantity > 0) {
+    const lineTotalWithVat = vatRate != null && vatRate > 0 ? amount * (1 + vatRate / 100) : amount;
+    return { unitPriceWithVat: Math.round((lineTotalWithVat / quantity) * 100) / 100, source: 'derived_unit' };
+  }
+  if (price == null) return { unitPriceWithVat: null, source: 'raw' };
+  if (vatRate != null && vatRate > 0) {
+    return { unitPriceWithVat: Math.round(price * (1 + vatRate / 100) * 100) / 100, source: 'raw' };
+  }
+  return { unitPriceWithVat: price, source: 'raw' };
+}
+
 // Helper: build supplier context string for GigaChat from saved parser config
 function buildSupplierContext(supplierName: string | null, savedMapping: SavedMapping | undefined): string | undefined {
   if (!savedMapping || !supplierName) return undefined;
@@ -243,6 +289,8 @@ async function processInvoiceFile(
     }
   }
 
+  applySupplierHeuristics(supplierName, parseResult.items);
+
   // Быстрая оценка качества PDF для решения о fallback
   let quickPdfCategory: string | null = null;
   if (ext === '.pdf' && pdfRawRows && pdfFullText !== null && parseResult.items.length > 0) {
@@ -250,9 +298,12 @@ async function processInvoiceFile(
     quickPdfCategory = quickCat.category;
   }
 
-  // GigaChat fallback: только если позиции не найдены ИЛИ документ нечитаем (C).
+  const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
+
+  // GigaChat fallback: если нет позиций, либо не извлечены ключевые финполя, либо документ нечитаем.
   // При категории B с найденными позициями классический парсер оставляем — он точнее.
   const needsGigaChat = parseResult.items.length === 0 ||
+    financialCoreMissing ||
     (ext === '.pdf' && quickPdfCategory === 'C') ||
     (lastExcelResult !== null && lastExcelResult.category === 'C');
 
@@ -307,6 +358,7 @@ async function processInvoiceFile(
           vatAmount: gigaResult.metadata.vatAmount,
           discountDetected: null,
         };
+        applySupplierHeuristics(resolvedSupplierName, parseResult.items);
         gigachatFallbackSucceeded = true;
         lastGigaParseQuality = gigaResult.parseQuality;
         parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
@@ -346,6 +398,11 @@ async function processInvoiceFile(
 
   if (lastGigaParseQuality?.warnings.length) {
     parsingCategoryReason += ` | ${lastGigaParseQuality.warnings.join('; ')}`;
+  }
+
+  if (parsingCategory === 'A' && !hasValidFinancialCore(parseResult.items)) {
+    parsingCategory = 'B';
+    parsingCategoryReason = 'Понижено до B: отсутствуют валидные quantity/price/amount';
   }
 
   const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
@@ -749,7 +806,7 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const invoice = db.prepare(`
-      SELECT i.*, s.name as supplier_name
+      SELECT i.*, s.name as supplier_name, s.vat_rate as supplier_vat_rate
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.id = ?
@@ -759,13 +816,22 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Счёт не найден' });
     }
 
-    const items = db.prepare(
+    const rawItems = db.prepare(
       'SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index'
     ).all(invoiceId);
+    const inv = invoice as any;
+    const vatRate = typeof inv.supplier_vat_rate === 'number' ? inv.supplier_vat_rate : null;
+    const items = (rawItems as Array<any>).map(item => {
+      const pricing = computeUnitPriceWithVat(item.price ?? null, item.amount ?? null, item.quantity ?? null, vatRate);
+      return {
+        ...item,
+        unit_price_with_vat: pricing.unitPriceWithVat,
+        unit_price_source: pricing.source,
+      };
+    });
 
     // Load saved price formula for this supplier
     let priceCalcFormula: { numerator: string; denominator: string } | null = null;
-    const inv = invoice as any;
     if (inv.supplier_id) {
       const cfg = db.prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?').get(inv.supplier_id) as { config: string } | undefined;
       if (cfg) {

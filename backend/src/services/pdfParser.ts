@@ -954,9 +954,14 @@ export function categorizeParsingResult(
     const hasPrice = result.items.some(i => i.price !== null);
     const hasQuantity = result.items.some(i => i.quantity !== null);
     const hasAmount = result.items.some(i => i.amount !== null);
+    const hasFinancialCore = result.items.some(i =>
+      i.quantity != null && i.quantity > 0
+      && i.price != null && i.price > 0
+      && i.amount != null && i.amount > 0
+    );
     const numericColumns = [hasPrice, hasQuantity, hasAmount].filter(Boolean).length;
 
-    if (numericColumns >= 1) {
+    if (numericColumns >= 1 && hasFinancialCore) {
       return {
         category: 'A',
         reason: `Успешно: ${result.items.length} позиций, ${numericColumns + 1} колонок с данными`,
@@ -964,7 +969,7 @@ export function categorizeParsingResult(
       };
     }
 
-    return { category: 'A', reason: `Позиции найдены (${result.items.length}), но без числовых данных`, confidence: 0.4 };
+    return { category: 'B', reason: `Позиции найдены (${result.items.length}), но нет валидного набора quantity/price/amount`, confidence: 0.45 };
   }
 
   // B: text readable but no structure

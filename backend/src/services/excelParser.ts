@@ -231,6 +231,30 @@ function parseNumber(value: unknown): number | null {
   return isNaN(num) ? null : num;
 }
 
+const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)\b/i;
+
+function isSectionHeaderRow(name: string, quantity: number | null, unit: string | null): boolean {
+  const normalized = name.trim().toLowerCase();
+  if (!normalized) return false;
+  if (quantity != null) return false;
+  if (unit && unit.trim().length > 0) return false;
+  if (/^(i|ii|iii|iv|v|vi|vii|viii|ix|x)\.?\s+/i.test(normalized)) return true;
+  if (SECTION_HEADER_PATTERN.test(normalized)) return true;
+  return /^[а-яa-z\s/-]{3,40}$/.test(normalized) && normalized.split(/\s+/).length <= 3;
+}
+
+function splitMonsterRow(name: string): string[] {
+  const normalized = name.replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+  const separators = (normalized.match(/[+;•]/g) || []).length;
+  if (separators < 2) return [normalized];
+  const parts = normalized
+    .split(/[+;•]/)
+    .map(part => part.trim().replace(/^[-–—]\s*/, ''))
+    .filter(part => part.length >= 3);
+  return parts.length >= 2 ? parts : [normalized];
+}
+
 /** DN child row pattern: empty position_number AND name is a short DN/diameter designator */
 const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
 
@@ -463,9 +487,16 @@ export function parseExcelFile(filePath: string): ParseResult {
       : null;
     const quantity = parseNumber(rawQuantity);
 
-    items.push({
+    if (isSectionHeaderRow(name, quantity, mapping.unit !== null ? getCellValue(sheet, row, mapping.unit) : null)) {
+      skippedRows++;
+      continue;
+    }
+
+    const splitNames = splitMonsterRow(name);
+    splitNames.forEach((splitName, idx) => {
+      items.push({
       position_number: mapping.position_number !== null ? getCellValue(sheet, row, mapping.position_number) : null,
-      name,
+      name: splitName,
       characteristics: mapping.characteristics !== null ? getCellValue(sheet, row, mapping.characteristics) : null,
       equipment_code: mapping.equipment_code !== null ? getCellValue(sheet, row, mapping.equipment_code) : null,
       article: mapping.article !== null ? getCellValue(sheet, row, mapping.article) : null,
@@ -474,9 +505,10 @@ export function parseExcelFile(filePath: string): ParseResult {
       type_size: mapping.type_size !== null ? getCellValue(sheet, row, mapping.type_size) : null,
       manufacturer: mapping.manufacturer !== null ? getCellValue(sheet, row, mapping.manufacturer) : null,
       unit: mapping.unit !== null ? getCellValue(sheet, row, mapping.unit) : null,
-      quantity,
+      quantity: idx === 0 ? quantity : null,
       full_name: null,
       _parentIndex: null,
+    });
     });
   }
 
@@ -524,9 +556,17 @@ export function parseFromRawData(
       continue;
     }
 
-    items.push({
+    const unitValue = getName(mapping.unit);
+    if (isSectionHeaderRow(name, getNum(mapping.quantity), unitValue)) {
+      skippedRows++;
+      continue;
+    }
+
+    const splitNames = splitMonsterRow(name);
+    splitNames.forEach((splitName, idx) => {
+      items.push({
       position_number: getName(mapping.position_number),
-      name,
+      name: splitName,
       characteristics: getName(mapping.characteristics),
       equipment_code: getName(mapping.equipment_code),
       article: getName(mapping.article),
@@ -534,10 +574,11 @@ export function parseFromRawData(
       marking: getName(mapping.marking),
       type_size: getName(mapping.type_size),
       manufacturer: getName(mapping.manufacturer),
-      unit: getName(mapping.unit),
-      quantity: getNum(mapping.quantity),
+      unit: unitValue,
+      quantity: idx === 0 ? getNum(mapping.quantity) : null,
       full_name: null,
       _parentIndex: null,
+    });
     });
   }
 

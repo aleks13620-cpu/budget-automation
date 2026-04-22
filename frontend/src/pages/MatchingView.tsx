@@ -103,8 +103,8 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [sectionFilter, setSectionFilter] = useState<string>('all');
 
-  const loadMatching = async () => {
-    setLoading(true);
+  const loadMatching = async (withLoader = false) => {
+    if (withLoader) setLoading(true);
     try {
       const { data } = await api.get(`/projects/${projectId}/matching`);
       setItems(data.items || []);
@@ -112,7 +112,7 @@ export function MatchingView({ projectId, onBack }: Props) {
     } catch {
       // ignore
     } finally {
-      setLoading(false);
+      if (withLoader) setLoading(false);
     }
   };
 
@@ -137,10 +137,17 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
-  useEffect(() => { loadMatching(); loadSummary(); }, [projectId]);
+  useEffect(() => {
+    const loadInitial = async () => {
+      setLoading(true);
+      await Promise.all([loadMatching(false), loadSummary()]);
+      setLoading(false);
+    };
+    loadInitial();
+  }, [projectId]);
 
   const handleRefresh = () => {
-    loadMatching();
+    loadMatching(false);
     loadSummary();
     if (showUnmatched) loadUnmatchedInvoices();
   };
