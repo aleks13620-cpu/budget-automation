@@ -19,7 +19,9 @@
     "problem-registry:scan": "node ../scripts/problem-registry.mjs scan",
     "problem-registry:validate": "node ../scripts/problem-registry.mjs validate",
     "problem-registry:report": "node ../scripts/problem-registry.mjs report",
-    "problem-registry:db:snapshot": "node ../scripts/problem-registry.mjs db:snapshot"
+    "problem-registry:db:snapshot": "node ../scripts/problem-registry.mjs db:snapshot",
+    "plans:check": "node ../scripts/plan-guard.mjs check",
+    "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict"
   },
   "keywords": [],
   "author": "",
