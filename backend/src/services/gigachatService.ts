@@ -327,3 +327,45 @@ export async function deleteFile(fileId: string): Promise<void> {
 export function isGigaChatConfigured(): boolean {
   return !!process.env.GIGACHAT_AUTH_KEY;
 }
+
+/**
+ * Модели для запросов с вложениями (PDF/картинка) и ожидаемым JSON-ответом (счёт, спека).
+ * Порядок = приоритет: первая доступная в API даёт результат.
+ *
+ * Задаётся env (через запятую):
+ * - GIGACHAT_MODELS_FILES — основной список
+ * - GIGACHAT_MODEL_INVOICE — алиас для обратной совместимости
+ *
+ * По умолчанию: Max → Pro → базовая GigaChat-2 → GigaChat (часто Lite отказывается от PDF без vision).
+ */
+const DEFAULT_FILE_JSON_MODELS = ['GigaChat-2-Max', 'GigaChat-2-Pro', 'GigaChat-2', 'GigaChat'];
+
+export function getGigaChatFileJsonModelCandidates(): string[] {
+  const raw =
+    process.env.GIGACHAT_MODELS_FILES?.trim() ||
+    process.env.GIGACHAT_MODEL_INVOICE?.trim() ||
+    '';
+  if (raw) {
+    return raw.split(',').map(s => s.trim()).filter(Boolean);
+  }
+  return [...DEFAULT_FILE_JSON_MODELS];
+}
+
+/**
+ * Ответ ассистента похож на отказ обработать вложение (не JSON) — не кормим JSON.parse.
+ */
+export function looksLikeGigaChatNonJsonRefusal(raw: string): boolean {
+  const head = raw.trim().slice(0, 1200).toLowerCase();
+  if (head.startsWith('{') || head.startsWith('[')) return false;
+  if (head.includes('```json')) return false;
+  const hints = [
+    'не могу обработать изображения',
+    'не могу обработать pdf',
+    'не могу обработать изображения или pdf',
+    'предоставьте текст содержимого',
+    'предоставьте текст',
+    'i cannot process images',
+    'cannot process pdf',
+  ];
+  return hints.some(h => head.includes(h));
+}

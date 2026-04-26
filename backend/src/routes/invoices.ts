@@ -1101,7 +1101,9 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     });
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse-gigachat error:', error);
-    res.status(500).json({ error: 'Ошибка GigaChat reparse', details: error instanceof Error ? error.message : 'Unknown error' });
+    const details = error instanceof Error ? error.message : 'Unknown error';
+    // 502 — сбой внешнего GigaChat или отказ модели, не внутренняя логика БД
+    res.status(502).json({ error: 'Ошибка GigaChat reparse', details });
   }
 });
 

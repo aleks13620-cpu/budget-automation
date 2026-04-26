@@ -1,5 +1,10 @@
 import { Router, Request, Response } from 'express';
-import { getAccessToken, chatCompletion, listModels, isGigaChatConfigured } from '../services/gigachatService';
+import {
+  chatCompletion,
+  listModels,
+  isGigaChatConfigured,
+  getGigaChatFileJsonModelCandidates,
+} from '../services/gigachatService';
 
 const router = Router();
 
@@ -17,7 +22,18 @@ router.get('/api/gigachat/health', async (req: Request, res: Response) => {
 
   try {
     const models = await listModels();
-    res.json({ status: 'ok', models });
+    const fileJsonModels = getGigaChatFileJsonModelCandidates();
+    const fileJsonModelsAvailable = fileJsonModels.filter(m => models.includes(m));
+    res.json({
+      status: 'ok',
+      models,
+      fileJsonModels,
+      fileJsonModelsAvailable,
+      fileJsonModelsNote:
+        fileJsonModelsAvailable.length === 0
+          ? 'Ни одна модель из GIGACHAT_MODELS_FILES не найдена в /models — задайте список вручную под ваш ключ.'
+          : undefined,
+    });
   } catch (error) {
     console.error('GigaChat health check failed:', error);
     res.status(502).json({

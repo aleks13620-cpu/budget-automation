@@ -7,7 +7,13 @@
  */
 
 import fs from 'fs';
-import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
+import {
+  chatCompletion,
+  uploadFile,
+  deleteFile,
+  getGigaChatFileJsonModelCandidates,
+  looksLikeGigaChatNonJsonRefusal,
+} from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
 import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigachatParseQuality';
 import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
@@ -397,6 +403,30 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
   };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+/** Парсит JSON счёта из ответа assistant; понятная ошибка при отказе/не-JSON. */
+function parseInvoiceJsonFromAssistantRaw(raw: string): GigaChatParsedJSON {
+  if (looksLikeGigaChatNonJsonRefusal(raw)) {
+    const snippet = raw.trim().slice(0, 380).replace(/\s+/g, ' ');
+    throw new Error(`Модель отказалась разобрать вложение (ответ не JSON): ${snippet}`);
+  }
+  let jsonStr: string;
+  try {
+    jsonStr = sanitizeJSON(extractJSON(raw));
+  } catch {
+    throw new Error(`Не удалось извлечь JSON из ответа GigaChat. Начало: ${raw.trim().slice(0, 220)}`);
+  }
+  try {
+    return JSON.parse(jsonStr) as GigaChatParsedJSON;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Невалидный JSON от GigaChat: ${msg}. Фрагмент: ${jsonStr.slice(0, 180)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Публичное API
 // ---------------------------------------------------------------------------
@@ -432,11 +462,11 @@ export async function parsePdfWithGigaChat(filePath: string, supplierContext?: s
  * Файл удаляется после получения ответа.
  */
 async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierContext?: string): Promise<GigaChatInvoiceResult> {
-  let fileId: string | null = null;
-  let rawResponse = '';
-  let lastError: Error | null = null;
-
+  const models = getGigaChatFileJsonModelCandidates();
   const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
+  let fileId: string | null = null;
+  let lastRaw = '';
+  let lastError: Error | null = null;
 
   if (mimeType === 'application/pdf') {
     try {
@@ -451,125 +481,125 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
     }
   }
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      // Загружаем файл (только при первой попытке)
-      if (!fileId) {
-        fileId = await uploadFile(filePath, mimeType);
-      }
+  const chatOpts = { temperature: 0.1 as const, maxTokens: 32768 };
 
-      let pdfIsScan = false;
-      if (mimeType === 'application/pdf') {
-        const extracted = (await readPdfText(filePath)).trim();
-        pdfIsScan = extracted.length <= SCAN_PDF_TEXT_THRESHOLD;
-      }
+  const tryOnceWithMessages = async (
+    model: string,
+    messages: Parameters<typeof chatCompletion>[0],
+  ): Promise<GigaChatParsedJSON> => {
+    const raw = await chatCompletion(messages, { model, ...chatOpts });
+    lastRaw = raw;
+    if (looksLikeGigaChatNonJsonRefusal(raw)) {
+      const snippet = raw.trim().slice(0, 300).replace(/\s+/g, ' ');
+      throw new Error(`Модель ${model} отказалась разобрать вложение: ${snippet}`);
+    }
+    return parseInvoiceJsonFromAssistantRaw(raw);
+  };
 
-      const firstUser = pdfIsScan
-        ? `${contextPrefix}Это скан счёта или PDF без извлекаемого текста. Внимательно разбери изображение и извлеки таблицу товаров.`
-        : `${contextPrefix}Выполни инструкцию. Распознай документ.`;
+  try {
+    fileId = await uploadFile(filePath, mimeType);
 
-      rawResponse = await chatCompletion(
-        [
-          { role: 'system', content: INVOICE_PROMPT },
-          { role: 'user',   content: firstUser, attachments: [fileId] },
-        ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
-      );
+    const extractedPdf =
+      mimeType === 'application/pdf' ? (await readPdfText(filePath)).trim() : '';
+    const pdfIsScan = mimeType === 'application/pdf' && extractedPdf.length <= SCAN_PDF_TEXT_THRESHOLD;
 
-      console.log(`[GigaChatParser] File API raw response (first 500): ${rawResponse.slice(0, 500)}`);
+    for (const model of models) {
+      console.log(`[GigaChatParser] PDF/Image file API, model=${model}`);
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const firstUser = pdfIsScan
+            ? `${contextPrefix}Это скан счёта или PDF без извлекаемого текста. Внимательно разбери изображение и извлеки таблицу товаров.`
+            : `${contextPrefix}Выполни инструкцию. Распознай документ.`;
 
-      const jsonStr = sanitizeJSON(extractJSON(rawResponse));
-      const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
-      const items = mapItems(parsed.items);
+          const parsed = await tryOnceWithMessages(model, [
+            { role: 'system', content: INVOICE_PROMPT },
+            { role: 'user', content: firstUser, attachments: [fileId] },
+          ]);
+          console.log(`[GigaChatParser] File API raw response (first 500): ${lastRaw.slice(0, 500)}`);
 
-      // Если File API вернул мало позиций — текстовый fallback (только если PDF текстовый)
-      if (items.length < 3 && mimeType === 'application/pdf') {
-        const docText = await readPdfText(filePath);
-        const textLen = docText.trim().length;
-        if (textLen > SCAN_PDF_TEXT_THRESHOLD) {
-          console.log(`[GigaChatParser] File API items=${items.length} < 3 — fallback to text extraction`);
-          const textResponse = await chatCompletion(
-            [
-              { role: 'system', content: INVOICE_PROMPT },
-              { role: 'user',   content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}` },
-            ],
-            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
-          );
-          console.log(`[GigaChatParser] Text fallback raw (first 500): ${textResponse.slice(0, 500)}`);
-          const textParsed: GigaChatParsedJSON = JSON.parse(sanitizeJSON(extractJSON(textResponse)));
-          const textItems = mapItems(textParsed.items);
-          if (textItems.length > 0) {
-            const textMeta = mapMetadata(textParsed);
-            const out: GigaChatInvoiceResult = {
-              metadata: textMeta,
-              items: textItems,
-              rawResponse: textResponse,
-              documentType: textParsed.document_type || null,
-              parseQuality: buildParseQuality(textParsed, textItems, textMeta),
-            };
-            cacheGigaChatInvoice(filePath, 'invoice_pdf', out);
-            return out;
+          const rawFileResponse = lastRaw;
+          let items = mapItems(parsed.items);
+
+          if (items.length < 3 && mimeType === 'application/pdf') {
+            const docText = await readPdfText(filePath);
+            const textLen = docText.trim().length;
+            if (textLen > SCAN_PDF_TEXT_THRESHOLD) {
+              console.log(`[GigaChatParser] File API items=${items.length} < 3 — text extraction fallback (${model})`);
+              const textParsed = await tryOnceWithMessages(model, [
+                { role: 'system', content: INVOICE_PROMPT },
+                {
+                  role: 'user',
+                  content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}`,
+                },
+              ]);
+              console.log(`[GigaChatParser] Text fallback raw (first 500): ${lastRaw.slice(0, 500)}`);
+              const textItems = mapItems(textParsed.items);
+              if (textItems.length > 0) {
+                const textMeta = mapMetadata(textParsed);
+                const out: GigaChatInvoiceResult = {
+                  metadata: textMeta,
+                  items: textItems,
+                  rawResponse: lastRaw,
+                  documentType: textParsed.document_type || null,
+                  parseQuality: buildParseQuality(textParsed, textItems, textMeta),
+                };
+                cacheGigaChatInvoice(filePath, 'invoice_pdf', out);
+                return out;
+              }
+            } else if (pdfIsScan) {
+              console.log(`[GigaChatParser] Scan PDF items=${items.length} < 3 — second File API pass (${model})`);
+              const parsedScan = await tryOnceWithMessages(model, [
+                { role: 'system', content: INVOICE_PROMPT },
+                {
+                  role: 'user',
+                  content: `${contextPrefix}Документ — скан. Повтори разбор изображения PDF и извлеки максимально полную таблицу позиций счёта.`,
+                  attachments: [fileId],
+                },
+              ]);
+              const itemsScan = mapItems(parsedScan.items);
+              const metaScan = mapMetadata(parsedScan);
+              const outScan: GigaChatInvoiceResult = {
+                metadata: metaScan,
+                items: itemsScan,
+                rawResponse: lastRaw,
+                documentType: parsedScan.document_type || null,
+                parseQuality: buildParseQuality(parsedScan, itemsScan, metaScan),
+              };
+              cacheGigaChatInvoice(filePath, 'invoice_pdf', outScan);
+              return outScan;
+            }
           }
-        } else if (pdfIsScan) {
-          console.log(`[GigaChatParser] Scan PDF items=${items.length} < 3 — second File API pass`);
-          rawResponse = await chatCompletion(
-            [
-              { role: 'system', content: INVOICE_PROMPT },
-              {
-                role: 'user',
-                content: `${contextPrefix}Документ — скан. Повтори разбор изображения PDF и извлеки максимально полную таблицу позиций счёта.`,
-                attachments: [fileId],
-              },
-            ],
-            { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
-          );
-          const jsonScan = sanitizeJSON(extractJSON(rawResponse));
-          const parsedScan: GigaChatParsedJSON = JSON.parse(jsonScan);
-          const itemsScan = mapItems(parsedScan.items);
-          const metaScan = mapMetadata(parsedScan);
-          const outScan: GigaChatInvoiceResult = {
-            metadata: metaScan,
-            items: itemsScan,
-            rawResponse,
-            documentType: parsedScan.document_type || null,
-            parseQuality: buildParseQuality(parsedScan, itemsScan, metaScan),
+
+          const fileMeta = mapMetadata(parsed);
+          const outFile: GigaChatInvoiceResult = {
+            metadata: fileMeta,
+            items,
+            rawResponse: rawFileResponse,
+            documentType: parsed.document_type || null,
+            parseQuality: buildParseQuality(parsed, items, fileMeta),
           };
-          cacheGigaChatInvoice(filePath, 'invoice_pdf', outScan);
-          return outScan;
+          cacheGigaChatInvoice(filePath, 'invoice_pdf', outFile);
+          return outFile;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          console.warn(`[GigaChatParser] model=${model} attempt=${attempt}: ${lastError.message}`);
+          const msg = lastError.message;
+          const isNoSuchModel = msg.includes('404') && msg.includes('No such model');
+          if (isNoSuchModel) break;
+          if (attempt < 2) await sleep(3000);
         }
       }
+    }
 
-      const fileMeta = mapMetadata(parsed);
-      const outFile: GigaChatInvoiceResult = {
-        metadata: fileMeta,
-        items,
-        rawResponse,
-        documentType: parsed.document_type || null,
-        parseQuality: buildParseQuality(parsed, items, fileMeta),
-      };
-      cacheGigaChatInvoice(filePath, 'invoice_pdf', outFile);
-      return outFile;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[GigaChatParser] File API attempt ${attempt} failed: ${lastError.message}`);
-      if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
-    } finally {
-      // Удаляем файл после последней попытки
-      if (attempt === 2 && fileId) {
-        await deleteFile(fileId).catch(e => console.warn(`[GigaChatParser] deleteFile failed: ${e.message}`));
-      }
+    throw new Error(
+      `GigaChatParser: не удалось распарсить (модели: ${models.join(', ')}). ` +
+        `Последняя ошибка: ${lastError?.message ?? 'unknown'}. Фрагмент ответа: ${lastRaw.slice(0, 220)}`,
+    );
+  } finally {
+    if (fileId) {
+      await deleteFile(fileId).catch(e => console.warn(`[GigaChatParser] deleteFile: ${e.message}`));
     }
   }
-
-  // Если fileId был создан — удаляем
-  if (fileId) {
-    await deleteFile(fileId).catch(() => {});
-  }
-
-  throw new Error(
-    `GigaChatParser: не удалось распарсить после 2 попыток. ` +
-    `Ошибка: ${lastError?.message}. Ответ: ${rawResponse.slice(0, 200)}`
-  );
 }
 
 /**
@@ -624,46 +654,55 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
   }
 
   const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
+  const models = getGigaChatFileJsonModelCandidates();
   let rawResponse = '';
   let lastError: Error | null = null;
 
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    try {
-      rawResponse = await chatCompletion(
-        [
-          { role: 'system',    content: INVOICE_PROMPT },
-          { role: 'user',      content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}` },
-        ],
-        { model: 'GigaChat-2', temperature: 0.1, maxTokens: 32768 }
-      );
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        rawResponse = await chatCompletion(
+          [
+            { role: 'system', content: INVOICE_PROMPT },
+            {
+              role: 'user',
+              content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}`,
+            },
+          ],
+          { model, temperature: 0.1, maxTokens: 32768 },
+        );
 
-      const jsonStr = sanitizeJSON(extractJSON(rawResponse));
-      const parsed: GigaChatParsedJSON = JSON.parse(jsonStr);
-      const excelItems = mapItems(parsed.items);
-      const excelMeta = mapMetadata(parsed);
+        if (looksLikeGigaChatNonJsonRefusal(rawResponse)) {
+          throw new Error(
+            `Модель ${model} вернула отказ вместо JSON: ${rawResponse.trim().slice(0, 280)}`,
+          );
+        }
 
-      const out: GigaChatInvoiceResult = {
-        metadata: excelMeta,
-        items: excelItems,
-        rawResponse,
-        documentType: parsed.document_type || null,
-        parseQuality: buildParseQuality(parsed, excelItems, excelMeta),
-      };
-      cacheGigaChatInvoice(filePath, 'invoice_excel', out);
-      return out;
-    } catch (err) {
-      lastError = err instanceof Error ? err : new Error(String(err));
-      console.warn(`[GigaChatParser] Excel attempt ${attempt} failed: ${lastError.message}`);
+        const parsed = parseInvoiceJsonFromAssistantRaw(rawResponse);
+        const excelItems = mapItems(parsed.items);
+        const excelMeta = mapMetadata(parsed);
 
-      if (attempt < 2) {
-        await new Promise(r => setTimeout(r, 3000));
+        const out: GigaChatInvoiceResult = {
+          metadata: excelMeta,
+          items: excelItems,
+          rawResponse,
+          documentType: parsed.document_type || null,
+          parseQuality: buildParseQuality(parsed, excelItems, excelMeta),
+        };
+        cacheGigaChatInvoice(filePath, 'invoice_excel', out);
+        return out;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        console.warn(`[GigaChatParser] Excel model=${model} attempt=${attempt}: ${lastError.message}`);
+        const msg = lastError.message;
+        if (msg.includes('404') && msg.includes('No such model')) break;
+        if (attempt < 2) await sleep(3000);
       }
     }
   }
 
   throw new Error(
-    `GigaChatParser Excel: не удалось распарсить ответ после 2 попыток. ` +
-    `Последняя ошибка: ${lastError?.message}. ` +
-    `Ответ: ${rawResponse.slice(0, 200)}`
+    `GigaChatParser Excel: не удалось распарсить (модели: ${models.join(', ')}). ` +
+      `Последняя ошибка: ${lastError?.message}. Ответ: ${rawResponse.slice(0, 200)}`,
   );
 }

@@ -2,7 +2,13 @@
  * Извлечение таблицы спецификации из PDF-чертежа через GigaChat Files API.
  */
 
-import { chatCompletion, uploadFile, deleteFile } from './gigachatService';
+import {
+  chatCompletion,
+  uploadFile,
+  deleteFile,
+  getGigaChatFileJsonModelCandidates,
+  looksLikeGigaChatNonJsonRefusal,
+} from './gigachatService';
 import { extractJSON, sanitizeJSON, readPdfText } from './gigachatParser';
 import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
 import type { ParseResult, SpecificationRow } from '../types/specification';
@@ -208,6 +214,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   let fileId: string | null = null;
   let rawResponse = '';
   let lastError: Error | null = null;
+  const models = getGigaChatFileJsonModelCandidates();
 
   let pdfText = '';
   try {
@@ -219,71 +226,81 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   const userContent = buildUserContent(isScan, pdfText);
 
   try {
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        if (!fileId) {
-          fileId = await uploadFile(filePath, mimeType);
-        }
+    for (const model of models) {
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          if (!fileId) {
+            fileId = await uploadFile(filePath, mimeType);
+          }
 
-        rawResponse = await chatCompletion(
-          [
-            { role: 'system', content: SPECIFICATION_PROMPT },
-            {
-              role: 'user',
-              content: userContent,
-              attachments: [fileId],
-            },
-          ],
-          { model: 'GigaChat-2', temperature: 0.1, maxTokens: 16384 }
-        );
+          rawResponse = await chatCompletion(
+            [
+              { role: 'system', content: SPECIFICATION_PROMPT },
+              {
+                role: 'user',
+                content: userContent,
+                attachments: [fileId],
+              },
+            ],
+            { model, temperature: 0.1, maxTokens: 16384 },
+          );
 
-        const jsonStr = sanitizeJSON(extractJSON(rawResponse));
-        const parsed: GigaChatSpecPdfJSON = JSON.parse(jsonStr);
-        const items = mapPdfItemsToRows(parsed);
-        const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
+          if (looksLikeGigaChatNonJsonRefusal(rawResponse)) {
+            throw new Error(
+              `Модель ${model} отказалась разобрать PDF: ${rawResponse.trim().slice(0, 280)}`,
+            );
+          }
 
-        if (items.length === 0) {
-          const emptyRes: ParseResult = {
-            items: [],
+          const jsonStr = sanitizeJSON(extractJSON(rawResponse));
+          const parsed: GigaChatSpecPdfJSON = JSON.parse(jsonStr);
+          const items = mapPdfItemsToRows(parsed);
+          const specParseQuality = evaluateSpecPdfParseQuality(parsed.items, items);
+
+          if (items.length === 0) {
+            const emptyRes: ParseResult = {
+              items: [],
+              errors: [],
+              totalRows: 0,
+              skippedRows: 0,
+              category: 'C',
+              categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
+              specParseQuality,
+            };
+            try {
+              setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+            } catch (e) {
+              console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+            }
+            return emptyRes;
+          }
+
+          const okRes: ParseResult = {
+            items,
             errors: [],
-            totalRows: 0,
+            totalRows: items.length,
             skippedRows: 0,
-            category: 'C',
-            categoryReason: 'Не удалось извлечь спецификацию из PDF, загрузите Excel',
             specParseQuality,
           };
           try {
-            setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+            setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
           } catch (e) {
             console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
           }
-          return emptyRes;
+          return okRes;
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err));
+          console.warn(`[parseSpecFromPdf] model=${model} attempt=${attempt}: ${lastError.message}`);
+          const msg = lastError.message;
+          if (msg.includes('404') && msg.includes('No such model')) break;
+          if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
         }
-
-        const okRes: ParseResult = {
-          items,
-          errors: [],
-          totalRows: items.length,
-          skippedRows: 0,
-          specParseQuality,
-        };
-        try {
-          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
-        } catch (e) {
-          console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
-        }
-        return okRes;
-      } catch (err) {
-        lastError = err instanceof Error ? err : new Error(String(err));
-        console.warn(`[parseSpecFromPdf] attempt ${attempt} failed: ${lastError.message}`);
-        if (attempt < 2) await new Promise(r => setTimeout(r, 3000));
       }
     }
 
     return {
       items: [],
       errors: [
-        `GigaChat (спецификация PDF): не удалось распознать после 2 попыток. ${lastError?.message ?? ''}`.trim(),
+        `GigaChat (спецификация PDF): не удалось распознать (модели: ${models.join(', ')}). ${lastError?.message ?? ''}`.trim(),
       ],
       totalRows: 0,
       skippedRows: 0,

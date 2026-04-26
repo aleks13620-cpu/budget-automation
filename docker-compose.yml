@@ -15,4 +15,6 @@ services:
       # GigaChat — задать на сервере в .env рядом с docker-compose.yml
       GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
       GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
+      # Список моделей для PDF/вложений (через запятую). Пусто = Max,Pro,GigaChat-2,GigaChat
+      GIGACHAT_MODELS_FILES: ${GIGACHAT_MODELS_FILES:-}
     restart: unless-stopped
