@@ -336,9 +336,10 @@ export function isGigaChatConfigured(): boolean {
  * - GIGACHAT_MODELS_FILES — основной список
  * - GIGACHAT_MODEL_INVOICE — алиас для обратной совместимости
  *
- * По умолчанию: Max → Pro → базовая GigaChat-2 → GigaChat (часто Lite отказывается от PDF без vision).
+ * По умолчанию: GigaChat-2-Lite → GigaChat-2-Pro → GigaChat-2-Max.
+ * Сначала дешёвая модель (Lite), затем эскалация на более сильные при низком качестве разбора.
  */
-const DEFAULT_FILE_JSON_MODELS = ['GigaChat-2-Max', 'GigaChat-2-Pro', 'GigaChat-2', 'GigaChat'];
+const DEFAULT_FILE_JSON_MODELS = ['GigaChat-2-Lite', 'GigaChat-2-Pro', 'GigaChat-2-Max'];
 
 export function getGigaChatFileJsonModelCandidates(): string[] {
   const raw =

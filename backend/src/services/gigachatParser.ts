@@ -482,6 +482,10 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
   }
 
   const chatOpts = { temperature: 0.1 as const, maxTokens: 32768 };
+  const shouldEscalateByQuality = (result: GigaChatInvoiceResult, model: string): boolean => {
+    const idx = models.indexOf(model);
+    return !!result.parseQuality?.suggestElevatedReview && idx >= 0 && idx < models.length - 1;
+  };
 
   const tryOnceWithMessages = async (
     model: string,
@@ -503,7 +507,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
       mimeType === 'application/pdf' ? (await readPdfText(filePath)).trim() : '';
     const pdfIsScan = mimeType === 'application/pdf' && extractedPdf.length <= SCAN_PDF_TEXT_THRESHOLD;
 
-    for (const model of models) {
+    modelLoop: for (const model of models) {
       console.log(`[GigaChatParser] PDF/Image file API, model=${model}`);
       for (let attempt = 1; attempt <= 2; attempt++) {
         try {
@@ -543,6 +547,12 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
                   documentType: textParsed.document_type || null,
                   parseQuality: buildParseQuality(textParsed, textItems, textMeta),
                 };
+                if (shouldEscalateByQuality(out, model)) {
+                  console.warn(
+                    `[GigaChatParser] model=${model} quality is low (Sin-Stauss proxy), escalating to next model`,
+                  );
+                  continue modelLoop;
+                }
                 cacheGigaChatInvoice(filePath, 'invoice_pdf', out);
                 return out;
               }
@@ -565,6 +575,12 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
                 documentType: parsedScan.document_type || null,
                 parseQuality: buildParseQuality(parsedScan, itemsScan, metaScan),
               };
+              if (shouldEscalateByQuality(outScan, model)) {
+                console.warn(
+                  `[GigaChatParser] model=${model} quality is low (Sin-Stauss proxy), escalating to next model`,
+                );
+                continue modelLoop;
+              }
               cacheGigaChatInvoice(filePath, 'invoice_pdf', outScan);
               return outScan;
             }
@@ -578,6 +594,12 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
             documentType: parsed.document_type || null,
             parseQuality: buildParseQuality(parsed, items, fileMeta),
           };
+          if (shouldEscalateByQuality(outFile, model)) {
+            console.warn(
+              `[GigaChatParser] model=${model} quality is low (Sin-Stauss proxy), escalating to next model`,
+            );
+            continue modelLoop;
+          }
           cacheGigaChatInvoice(filePath, 'invoice_pdf', outFile);
           return outFile;
         } catch (err) {
@@ -658,7 +680,12 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
   let rawResponse = '';
   let lastError: Error | null = null;
 
-  for (const model of models) {
+  const shouldEscalateByQuality = (result: GigaChatInvoiceResult, model: string): boolean => {
+    const idx = models.indexOf(model);
+    return !!result.parseQuality?.suggestElevatedReview && idx >= 0 && idx < models.length - 1;
+  };
+
+  modelLoop: for (const model of models) {
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         rawResponse = await chatCompletion(
@@ -689,6 +716,12 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
           documentType: parsed.document_type || null,
           parseQuality: buildParseQuality(parsed, excelItems, excelMeta),
         };
+        if (shouldEscalateByQuality(out, model)) {
+          console.warn(
+            `[GigaChatParser] Excel model=${model} quality is low (Sin-Stauss proxy), escalating to next model`,
+          );
+          continue modelLoop;
+        }
         cacheGigaChatInvoice(filePath, 'invoice_excel', out);
         return out;
       } catch (err) {
