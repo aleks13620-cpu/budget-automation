@@ -1,0 +1,77 @@
+{
+  "audit_file": "phase0_audit_ОБРАЗЕЦ  28.04 (12).xlsx",
+  "source_invoice": "Ровен Счёт_5244.pdf",
+  "supplier": "РОВЕН-Самара",
+  "position_count": 9,
+  "total_sum": 18091.3,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Диффузор универсальный нерж. PAV-SS 200",
+      "article": "",
+      "price_with_vat": 6579.0,
+      "quantity": "12 шт"
+    },
+    {
+      "item_index": 1,
+      "name": "Решетка алюм. РНв ал. 750*350 RAL 9016",
+      "article": "",
+      "price_with_vat": 3803.8,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 2,
+      "name": "Воздуховод гибкий неизолированный 203х10 (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 2226.75,
+      "quantity": "2 упак"
+    },
+    {
+      "item_index": 3,
+      "name": "Воздуховод гибкий неизолированный 102х10 (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 1212.0,
+      "quantity": "1 упак"
+    },
+    {
+      "item_index": 4,
+      "name": "Воздуховод гибкий неизолированный 102х3м (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 324.75,
+      "quantity": "1 упак"
+    },
+    {
+      "item_index": 5,
+      "name": "Воздуховод гибкий неизолированный 127х10 (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 1381.5,
+      "quantity": "1 упак"
+    },
+    {
+      "item_index": 6,
+      "name": "Воздуховод гибкий неизолированный 127х3м (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 420.75,
+      "quantity": "1 упак"
+    },
+    {
+      "item_index": 7,
+      "name": "Воздуховод гибкий неизолированный 160х10 (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 1707.0,
+      "quantity": "2 упак"
+    },
+    {
+      "item_index": 8,
+      "name": "Воздуховод гибкий неизолированный 160х2,5м (ALUSHINE)",
+      "article": "",
+      "price_with_vat": 435.75,
+      "quantity": "1 упак"
+    }
+  ]
+}

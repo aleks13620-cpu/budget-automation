@@ -1,0 +1,28 @@
+{
+  "audit_file": "Элита КНС дренажник КП 3 360_28_01_2025 (1).xlsx",
+  "source_invoice": "Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf",
+  "supplier": "ООО \"ЭЛИТА-Центр\"",
+  "position_count": 2,
+  "total_sum": 963030.61,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Мини КНС ANTARUS 2 HK1-50-16-8-1,1",
+      "article": "",
+      "price_with_vat": 936728.36,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 1,
+      "name": "Насос дренажный ANTARUS НКД-40-7-7-1",
+      "article": "",
+      "price_with_vat": 26302.25,
+      "quantity": "1 шт"
+    }
+  ]
+}

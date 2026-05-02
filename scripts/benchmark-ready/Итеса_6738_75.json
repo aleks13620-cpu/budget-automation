@@ -1,0 +1,140 @@
+{
+  "audit_file": "phase0_audit_ОБРАЗЕЦ  28.04 (5).xlsx",
+  "source_invoice": "Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf",
+  "supplier": "Итеса",
+  "position_count": 18,
+  "total_sum": 6738.75,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Трубка K-FLEX PE 09x018-2 COMPACT BLUE 150 м",
+      "article": "R090182118PE0",
+      "price_with_vat": 24.75,
+      "quantity": "2550м"
+    },
+    {
+      "item_index": 1,
+      "name": "Трубка K-FLEX PE 09x022-2 COMPACT BLUE 120 м",
+      "article": "R090222118PE0",
+      "price_with_vat": 27.75,
+      "quantity": "5760м"
+    },
+    {
+      "item_index": 2,
+      "name": "Трубка K-FLEX PE 09x028-2 COMPACT BLUE 96 м",
+      "article": "R090282118PE0",
+      "price_with_vat": 31.5,
+      "quantity": "1440м"
+    },
+    {
+      "item_index": 3,
+      "name": "Трубка K-FLEX PE 09x018-2 COMPACT RED 150 м",
+      "article": "R090182118PE0",
+      "price_with_vat": 24.75,
+      "quantity": "2550м"
+    },
+    {
+      "item_index": 4,
+      "name": "Трубка K-FLEX PE 09x022-2 COMPACT RED 120 м",
+      "article": "R090222118PE0",
+      "price_with_vat": 27.75,
+      "quantity": "5760м"
+    },
+    {
+      "item_index": 5,
+      "name": "Трубка K-FLEX PE 09x028-2 COMPACT RED 96 м",
+      "article": "R090282118PE0",
+      "price_with_vat": 31.5,
+      "quantity": "1440м"
+    },
+    {
+      "item_index": 6,
+      "name": "Трубка K-FLEX PE 20x022-2 108 м",
+      "article": "200222155PE0N",
+      "price_with_vat": 78.75,
+      "quantity": "216м"
+    },
+    {
+      "item_index": 7,
+      "name": "Трубка K-FLEX PE 20x025-2 100 м",
+      "article": "200252155PE0N",
+      "price_with_vat": 84.0,
+      "quantity": "500м"
+    },
+    {
+      "item_index": 8,
+      "name": "Трубка K-FLEX PE 20x028-2 88 м",
+      "article": "200282155PE0N",
+      "price_with_vat": 88.5,
+      "quantity": "528м"
+    },
+    {
+      "item_index": 9,
+      "name": "Трубка K-FLEX PE 20x035-2 70 м",
+      "article": "200352155PE0N",
+      "price_with_vat": 102.0,
+      "quantity": "490м"
+    },
+    {
+      "item_index": 10,
+      "name": "Трубка K-FLEX PE 20x042-2 60 м",
+      "article": "200422155PE0N",
+      "price_with_vat": 109.5,
+      "quantity": "180м"
+    },
+    {
+      "item_index": 11,
+      "name": "Лента K-FLEX 048-050 DUCT 1604H silver 24 шт/уп (50м)",
+      "article": "85NDAL4805016",
+      "price_with_vat": 621.75,
+      "quantity": "3600шт"
+    },
+    {
+      "item_index": 12,
+      "name": "Клей K-FLEX 2.6 lt K 414 6 шт",
+      "article": "850CL020004",
+      "price_with_vat": 3975.0,
+      "quantity": "4шт"
+    },
+    {
+      "item_index": 13,
+      "name": "Трубка K-FLEX PE 20x054-2 48 м",
+      "article": "200542155PE0N",
+      "price_with_vat": 138.75,
+      "quantity": "96м"
+    },
+    {
+      "item_index": 14,
+      "name": "Трубка K-FLEX PE 20x076-2 26 м",
+      "article": "200762155PE0N",
+      "price_with_vat": 176.25,
+      "quantity": "208м"
+    },
+    {
+      "item_index": 15,
+      "name": "Трубка K-FLEX PE 20x089-2 24 м",
+      "article": "200892155PE0N",
+      "price_with_vat": 261.75,
+      "quantity": "192м"
+    },
+    {
+      "item_index": 16,
+      "name": "Трубка K-FLEX PE 20x110-2 14 м",
+      "article": "201102155PE0N",
+      "price_with_vat": 312.75,
+      "quantity": "154м"
+    },
+    {
+      "item_index": 17,
+      "name": "Лента K-FLEX 048-050 DUCT 1604H red 50м 24 шт",
+      "article": "85NDAL4805016",
+      "price_with_vat": 621.75,
+      "quantity": "1200шт"
+    }
+  ]
+}

@@ -1,0 +1,112 @@
+{
+  "audit_file": "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf.xlsx",
+  "source_invoice": "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf",
+  "supplier": "ООО ПК \"СТМ\"",
+  "position_count": 14,
+  "total_sum": 15766.36,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Короткий эксцентрический переходник ПНД Ø110х50 SDR26",
+      "article": "",
+      "price_with_vat": 390.0,
+      "quantity": "5 шт"
+    },
+    {
+      "item_index": 1,
+      "name": "Крестовина 1-но-плоскостная 45° Ø110х110 SDR26 удлиненная",
+      "article": "",
+      "price_with_vat": 2336.76,
+      "quantity": "7 шт"
+    },
+    {
+      "item_index": 2,
+      "name": "Отвод 90º ПЭ Ø160 SDR26 6,3мм",
+      "article": "",
+      "price_with_vat": 1900.0,
+      "quantity": "2 шт"
+    },
+    {
+      "item_index": 3,
+      "name": "Тройник 45° ПЭ d110x110 SDR26 4,2мм удлиненный СТМ",
+      "article": "",
+      "price_with_vat": 918.0,
+      "quantity": "21 шт"
+    },
+    {
+      "item_index": 4,
+      "name": "Отвод 45° ПНД с удлинённым патрубком d110 SDR26 4,2мм",
+      "article": "",
+      "price_with_vat": 586.6,
+      "quantity": "32 шт"
+    },
+    {
+      "item_index": 5,
+      "name": "Труба ПНД 110 SDR 26 4,2мм",
+      "article": "",
+      "price_with_vat": 356.4,
+      "quantity": "208 м"
+    },
+    {
+      "item_index": 6,
+      "name": "Тройник 90º (88,5º) ПНД Ø110x110 SDR264,2 мм удлиненный СТМ",
+      "article": "",
+      "price_with_vat": 898.0,
+      "quantity": "66 шт"
+    },
+    {
+      "item_index": 7,
+      "name": "Отвод 90º ПНД Ø110 удлиненный SDR26 4,2мм",
+      "article": "",
+      "price_with_vat": 909.0,
+      "quantity": "6 шт"
+    },
+    {
+      "item_index": 8,
+      "name": "Ревизия 90° резьба/заглушка ПНД d110 SDR26 удлиненная СТМ",
+      "article": "",
+      "price_with_vat": 2133.1,
+      "quantity": "16 шт"
+    },
+    {
+      "item_index": 9,
+      "name": "Прочистка ПЭ Ø50 (Крышка/резьба)",
+      "article": "",
+      "price_with_vat": 1440.0,
+      "quantity": "3 шт"
+    },
+    {
+      "item_index": 10,
+      "name": "Прочистка 45° резьба/заглушка ПНД d110 SDR26 удлиненная /СТМ",
+      "article": "",
+      "price_with_vat": 2276.1,
+      "quantity": "10 шт"
+    },
+    {
+      "item_index": 11,
+      "name": "Раструбная муфта ПНД d110 SDR26 с уплотнительным кольцом удлиненная СТМ",
+      "article": "",
+      "price_with_vat": 842.4,
+      "quantity": "2 шт"
+    },
+    {
+      "item_index": 12,
+      "name": "Заглушка ПНД Ø110 SDR17 6,6мм",
+      "article": "",
+      "price_with_vat": 580.0,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 13,
+      "name": "Труба ПНД Ø50 SDR17 3мм",
+      "article": "",
+      "price_with_vat": 200.0,
+      "quantity": "20 м"
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{
+  "audit_file": "phase0_audit_ОБРАЗЕЦ  28.04 (8).xlsx",
+  "source_invoice": "КП 1201038 АТК (3) (1).xls",
+  "supplier": "Веза-Самара",
+  "position_count": 5,
+  "total_sum": 207748.83,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Клапан ПРОК-1-Н-1100*500-0",
+      "article": "",
+      "price_with_vat": 42907.21,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 1,
+      "name": "Клапан ПРОК-1-Н-1100*500-0",
+      "article": "",
+      "price_with_vat": 42907.21,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 2,
+      "name": "Клапан ПРОК-1-Н-900*500-0",
+      "article": "",
+      "price_with_vat": 36741.6,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 3,
+      "name": "Клапан ПРОК-1-Н-900*500-0",
+      "article": "",
+      "price_with_vat": 36741.6,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 4,
+      "name": "Клапан ПРОК-1-Н-1200*600-0",
+      "article": "",
+      "price_with_vat": 48451.21,
+      "quantity": "1 шт"
+    }
+  ]
+}

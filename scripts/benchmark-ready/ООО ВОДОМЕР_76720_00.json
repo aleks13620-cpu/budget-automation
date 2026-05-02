@@ -1,0 +1,28 @@
+{
+  "audit_file": "+Водомер phase0_audit_ОБРАЗЕЦ  28.04.xlsx",
+  "source_invoice": "+Водомер.xlsx",
+  "supplier": "ООО \"ВОДОМЕР\"",
+  "position_count": 2,
+  "total_sum": 76720.0,
+  "name_status": "",
+  "price_status": "",
+  "qty_status": "",
+  "comment": "",
+  "warnings": [],
+  "items": [
+    {
+      "item_index": 0,
+      "name": "Расходомер-счетчик холодной и горячей воды ВСЭ М БИ Ду-25",
+      "article": "VM-3092-025-21B-54RS",
+      "price_with_vat": 38360.0,
+      "quantity": "1 шт"
+    },
+    {
+      "item_index": 1,
+      "name": "Расходомер-счетчик холодной и горячей воды ВСЭ М И Ду-25",
+      "article": "VM-3121-025-21B-54RS",
+      "price_with_vat": 38360.0,
+      "quantity": "1 шт"
+    }
+  ]
+}

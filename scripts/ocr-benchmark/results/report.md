@@ -1,0 +1,51 @@
+# Gemini 2.5 Flash — OCR Benchmark Report
+**Model:** google/gemini-2.5-flash via OpenRouter  
+**Benchmarks matched:** 9/12  
+**Total cost:** ~$0.025 (167K tokens)
+
+## Aggregate Scores
+
+| Metric | Score | Threshold | Status |
+|--------|-------|-----------|--------|
+| Overall score | **95.8%** | ≥85% | ✅ |
+| Name match | 99.3% | ≥80% | ✅ |
+| Price match (±5%) | 87.0% | ≥80% | ✅ |
+| Item count ratio | 100.0% | ≥80% | ✅ |
+
+## Decision
+
+**✅ INTEGRATE** — Gemini 2.5 Flash meets the quality bar. Proceed to OCR-4 integration.
+
+## Per-Document Results
+
+| Supplier | Overall | Items ref/gem | Name% | Price% | Notes |
+|----------|---------|---------------|-------|--------|-------|
+| Веза-Самара | N/A | — | — | — | Gemini result not found |
+| Итеса | 100% | 18/18 | 100% | 100% | |
+| ООО "ВОДОМЕР" | N/A | — | — | — | Gemini result not found |
+| ООО "Дюкс" | 100% | 3/3 | 100% | 100% | |
+| ООО "ИТЕСА" | 100% | 11/11 | 100% | 100% | |
+| ООО ПК "СТМ" | 100% | 14/14 | 100% | 100% | |
+| ООО "ПОЖАРКА 63" | 100% | 7/7 | 100% | 100% | |
+| ООО "ЭЛИТА-Центр" | 100% | 2/2 | 100% | 100% | |
+| Общество с ограниченной ответс | N/A | — | — | — | Gemini result not found |
+| РОВЕН-Самара | 100% | 9/9 | 100% | 100% | |
+| САНТЕХПРОМ | 95% | 23/23 | 100% | 83% | |
+| Электротехмонтаж | 67% | 34/41 | 94% | 0% | |
+
+> 3 benchmark(s) had no matching Gemini result (PDF not in uploads/).
+
+## Category C (Scanned PDFs) Detail
+
+| File | Text len | Garbage% | Gemini items | Status |
+|------|----------|----------|--------------|--------|
+| Арктика Предложение 873786 от 01.11.2025 (1). | 675 | 41% | 3 | ✅ Extracted |
+| ПК Курс doc02851820251216123708 (1).pdf | 0 | 100% | 2 | ✅ Extracted |
+| ПК Курс doc02851820251216123708 (1)1.pdf | 0 | 100% | 2 | ✅ Extracted |
+
+## Worst-Matched Items (name_sim < 0.75)
+
+| Supplier | Expected name | Gemini name | Sim |
+|----------|---------------|-------------|-----|
+| Электротехмонтаж | Саморез 3.5x35 мм (1000 шт | Саморез 3.5х35 мм (1000 шт/уп) PTK-Acces | 0.59 |
+| Электротехмонтаж | /уп) PTK-Acc essories (состав ОКЛ) | Саморез 3.5х35 мм (1000 шт/уп) PTK-Acces | 0.71 |

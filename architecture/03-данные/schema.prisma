@@ -1,0 +1,337 @@
+// Примечание: проект использует better-sqlite3 напрямую, не Prisma.
+// Эта схема — документационное представление реальной схемы базы.
+// Источник истины: backend/src/database/schema.ts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:../database/budget_automation.db"
+}
+
+model Project {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  specifications Specification[]
+  invoices       Invoice[]
+  priceLists     PriceList[]
+
+  @@map("projects")
+}
+
+model Supplier {
+  id             Int      @id @default(autoincrement())
+  name           String
+  contactInfo    String?  @map("contact_info")
+  vatRate        Float?   @map("vat_rate")
+  pricesIncludeVat Int?   @default(0) @map("prices_include_vat")
+  email          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  invoices      Invoice[]
+  priceLists    PriceList[]
+  parserConfig  SupplierParserConfig?
+  matchingRules MatchingRule[]
+
+  @@map("suppliers")
+}
+
+model Specification {
+  id          Int      @id @default(autoincrement())
+  projectId   Int      @map("project_id")
+  section     String?
+  fileName    String?  @map("file_name")
+  rawData     String?  @map("raw_data")
+  parseSource String?  @map("parse_source")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  project      Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  items        SpecificationItem[]
+  parserConfig SpecificationParserConfig?
+  history      SpecificationItemsHistory[]
+  parseRules   SpecParseRule[]
+
+  @@map("specifications")
+}
+
+model SpecificationItem {
+  id              Int      @id @default(autoincrement())
+  projectId       Int      @map("project_id")
+  specificationId Int      @map("specification_id")
+  positionNumber  String?  @map("position_number")
+  name            String?
+  characteristics String?
+  equipmentCode   String?  @map("equipment_code")
+  article         String?
+  productCode     String?  @map("product_code")
+  marking         String?
+  typeSize        String?  @map("type_size")
+  manufacturer    String?
+  unit            String?
+  quantity        Float?
+  section         String?
+  parentItemId    Int?     @map("parent_item_id")
+  fullName        String?  @map("full_name")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  specification Specification   @relation(fields: [specificationId], references: [id], onDelete: Cascade)
+  matches       MatchedItem[]
+
+  @@map("specification_items")
+}
+
+model Invoice {
+  id                     Int      @id @default(autoincrement())
+  projectId              Int      @map("project_id")
+  supplierId             Int?     @map("supplier_id")
+  invoiceNumber          String?  @map("invoice_number")
+  invoiceDate            String?  @map("invoice_date")
+  fileName               String?  @map("file_name")
+  filePath               String?  @map("file_path")
+  totalAmount            Float?   @map("total_amount")
+  vatAmount              Float?   @map("vat_amount")
+  status                 String?  @default("parsed")
+  parsingCategory        String?  @map("parsing_category")
+  parsingCategoryReason  String?  @map("parsing_category_reason")
+  discountDetected       Int?     @default(0) @map("discount_detected")
+  needsAmountReview      Int?     @default(0) @map("needs_amount_review")
+  vatRate                Float?   @map("vat_rate")
+  pricesIncludeVat       Int?     @default(0) @map("prices_include_vat")
+  isManual               Int?     @default(0) @map("is_manual")
+  discountApplied        Float?   @map("discount_applied")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier Supplier?      @relation(fields: [supplierId], references: [id])
+  items    InvoiceItem[]
+  history  InvoiceItemsHistory[]
+
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id               Int      @id @default(autoincrement())
+  invoiceId        Int      @map("invoice_id")
+  article          String?
+  name             String?
+  unit             String?
+  quantity         Float?
+  quantityPackages Float?   @map("quantity_packages")
+  price            Float?
+  amount           Float?
+  rowIndex         Int?     @map("row_index")
+  isDelivery       Int?     @default(0) @map("is_delivery")
+  isManual         Int?     @default(0) @map("is_manual")
+  needsUnitReview  Int?     @default(0) @map("needs_unit_review")
+  originalPrice    Float?   @map("original_price")
+  originalUnit     String?  @map("original_unit")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  invoice Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  matches MatchedItem[]
+
+  @@map("invoice_items")
+}
+
+model MatchedItem {
+  id                  Int      @id @default(autoincrement())
+  specificationItemId Int      @map("specification_item_id")
+  invoiceItemId       Int      @map("invoice_item_id")
+  confidence          Float?
+  matchType           String?  @map("match_type")
+  isConfirmed         Int?     @default(0) @map("is_confirmed")
+  isSelected          Int?     @default(0) @map("is_selected")
+  isAnalog            Int?     @default(0) @map("is_analog")
+  source              String?
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  specificationItem SpecificationItem @relation(fields: [specificationItemId], references: [id], onDelete: Cascade)
+  invoiceItem       InvoiceItem       @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+
+  @@map("matched_items")
+}
+
+model MatchingRule {
+  id                    Int      @id @default(autoincrement())
+  specificationPattern  String   @map("specification_pattern")
+  invoicePattern        String   @map("invoice_pattern")
+  confidence            Float?
+  isAnalog              Int?     @default(0) @map("is_analog")
+  isNegative            Int?     @default(0) @map("is_negative")
+  timesUsed             Int?     @default(0) @map("times_used")
+  supplierId            Int?     @map("supplier_id")
+  source                String?
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  supplier Supplier? @relation(fields: [supplierId], references: [id])
+
+  @@map("matching_rules")
+}
+
+model SupplierParserConfig {
+  id         Int      @id @default(autoincrement())
+  supplierId Int      @unique @map("supplier_id")
+  config     String   // JSON
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  supplier Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@map("supplier_parser_configs")
+}
+
+model SpecificationParserConfig {
+  id              Int      @id @default(autoincrement())
+  specificationId Int      @unique @map("specification_id")
+  headerRow       Int?     @map("header_row")
+  columnMapping   String?  @map("column_mapping") // JSON
+  mergeMultiline  Int?     @default(0) @map("merge_multiline")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  specification Specification @relation(fields: [specificationId], references: [id], onDelete: Cascade)
+
+  @@map("specification_parser_configs")
+}
+
+model UnitConversionTrigger {
+  id          Int      @id @default(autoincrement())
+  keyword     String
+  fromUnit    String   @map("from_unit")
+  toUnit      String   @map("to_unit")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("unit_conversion_triggers")
+}
+
+model ConstructionSynonym {
+  id           Int      @id @default(autoincrement())
+  abbreviation String
+  fullForm     String   @map("full_form")
+  category     String?
+  source       String?
+  timesUsed    Int?     @default(1) @map("times_used")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("construction_synonyms")
+}
+
+model SizeSynonym {
+  id        Int    @id @default(autoincrement())
+  canonical String
+  synonym   String
+
+  @@map("size_synonyms")
+}
+
+model PriceList {
+  id           Int      @id @default(autoincrement())
+  projectId    Int      @map("project_id")
+  supplierId   Int?     @map("supplier_id")
+  fileName     String?  @map("file_name")
+  filePath     String?  @map("file_path")
+  status       String?
+  parserConfig String?  @map("parser_config") // JSON
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  supplier Supplier?      @relation(fields: [supplierId], references: [id])
+  items    PriceListItem[]
+
+  @@map("price_lists")
+}
+
+model PriceListItem {
+  id          Int      @id @default(autoincrement())
+  priceListId Int      @map("price_list_id")
+  article     String?
+  name        String?
+  unit        String?
+  price       Float?
+  rowIndex    Int?     @map("row_index")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+
+  @@map("price_list_items")
+}
+
+model GigachatFileCache {
+  fileHash     String   @id @map("file_hash")
+  purpose      String?
+  responseJson String   @map("response_json")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("gigachat_file_cache")
+}
+
+model GigachatMatchCache {
+  id          Int      @id @default(autoincrement())
+  specText    String   @map("spec_text")
+  invoiceText String   @map("invoice_text")
+  isMatch     Int?     @map("is_match")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("gigachat_match_cache")
+}
+
+model OperatorFeedback {
+  id           Int      @id @default(autoincrement())
+  type         String?
+  projectId    Int?     @map("project_id")
+  specItemId   Int?     @map("spec_item_id")
+  invoiceItemId Int?    @map("invoice_item_id")
+  comment      String?
+  status       String?  @default("new")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@map("operator_feedback")
+}
+
+model SpecParseRule {
+  id              Int      @id @default(autoincrement())
+  specificationId Int      @map("specification_id")
+  field           String?
+  rawValue        String?  @map("raw_value")
+  correctedValue  String?  @map("corrected_value")
+  timesUsed       Int?     @default(1) @map("times_used")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  specification Specification @relation(fields: [specificationId], references: [id], onDelete: Cascade)
+
+  @@map("spec_parse_rules")
+}
+
+model InvoiceItemsHistory {
+  id             Int      @id @default(autoincrement())
+  invoiceId      Int      @map("invoice_id")
+  version        Int?
+  itemsSnapshot  String   @map("items_snapshot") // JSON
+  action         String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_items_history")
+}
+
+model SpecificationItemsHistory {
+  id              Int      @id @default(autoincrement())
+  specificationId Int      @map("specification_id")
+  version         Int?
+  itemsSnapshot   String   @map("items_snapshot") // JSON
+  action          String?
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  specification Specification @relation(fields: [specificationId], references: [id], onDelete: Cascade)
+
+  @@map("specification_items_history")
+}
