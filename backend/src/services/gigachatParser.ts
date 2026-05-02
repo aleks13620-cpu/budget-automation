@@ -519,7 +519,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
             { role: 'system', content: INVOICE_PROMPT },
             { role: 'user', content: firstUser, attachments: [fileId] },
           ]);
-          console.log(`[GigaChatParser] File API raw response (first 500): ${lastRaw.slice(0, 500)}`);
+          console.log(`[GigaChatParser] File API parse ok, model=${model}`);
 
           const rawFileResponse = lastRaw;
           let items = mapItems(parsed.items);
@@ -536,7 +536,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
                   content: `${contextPrefix}Выполни инструкцию. Распознай текст:\n\n${docText.slice(0, MAX_TEXT_LENGTH)}`,
                 },
               ]);
-              console.log(`[GigaChatParser] Text fallback raw (first 500): ${lastRaw.slice(0, 500)}`);
+              console.log(`[GigaChatParser] Text fallback parse ok, model=${model}`);
               const textItems = mapItems(textParsed.items);
               if (textItems.length > 0) {
                 const textMeta = mapMetadata(textParsed);

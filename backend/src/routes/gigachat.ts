@@ -35,7 +35,7 @@ router.get('/api/gigachat/health', async (req: Request, res: Response) => {
           : undefined,
     });
   } catch (error) {
-    console.error('GigaChat health check failed:', error);
+    console.error('GigaChat health check failed:', error instanceof Error ? error.message : String(error));
     res.status(502).json({
       status: 'error',
       message: error instanceof Error ? error.message : 'Unknown error',
@@ -63,7 +63,7 @@ router.post('/api/gigachat/chat', async (req: Request, res: Response) => {
     const reply = await chatCompletion(messages, { model, temperature, maxTokens });
     res.json({ reply });
   } catch (error) {
-    console.error('GigaChat chat error:', error);
+    console.error('GigaChat chat error:', error instanceof Error ? error.message : String(error));
     res.status(502).json({
       error: 'GigaChat request failed',
       details: error instanceof Error ? error.message : 'Unknown error',

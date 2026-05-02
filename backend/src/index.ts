@@ -1,9 +1,11 @@
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase, initializeDatabase } from './database';
+import { pruneExpiredGigaChatCache } from './services/gigachatFileCache';
 import { safeUnlink } from './utils/safeUnlink';
 import specificationRoutes from './routes/specifications';
 import invoiceRoutes from './routes/invoices';
@@ -23,6 +25,27 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Rate limiting — защита платной GigaChat-квоты
+const gigachatLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов к GigaChat, попробуйте через минуту' },
+});
+const matchingLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов к матчингу, попробуйте через минуту' },
+});
+app.use('/api/gigachat', gigachatLimiter);
+app.post('/api/invoices/:id/reparse-gigachat', gigachatLimiter);
+app.post('/api/projects/:id/invoices/bulk', gigachatLimiter);
+app.post('/api/projects/:id/matching/run', matchingLimiter);
+app.post('/api/projects/:id/matching/validate-gigachat', matchingLimiter);
 
 // Routes
 app.use(specificationRoutes);
@@ -178,6 +201,7 @@ async function start() {
   try {
     console.log('Initializing database...');
     initializeDatabase();
+    pruneExpiredGigaChatCache();
 
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);

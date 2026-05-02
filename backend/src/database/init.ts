@@ -76,6 +76,7 @@ function initializeDatabase(): void {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (file_hash, purpose)
       )`,
+      'ALTER TABLE gigachat_file_cache ADD COLUMN expires_at INTEGER',
       `CREATE TABLE IF NOT EXISTS construction_synonyms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         abbreviation TEXT NOT NULL,

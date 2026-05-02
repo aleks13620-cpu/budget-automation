@@ -234,7 +234,7 @@ export function checkTextQuality(text: string): { ratio: number; isGarbled: bool
   }
 
   const ratio = garbageCount / text.length;
-  return { ratio, isGarbled: ratio > 0.3 };
+  return { ratio, isGarbled: ratio > 0.1 };
 }
 
 const SUPPLIER_BAD_WORDS = [

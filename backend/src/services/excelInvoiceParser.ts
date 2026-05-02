@@ -246,6 +246,11 @@ export function extractExcelRawRows(filePath: string): string[][] {
 
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
 
+  const MAX_ROWS = 50_000;
+  if (rawRows.length > MAX_ROWS) {
+    throw new Error(`Слишком много строк (${rawRows.length}). Максимум — ${MAX_ROWS}.`);
+  }
+
   const rows = rawRows.map(row => {
     const cells = row.map(cell => (cell === null || cell === undefined) ? '' : String(cell));
     // Pad to totalCols to preserve empty columns at the end
@@ -281,6 +286,12 @@ export function extractExcelPreviewData(filePath: string, sheetIndex = 0, maxRow
   }
 
   const rawRows: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  const MAX_ROWS = 50_000;
+  if (rawRows.length > MAX_ROWS) {
+    throw new Error(`Слишком много строк (${rawRows.length}). Максимум — ${MAX_ROWS}.`);
+  }
+
   const allRows = rawRows.map(row => {
     const cells = (row as any[]).map(cell => (cell === null || cell === undefined) ? '' : String(cell));
     while (cells.length < totalCols) cells.push('');

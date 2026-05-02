@@ -38,16 +38,14 @@ function normalizeText(text: unknown): string {
   return String(text).toLowerCase().trim();
 }
 
-function postDebugLog(payload: {
+function postDebugLog(_payload: {
   runId: string;
   hypothesisId: string;
   location: string;
   message: string;
   data: Record<string, unknown>;
 }): void {
-  // #region agent log
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:payload.runId,hypothesisId:payload.hypothesisId,location:payload.location,message:payload.message,data:payload.data,timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
+  // debug logging removed
 }
 
 function detectHeaderRow(sheet: XLSX.WorkSheet): { rowIndex: number; mapping: ColumnMapping } | null {
@@ -457,6 +455,11 @@ export function parseExcelFile(filePath: string): ParseResult {
 
   const { rowIndex: headerRow, mapping } = headerResult;
   const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+
+  const MAX_ROWS = 50_000;
+  if (range.e.r - headerRow > MAX_ROWS) {
+    return { items: [], errors: [`Слишком много строк (${range.e.r - headerRow}). Максимум — ${MAX_ROWS}.`], totalRows: 0, skippedRows: 0 };
+  }
 
   let totalRows = 0;
   let skippedRows = 0;

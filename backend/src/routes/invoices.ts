@@ -1,9 +1,10 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase } from '../database';
 import { safeUnlink } from '../utils/safeUnlink';
-import { createUploadMiddleware, fixFilename, parseJsonSafe } from '../utils/fileUtils';
+import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
 import { routeInvoiceFile } from '../services/invoiceRouter';
@@ -13,6 +14,8 @@ import { isGigaChatConfigured } from '../services/gigachatService';
 import stringSimilarity from 'string-similarity';
 import type { ExcelParseResult } from '../types/invoice';
 
+const uploadLimiter = rateLimit({ windowMs: 60_000, max: 30, standardHeaders: true, legacyHeaders: false });
+
 const upload = createUploadMiddleware({
   allowedExtensions: ['.pdf', '.xlsx', '.xls', '.jpg', '.jpeg', '.png', '.tiff', '.bmp'],
   errorMessage: 'Допустимы только файлы .pdf, .xlsx, .xls, .jpg, .jpeg, .png, .tiff, .bmp',
@@ -20,6 +23,12 @@ const upload = createUploadMiddleware({
 });
 
 const router = Router();
+
+function assertUploadPath(fp: string): void {
+  if (!path.resolve(fp).startsWith(UPLOAD_DIR)) {
+    throw Object.assign(new Error('invalid_file_path'), { status: 400 });
+  }
+}
 
 const DELIVERY_KEYWORDS = [
   'доставка', 'транспортные расходы', 'транспортные услуги',
@@ -291,32 +300,23 @@ async function processInvoiceFile(
 
   applySupplierHeuristics(supplierName, parseResult.items);
 
-  // Быстрая оценка качества PDF для решения о fallback
-  let quickPdfCategory: string | null = null;
-  if (ext === '.pdf' && pdfRawRows && pdfFullText !== null && parseResult.items.length > 0) {
-    const quickCat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
-    quickPdfCategory = quickCat.category;
-  }
-
   const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
 
-  // GigaChat fallback: если нет позиций, либо не извлечены ключевые финполя, либо документ нечитаем.
-  // При категории B с найденными позициями классический парсер оставляем — он точнее.
   const needsGigaChat = parseResult.items.length === 0 ||
     financialCoreMissing ||
-    (ext === '.pdf' && quickPdfCategory === 'C') ||
     (lastExcelResult !== null && lastExcelResult.category === 'C');
 
   let parsedVatRate: number = 22;
   let lastGigaParseQuality: GigaChatParseQuality | undefined;
   let gigachatFallbackSucceeded = false;
+  let geminiOcrSucceeded = false;
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
       const supplierCtx = buildSupplierContext(supplierName, supplierId ? loadSavedMapping(supplierId) : undefined);
       let gigaResult;
       if (ext === '.pdf') {
-        console.log(`[InvoiceRouter] PDF category=${quickPdfCategory}, items=${parseResult.items.length} — GigaChat fallback`);
+        console.log(`[InvoiceRouter] PDF items=${parseResult.items.length}, financialCoreMissing=${financialCoreMissing} — GigaChat fallback`);
         gigaResult = await parsePdfWithGigaChat(file.path, supplierCtx);
       } else {
         console.log(`[InvoiceRouter] Excel category=${lastExcelResult?.category}, items=${parseResult.items.length} — GigaChat fallback`);
@@ -359,7 +359,7 @@ async function processInvoiceFile(
           discountDetected: null,
         };
         applySupplierHeuristics(resolvedSupplierName, parseResult.items);
-        gigachatFallbackSucceeded = true;
+        gigachatFallbackSucceeded = gigaResult.items.length > 0;
         lastGigaParseQuality = gigaResult.parseQuality;
         parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
         if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
@@ -369,11 +369,35 @@ async function processInvoiceFile(
     }
   }
 
+  // Gemini OCR fallback — для сканированных PDF когда текстовый слой отсутствует
+  if (
+    ext === '.pdf' &&
+    !gigachatFallbackSucceeded &&
+    parseResult.items.length === 0 &&
+    process.env.OPENROUTER_API_KEY
+  ) {
+    try {
+      const { ocrPdfWithGemini } = await import('../services/geminiOcr');
+      const geminiResult = await ocrPdfWithGemini(file.path);
+      if (geminiResult && geminiResult.items.length > 0) {
+        parseResult = geminiResult;
+        geminiOcrSucceeded = true;
+        console.log(`[GeminiOCR] Extracted ${geminiResult.items.length} items from PDF: ${file.originalname}`);
+      }
+    } catch (err) {
+      console.warn(`[GeminiOCR] Fallback failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
   // Categorize parsing result
   let parsingCategory: string;
   let parsingCategoryReason: string;
 
-  if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
+  if (geminiOcrSucceeded) {
+    const hasCore = hasValidFinancialCore(parseResult.items);
+    parsingCategory = hasCore ? 'A' : 'B';
+    parsingCategoryReason = `GeminiOCR: ${parseResult.items.length} позиций` + (hasCore ? '' : ', неполные финансовые данные');
+  } else if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
     const cat = categorizeParsingResult(parseResult, pdfRawRows, pdfFullText);
     parsingCategory = cat.category;
     parsingCategoryReason = cat.reason;
@@ -505,7 +529,7 @@ async function processInvoiceFile(
 }
 
 // POST /api/projects/:id/invoices — upload and parse invoice (PDF/Excel)
-router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Request, res: Response) => {
+router.post('/api/projects/:id/invoices', uploadLimiter, upload.single('file'), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
@@ -541,7 +565,7 @@ router.post('/api/projects/:id/invoices', upload.single('file'), async (req: Req
 });
 
 // POST /api/projects/:id/invoices/bulk — bulk upload invoices
-router.post('/api/projects/:id/invoices/bulk', upload.array('files', 100), async (req: Request, res: Response) => {
+router.post('/api/projects/:id/invoices/bulk', uploadLimiter, upload.array('files', 20), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
@@ -635,6 +659,7 @@ router.get('/api/invoices/:id/preview', async (req: Request, res: Response) => {
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
     let rows: string[][];
@@ -711,6 +736,7 @@ router.get('/api/invoices/:id/preview-excel', (req: Request, res: Response) => {
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
 
     const sheetIndex = parseInt(String(req.query.sheet || '0'), 10);
     const maxRows = parseInt(String(req.query.maxRows || '200'), 10);
@@ -868,7 +894,11 @@ router.delete('/api/invoices/:id', (req: Request, res: Response) => {
 
     // Delete file from disk
     if (invoice.file_path) {
-      safeUnlink(invoice.file_path);
+      if (path.resolve(invoice.file_path).startsWith(UPLOAD_DIR)) {
+        safeUnlink(invoice.file_path);
+      } else {
+        console.warn('invalid_file_path_on_delete', { file_path: invoice.file_path });
+      }
     }
 
     res.json({ deleted: true });
@@ -944,6 +974,7 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
 
     // Priority: mapping from request body > saved supplier config
     let savedMapping: SavedMapping | undefined;
@@ -1014,6 +1045,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
     if (!isGigaChatConfigured()) {
       return res.status(503).json({ error: 'GigaChat не настроен (нет GIGACHAT_AUTH_KEY)' });
     }
@@ -1100,7 +1132,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       parseQuality: pq ?? null,
     });
   } catch (error) {
-    console.error('POST /api/invoices/:id/reparse-gigachat error:', error);
+    console.error('POST /api/invoices/:id/reparse-gigachat error:', error instanceof Error ? error.message : String(error));
     const details = error instanceof Error ? error.message : 'Unknown error';
     // 502 — сбой внешнего GigaChat или отказ модели, не внутренняя логика БД
     res.status(502).json({ error: 'Ошибка GigaChat reparse', details });
@@ -1227,6 +1259,7 @@ router.post('/api/invoices/:id/preview-split', async (req: Request, res: Respons
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
 
     const { separatorMethod, separatorValue } = req.body;
     if (!separatorMethod) {
@@ -1276,6 +1309,7 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
       return res.status(404).json({ error: 'Файл счёта не найден на диске' });
     }
+    assertUploadPath(invoice.file_path);
 
     const { separatorMethod, separatorValue, mapping } = req.body;
     if (!separatorMethod || !mapping || typeof mapping.headerRow !== 'number') {
@@ -1501,19 +1535,26 @@ router.post('/api/invoices/:id/calculate-price-formula', (req: Request, res: Res
       numerator: string; denominator: string; saveForSupplier?: boolean;
     };
 
-    const ALLOWED = new Set(['amount', 'quantity', 'quantity_packages', 'price']);
-    if (!ALLOWED.has(numerator) || !ALLOWED.has(denominator)) {
+    const PRICE_COLS: Record<string, string> = {
+      amount: 'amount',
+      quantity: 'quantity',
+      quantity_packages: 'quantity_packages',
+      price: 'price',
+    };
+    const numCol = PRICE_COLS[numerator];
+    const denCol = PRICE_COLS[denominator];
+    if (!numCol || !denCol) {
       return res.status(400).json({ error: 'Недопустимые колонки для расчёта' });
     }
-    if (numerator === denominator) {
+    if (numCol === denCol) {
       return res.status(400).json({ error: 'Числитель и делитель должны быть разными' });
     }
 
-    saveSnapshot(invoiceId, `calculate_price_formula_${numerator}_div_${denominator}`, db);
+    saveSnapshot(invoiceId, `calculate_price_formula_${numCol}_div_${denCol}`, db);
 
     const result = db.prepare(`
-      UPDATE invoice_items SET price = ${numerator} / ${denominator}
-      WHERE invoice_id = ? AND ${numerator} IS NOT NULL AND ${denominator} IS NOT NULL AND ${denominator} > 0
+      UPDATE invoice_items SET price = ${numCol} / ${denCol}
+      WHERE invoice_id = ? AND ${numCol} IS NOT NULL AND ${denCol} IS NOT NULL AND ${denCol} > 0
     `).run(invoiceId);
 
     // Save formula to supplier config

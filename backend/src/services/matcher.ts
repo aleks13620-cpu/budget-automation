@@ -484,37 +484,10 @@ function matchSpecItems(
     );
     allCandidates.push(...candidates.slice(0, TOP_K));
 
-    if (isCompactSpec) {
-      // #region agent log
-      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'v2',hypothesisId:'H2',location:'backend/src/services/matcher.ts:compact_spec_diagnostics',message:'Compact spec diagnostics',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,equipmentCode:spec.equipment_code,nameUsedForMatching:nameForMatching,specNormName,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,candidateCountBeforeTopK:candidates.length,selectedAfterTopK:Math.min(candidates.length,TOP_K),negativeBlockedCount,topCandidateType:candidates[0]?.matchType,topCandidateConf:candidates[0]?.confidence},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    }
-
-    if (positionToken.length >= 3 && candidates.length > 0) {
-      const top = candidates[0];
-      // #region agent log
-      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H5',location:'backend/src/services/matcher.ts:position_number_signal',message:'Position number used as matching signal',data:{specId:spec.id,specName:spec.name,positionNumber:spec.position_number,positionToken,topCandidateInvoiceId:top.invoiceItemId,topCandidateConfidence:top.confidence,topCandidateType:top.matchType,candidateCountBeforeTopK:candidates.length},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
-    }
-
     if (candidates.length === 0 && unmatchedLogged < 25) {
       unmatchedLogged++;
-      // #region agent log
-      fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H3',location:'backend/src/services/matcher.ts:unmatched_spec_diagnostics',message:'Spec produced zero candidates',data:{specId:spec.id,specName:spec.name,fullName:spec.full_name,characteristics:spec.characteristics,hasSpecArticle:!!spec.article,hasProductCode:!!spec.product_code,hasEquipmentCode:!!spec.equipment_code,bestRawNameSim:Number(bestRawNameSim.toFixed(3)),bestRawFullSim:Number(bestRawFullSim.toFixed(3)),bestRawInvoiceName:bestRawInvName,negativeBlockedCount},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion
     }
   }
-
-  // #region agent log
-  const tierCount: Record<string,number> = {};
-  const uniqueSpecs = new Set(allCandidates.map(c => c.specItemId));
-  for (const c of allCandidates) { tierCount[c.matchType] = (tierCount[c.matchType] || 0) + 1; }
-  const specsWithEquipCode = specItems.filter(s => s.equipment_code?.trim()).length;
-  const specsWithFullName = specItems.filter(s => s.full_name?.trim()).length;
-  const specsWithArticle = specItems.filter(s => s.article?.trim()).length;
-  const specsWithProductCode = specItems.filter(s => s.product_code?.trim()).length;
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'v2',hypothesisId:'H4',location:'backend/src/services/matcher.ts:match_summary',message:'Matching output summary v2',data:{specItemsCount:specItems.length,invoiceItemsCount:invoiceItems.length,totalCandidates:allCandidates.length,uniqueSpecsMatched:uniqueSpecs.size,specsWithoutCandidatesLogged:unmatchedLogged,tierCount,specsWithEquipCode,specsWithFullName,specsWithArticle,specsWithProductCode},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
 
   return allCandidates;
 }
@@ -550,9 +523,6 @@ export function runMatching(projectId: number): MatchCandidate[] {
   const specItems = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
   const allItems = loadAllItems(db, projectId);
   const rules = db.prepare(RULES_SQL).all() as MatchingRule[];
-  // #region agent log
-  fetch('http://127.0.0.1:7830/ingest/9fee685e-d5a8-428b-a924-a36029ab70bf',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'acd6be'},body:JSON.stringify({sessionId:'acd6be',runId:'initial',hypothesisId:'H1',location:'backend/src/services/matcher.ts:runMatching',message:'runMatching inputs',data:{projectId,specItemsCount:specItems.length,invoiceAndPriceItemsCount:allItems.length,rulesCount:rules.length,invoiceOnlyCount:allItems.filter(i=>i.source==='invoice').length,priceListCount:allItems.filter(i=>i.source==='price_list').length},timestamp:Date.now()})}).catch(()=>{});
-  // #endregion
   return matchSpecItems(specItems, allItems, rules);
 }
 

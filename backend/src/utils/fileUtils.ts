@@ -2,7 +2,7 @@ import fs from 'fs';
 import multer from 'multer';
 import path from 'path';
 
-const DEFAULT_UPLOAD_PATH = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
+export const UPLOAD_DIR = path.resolve(__dirname, '../../..', process.env.UPLOAD_PATH || '../data/uploads');
 
 export function parseJsonSafe<T>(raw: string, fallback: T, context?: string): T {
   try {
@@ -33,7 +33,7 @@ export function createUploadMiddleware(options: {
   maxFileSizeBytes?: number;
   uploadPath?: string;
 }): multer.Multer {
-  const uploadPath = options.uploadPath ?? DEFAULT_UPLOAD_PATH;
+  const uploadPath = options.uploadPath ?? UPLOAD_DIR;
   const allowedExtensions = options.allowedExtensions.map((ext) => ext.toLowerCase());
   const maxFileSizeBytes = options.maxFileSizeBytes ?? 50 * 1024 * 1024;
 
@@ -51,9 +51,20 @@ export function createUploadMiddleware(options: {
     },
   });
 
+  const MIME_WHITELIST = new Set([
+    'application/pdf',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'image/jpeg', 'image/png', 'image/tiff', 'image/bmp',
+    'application/octet-stream',
+  ]);
+
   return multer({
     storage,
     fileFilter: (_req, file, cb) => {
+      if (!MIME_WHITELIST.has(file.mimetype)) {
+        return cb(new Error('Invalid file type'));
+      }
       const ext = path.extname(file.originalname).toLowerCase();
       if (allowedExtensions.includes(ext)) {
         cb(null, true);

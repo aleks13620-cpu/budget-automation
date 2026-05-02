@@ -2,10 +2,10 @@
 description: Keep problem registry and DB structure up to date
 globs:
   - "**/*"
-alwaysApply: false
+alwaysApply: true
 ---
 
-- When a bug or technical issue is discovered, register it in `docs/problem-registry.yaml` unless it already exists.
+- When a **functional bug or regression** is discovered (parsing error, wrong price, lost items, incorrect matching), register it in `docs/problem-registry.yaml` unless it already exists. Infrastructure issues (git, files, docs) do NOT require registration.
 - Every issue must include user-facing impact in `user_impact` (plain language: what user/business pain it creates).
 - Keep scoring fields (`impact`, `urgency`, `frequency`, `confidence`, `effort`, `risk`) up to date and run prioritization.
 - Before finishing a task that modified the registry, run `npm run problem-registry:validate` from `backend`.
