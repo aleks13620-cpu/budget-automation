@@ -28,16 +28,16 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "better-sqlite3": "^12.6.2",
-    "cors": "^2.8.6",
-    "dotenv": "^17.2.4",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.4.1",
-    "multer": "^2.0.2",
-    "openai": "^4.104.0",
-    "pdf-parse": "^2.4.5",
-    "string-similarity": "^4.0.4",
-    "xlsx": "^0.18.5"
+    "better-sqlite3": "12.6.2",
+    "cors": "2.8.6",
+    "dotenv": "17.2.4",
+    "express": "5.2.1",
+    "express-rate-limit": "8.4.1",
+    "multer": "2.0.2",
+    "openai": "4.104.0",
+    "pdf-parse": "2.4.5",
+    "string-similarity": "4.0.4",
+    "xlsx": "0.18.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
