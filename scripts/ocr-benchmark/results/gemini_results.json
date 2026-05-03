@@ -1,982 +1,639 @@
 {
-  "Арктика Предложение 873786 от 01.11.2025 (1).pdf": {
-    "filename": "Арктика Предложение 873786 от 01.11.2025 (1).pdf",
+  "Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf": {
+    "filename": "Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf",
     "items": [
       {
-        "name": "Решетка АMP 150*150M",
-        "article": "41029",
-        "unit": "шт.",
-        "quantity": 3.0,
-        "price": 1601.0,
-        "amount": 4803.0
+        "name": "Трубка K-FLEX PE 09x018-2 COMPACT BLUE 150 м",
+        "article": "R090182118PE0",
+        "unit": "M",
+        "quantity": 2550,
+        "price": 24.75,
+        "amount": 63112.5
       },
       {
-        "name": "Решетка АMP 200*150M",
-        "article": "40874",
-        "unit": "шт.",
-        "quantity": 3.0,
-        "price": 1837.0,
-        "amount": 5511.0
+        "name": "Трубка K-FLEX PE 09x022-2 COMPACT BLUE 120 м",
+        "article": "R090222118PE0",
+        "unit": "M",
+        "quantity": 5760,
+        "price": 27.75,
+        "amount": 159840.0
       },
       {
-        "name": "Решетка АMP 400*200M",
-        "article": "41044",
-        "unit": "шт.",
-        "quantity": 1.0,
-        "price": 3313.0,
-        "amount": 3313.0
+        "name": "Трубка K-FLEX PE 09x028-2 COMPACT BLUE 96 м",
+        "article": "R090282118PE0",
+        "unit": "M",
+        "quantity": 1440,
+        "price": 31.5,
+        "amount": 45360.0
+      },
+      {
+        "name": "Трубка КK-FLEX PE 09x018-2 COMPACT RED 150 м",
+        "article": "R090182118РЕ0",
+        "unit": "M",
+        "quantity": 2550,
+        "price": 24.75,
+        "amount": 63112.5
+      },
+      {
+        "name": "Трубка K-FLEX PE 09x022-2 COMPACT RED 120 м",
+        "article": "R090222118PE0",
+        "unit": "M",
+        "quantity": 5760,
+        "price": 27.75,
+        "amount": 159840.0
+      },
+      {
+        "name": "Трубка К-FLEX PE 09x028-2 COMPACT RED 96 м",
+        "article": "R090282118РЕ0",
+        "unit": "M",
+        "quantity": 1440,
+        "price": 31.5,
+        "amount": 45360.0
+      },
+      {
+        "name": "Трубка К-FLEX PE 20x022-2 108 м",
+        "article": "200222155PE0N",
+        "unit": "M",
+        "quantity": 216,
+        "price": 78.75,
+        "amount": 17010.0
+      },
+      {
+        "name": "Трубка К-FLEX PE 20x025-2 100 м",
+        "article": "200252155PE0N",
+        "unit": "M",
+        "quantity": 500,
+        "price": 84.0,
+        "amount": 42000.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20x028-2 88 м",
+        "article": "200282155PEON",
+        "unit": "M",
+        "quantity": 528,
+        "price": 88.5,
+        "amount": 46728.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20х035-2 70 м",
+        "article": "200352155PE0N",
+        "unit": "M",
+        "quantity": 490,
+        "price": 102.0,
+        "amount": 49980.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20x042-2 60 м",
+        "article": "200422155PEON",
+        "unit": "M",
+        "quantity": 180,
+        "price": 109.5,
+        "amount": 19710.0
+      },
+      {
+        "name": "Лента КK-FLEX 048-050 DUCT 1604H silver 24 шт/уп (50м)",
+        "article": "85NDAL4805016",
+        "unit": "шт",
+        "quantity": 3600,
+        "price": 621.75,
+        "amount": 2238300.0
+      },
+      {
+        "name": "Клей K-FLEX 2.6 It K 414 6 шт",
+        "article": "850CL020004",
+        "unit": "шт",
+        "quantity": 4,
+        "price": 3975.0,
+        "amount": 15900.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20х054-2 48 м",
+        "article": "200542155PE0N",
+        "unit": "M",
+        "quantity": 96,
+        "price": 138.75,
+        "amount": 13320.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20х076-2 26 м",
+        "article": "200762155PE0N",
+        "unit": "M",
+        "quantity": 208,
+        "price": 176.25,
+        "amount": 36660.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20х089-2 24 м",
+        "article": "200892155PE0N",
+        "unit": "M",
+        "quantity": 192,
+        "price": 261.75,
+        "amount": 50256.0
+      },
+      {
+        "name": "Трубка K-FLEX PE 20х110-2 14 м",
+        "article": "201102155PE0N",
+        "unit": "M",
+        "quantity": 154,
+        "price": 312.75,
+        "amount": 48163.5
+      },
+      {
+        "name": "Лента КK-FLEX 048-050 DUCT 1604H red 50м 24 шт",
+        "article": "85NDAL4805016",
+        "unit": "шт",
+        "quantity": 1200,
+        "price": 621.75,
+        "amount": 746100.0
       }
     ],
     "pages_processed": 1,
-    "tokens_used": 3829,
+    "tokens_used": 5382,
     "error": null
   },
-  "ПК Курс doc02851820251216123708 (1).pdf": {
-    "filename": "ПК Курс doc02851820251216123708 (1).pdf",
+  "Счетчики Эконом Счет на оплату (фирм.бланк) № 2500004860 от 27.08.2025 (2).pdf": {
+    "filename": "Счетчики Эконом Счет на оплату (фирм.бланк) № 2500004860 от 27.08.2025 (2).pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Счетчики Эконом Счет на оплату (фирм.бланк) № 2500004860 от 27.08.2025 (2).pdf",
     "items": [
       {
-        "name": "Антикоррозионная мастика \"Вектор 1236 серебро\" (комплект 10кг.)",
-        "article": null,
-        "unit": "компл",
-        "quantity": 3,
-        "price": 12285.0,
-        "amount": 36855.0
+        "name": "Счетчик холодной воды турбинный DUX СВТ-Х-50-200-ДГ (чугун), класс В",
+        "article": "СВТ-Х-50-200-ДГ",
+        "unit": "шт",
+        "quantity": 1,
+        "price": 10446,
+        "amount": 10446
       },
       {
-        "name": "Антикоррозионная мастика \"Вектор 1214\" (комплект 10кг)",
+        "name": "Счетчик воды универсальный ЭКО НОМ СВ ДЛ-50 ДГ (латунь)+КМЧ",
+        "article": "СВДЛ50-002",
+        "unit": "шт",
+        "quantity": 1,
+        "price": 10756,
+        "amount": 10756
+      },
+      {
+        "name": "Счетчик воды универсальный ЭКО НОМ СВ Д-40 ДГ+КМЧ",
+        "article": "СВДГ40-003",
+        "unit": "кор",
+        "quantity": 0.33,
+        "price": 5894,
+        "amount": 5894
+      }
+    ],
+    "pages_processed": 1,
+    "tokens_used": 3868,
+    "error": null
+  },
+  "Сшитый итеса Счет на оплату № 4305 от 02.07.2025.pdf": {
+    "filename": "Сшитый итеса Счет на оплату № 4305 от 02.07.2025.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Сшитый итеса Счет на оплату № 4305 от 02.07.2025.pdf",
+    "items": [
+      {
+        "name": "ONE PLUS Трубка І образная 16*15-L250 акс. (60)",
+        "article": "3504023087",
+        "unit": "шт",
+        "quantity": 1856,
+        "price": 429.57,
+        "amount": 797280.58
+      },
+      {
+        "name": "ONE PLUS Труба РЕ-Ха 16*2.2 EVOH серая (200м) (3104015025)",
+        "article": "3504012146",
+        "unit": "м",
+        "quantity": 5000,
+        "price": 47.15,
+        "amount": 235764.48
+      },
+      {
+        "name": "ONE PLUS Труба РЕ-Ха 20*2.8 EVOH серая (100м) (3104015032)",
+        "article": "3504012151",
+        "unit": "м",
+        "quantity": 11400,
+        "price": 69.81,
+        "amount": 795803.91
+      },
+      {
+        "name": "ONE PLUS Труба РЕ-Ха 25*3.5 EVOH серая (50м) (3104015029)",
+        "article": "3504012154",
+        "unit": "м",
+        "quantity": 2850,
+        "price": 109.58,
+        "amount": 312315.49
+      },
+      {
+        "name": "ONE PLUS Гильза 16 латунная акс. (400/50) (3204023091)",
+        "article": "3504023037",
+        "unit": "шт",
+        "quantity": 6533,
+        "price": 40.85,
+        "amount": 266870.01
+      },
+      {
+        "name": "ONE PLUS Гильза 20 латунная акс. (300/30) (3204023089)",
+        "article": "3504023038",
+        "unit": "шт",
+        "quantity": 781,
+        "price": 45.25,
+        "amount": 35342.19
+      },
+      {
+        "name": "ONE PLUS Гильза 25 латунная акс. (200/20)",
+        "article": "3204023090",
+        "unit": "шт",
+        "quantity": 229,
+        "price": 67.27,
+        "amount": 15404.19
+      },
+      {
+        "name": "ONE PLUS Тройник 16 латунь акс. (120/20) (3204023062)",
+        "article": "3504023089",
+        "unit": "шт",
+        "quantity": 1561,
+        "price": 124.75,
+        "amount": 194734.87
+      },
+      {
+        "name": "ONE PLUS Тройник 20 латунь акс. (80/10) (3204023061)",
+        "article": "3504023090",
+        "unit": "шт",
+        "quantity": 109,
+        "price": 186.15,
+        "amount": 20289.99
+      },
+      {
+        "name": "ONE PLUS Тройник переходной 20-16-16 латунь акс. (100/10) (3204023048)",
+        "article": "3504023112",
+        "unit": "шт",
+        "quantity": 781,
+        "price": 148.48,
+        "amount": 115960.58
+      },
+      {
+        "name": "ONE PLUS Муфта с накидной гайкой под Евроконус 20*3/4 (110)",
+        "article": "3204023343",
+        "unit": "шт",
+        "quantity": 464,
+        "price": 157.53,
+        "amount": 73092.78
+      }
+    ],
+    "pages_processed": 1,
+    "tokens_used": 4758,
+    "error": null
+  },
+  "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf": {
+    "filename": "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf",
+    "items": [
+      {
+        "name": "Короткий эксцентрический переходник ПНД Ø110x50 SDR26",
         "article": null,
-        "unit": "компл",
+        "unit": "шт",
+        "quantity": 5,
+        "price": 390.0,
+        "amount": 1950.0
+      },
+      {
+        "name": "Крестовина 1-но-плоскостная 45° Ø110x110 SDR26 удлиненная",
+        "article": null,
+        "unit": "шт",
+        "quantity": 7,
+        "price": 2336.76,
+        "amount": 16357.32
+      },
+      {
+        "name": "Отвод 90° ПЭ Ø160 SDR26 6,3мм",
+        "article": null,
+        "unit": "шт",
         "quantity": 2,
-        "price": 11466.0,
-        "amount": 22932.0
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 3759,
-    "error": null
-  },
-  "ПК Курс doc02851820251216123708 (1)1.pdf": {
-    "filename": "ПК Курс doc02851820251216123708 (1)1.pdf",
-    "items": [
+        "price": 1900.0,
+        "amount": 3800.0
+      },
       {
-        "name": "Антикоррозионная мастика \"Вектор 1236 серебро\" (комплект 10кг.)",
+        "name": "Тройник 45° ПЭ d110x110 SDR26 4,2мм удлиненный СТМ",
         "article": null,
-        "unit": "компл",
+        "unit": "шт",
+        "quantity": 21,
+        "price": 918.0,
+        "amount": 19278.0
+      },
+      {
+        "name": "Отвод 45° ПНД с удлинённым патрубком 110 SDR26 4,2мм",
+        "article": null,
+        "unit": "шт",
+        "quantity": 32,
+        "price": 586.6,
+        "amount": 18771.2
+      },
+      {
+        "name": "Труба ПНД 110 SDR 26 4,2мм",
+        "article": null,
+        "unit": "м",
+        "quantity": 208,
+        "price": 356.4,
+        "amount": 74131.2
+      },
+      {
+        "name": "Тройник 90° (88,5°) ПНД Ø110x110 SDR264,2 мм удлиненный CTM",
+        "article": null,
+        "unit": "шт",
+        "quantity": 66,
+        "price": 898.0,
+        "amount": 59268.0
+      },
+      {
+        "name": "Отвод 90° ПНД Ø110 удлиненный SDR26 4,2мм",
+        "article": null,
+        "unit": "шт",
+        "quantity": 6,
+        "price": 909.0,
+        "amount": 5454.0
+      },
+      {
+        "name": "Ревизия 90° резьба/заглушка ПНД 110 SDR26 удлиненная СТМ",
+        "article": null,
+        "unit": "шт",
+        "quantity": 16,
+        "price": 2133.1,
+        "amount": 34129.6
+      },
+      {
+        "name": "Прочистка ПЭ Ø50 (Крышка/резьба)",
+        "article": null,
+        "unit": "шт",
         "quantity": 3,
-        "price": 12285.0,
-        "amount": 36855.0
+        "price": 1440.0,
+        "amount": 4320.0
       },
       {
-        "name": "Антикоррозионная мастика \"Вектор 1214\" (комплект 10кг)",
+        "name": "Прочистка 45° резьба/заглушка ПНД d110 SDR26 удлиненная /CTM",
         "article": null,
-        "unit": "компл",
+        "unit": "шт",
+        "quantity": 10,
+        "price": 2276.1,
+        "amount": 22761.0
+      },
+      {
+        "name": "Раструбная муфта ПНД d110 SDR26 с уплотнительным кольцом удлиненная СТМ",
+        "article": null,
+        "unit": "шт",
         "quantity": 2,
-        "price": 11466.0,
-        "amount": 22932.0
+        "price": 842.4,
+        "amount": 1684.8
+      },
+      {
+        "name": "Заглушка ПНД Ø110 SDR17 6,6мм",
+        "article": null,
+        "unit": "шт",
+        "quantity": 1,
+        "price": 580.0,
+        "amount": 580.0
+      },
+      {
+        "name": "Труба ПНД Ø50 SDR17 3мм",
+        "article": null,
+        "unit": "м",
+        "quantity": 20,
+        "price": 200.0,
+        "amount": 4000.0
       }
     ],
     "pages_processed": 1,
-    "tokens_used": 3759,
+    "tokens_used": 4823,
     "error": null
   },
-  "228-42.3-ОВ_07.10.25.pdf": {
-    "filename": "228-42.3-ОВ_07.10.25.pdf",
+  "Пожар Счет № 214 от 17.12.25.pdf": {
+    "filename": "Пожар Счет № 214 от 17.12.25.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Пожар Счет № 214 от 17.12.25.pdf",
     "items": [
       {
-        "name": "Общие данные (начало)",
+        "name": "Клапан пожарный КПК-50-1, чугун, угол 125гр.",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "шт",
+        "quantity": 66,
+        "price": 870.0,
+        "amount": 57420.0
       },
       {
-        "name": "Общие данные (продолжение)",
+        "name": "Шкаф пожарный ШПК-320-12 НЗБ (картон)",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "шт",
+        "quantity": 33,
+        "price": 6670.0,
+        "amount": 220110.0
       },
       {
-        "name": "Общие данные (продолжение)",
+        "name": "Огнетушитель порошковый ОП-4(3)АВСЕ",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "Шт",
+        "quantity": 66,
+        "price": 650.0,
+        "amount": 42900.0
       },
       {
-        "name": "Общие данные (продолжение)",
+        "name": "Рукав пожарный типа \"Латекс\" ф-50 в сборе С ГР-50А",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "ШТ",
+        "quantity": 66,
+        "price": 2750.0,
+        "amount": 181500.0
       },
       {
-        "name": "Общие данные (окончание)",
+        "name": "Ствол пожарный РС-50A",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "шт",
+        "quantity": 66,
+        "price": 220.0,
+        "amount": 14520.0
       },
       {
-        "name": "Блок-секция \"к\". Характеристика отопительно-вентиляционных систем",
+        "name": "Головка муфтовая ГМ-50",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "шт",
+        "quantity": 66,
+        "price": 115.0,
+        "amount": 7590.0
       },
       {
-        "name": "Блок-секция \"к\". Отопление. План подвала",
+        "name": "Диафрагма ф-56",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Отопление. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Отопление. План 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Отопление. План 3-5 этажей",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к. Отопление. План 6-8 этажей",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Отопление. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Отопление. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к. Схема магистральных трубопроводов системы отопления. СтО-1. Cm0-2 Узел 1. Неподвижная опора",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема системы отопления коммерческих помещений. Узлы 1, 1.1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема системы отопления квартир 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема системы отопления квартир 3-5 этажей",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема системы отопления квартир 6-8 этажей",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема системы отопления квартир 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План 2,4,6 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План 3,5,7 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План 8 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема систем вентиляции ВШ-1 ВШ-8, В-1, BE-1- BE4",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"к\". Схема систем вентиляции ВД-1, ПД-1 ПД-4, ВЕ-5, ПЕ-1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Характеристика отопительно-вентиляционных систем",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. Магистральные трубопроводы по подвалу. Схема трубопроводов коммерческих помещений. Схема стояков СтО-1. Ст0-2. Узлы 1.1-4",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. Поквартирная разводка трубопроводов 2 этажа. Поквартирная разводка трубопроводов 3-8 этажа. Узел 2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Отопление. Поквартирная разводка трубопроводов 9 этажа. Узел 2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\"\". Вентиляция. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"б/1\". Вентиляция. План 2,4,6 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План 3,5,7 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План 8 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. ВШ-1 - ВШ-5",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. ВШ-6 ВШ-10, ВЕ-1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Вентиляция. ВШ-11",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Противодымная вентиляция. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Противодымная вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Противодымная вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/1\". Противодымная вентиляция. Системы ПД 1.1- ПД4. ДУ1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Характеристика отопительно-вентиляционных систем",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Отопление. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Отопление. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Отопление. План 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция ж. Отопление. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Отопление. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Отопление. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция ж. Схема магистральных трубопроводов системы отопления. Ст0-1. Cm0-2 Узел 1. Неподвижная опора",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема системы отопления коммерческих помещений. Узел 1.1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема системы отопления квартир 2 этажа. Узел 1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема системы отопления квартир типового этажа. Узел 1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема системы отопления квартир 9 этажа. Узел 1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План 2,4,6 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План 3,5,7 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План 8 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема систем вентиляции ВШ-1 ВШ-8",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"ж\". Схема систем вентиляции ВД-1, ПД-1 ПД-4, ВЕ-4, ПЕ-1, ПЕ-2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Характеристика отопительно-вентиляционных систем",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. Магистральные трубопроводы по подвалу. Схема трубопроводов коммерческих помещений. Схема стояков СтО-1. Ст0-2. Узлы 1.1-4",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. Поквартирная разводка трубопроводов 2 этажа. Поквартирная разводка трубопроводов 3-8 этажа. Узел 2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Отопление. Поквартирная разводка трубопроводов 9 этажа. Узел 2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План 2,4,6 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План 3,5,7 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План 8 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. ВШ-1 ВШ-5",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Вентиляция. ВШ-6 - ВШ-10, ВЕ-1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"б/2\". Вентиляция. ВШ-11",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Противодымная вентиляция. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"6/2\". Противодымная вентиляция. План чердака",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"б/2\". Противодымная вентиляция. План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"б/2\". Противодымная вентиляция. Системы ПД 1.1- ПД4. ДУ1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Характеристика отопительно-вентиляционных систем",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План подвала",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План 1 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План 2 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План типового этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План 9 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. План машинного помещения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Блок-секция \"е\". Отопление. Магистральные трубопроводы по подвалу. Схема трубопроводов коммерческих помещений. Схема стояков СтО-1. Ст0-2. Узлы 1.1-4",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
+        "unit": "шт",
+        "quantity": 66,
+        "price": 110.0,
+        "amount": 7260.0
       }
     ],
-    "pages_processed": 4,
-    "tokens_used": 21927,
+    "pages_processed": 1,
+    "tokens_used": 4141,
+    "error": null
+  },
+  "Руфлекс.xls": {
+    "filename": "Руфлекс.xls",
+    "source_path": "data\\uploads\\Руфлекс.xls",
+    "items": [
+      {
+        "name": "Трубка 13х060-2 РУ-ФЛЕКС СТ (40 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 462,
+        "price": 117.8,
+        "amount": 54423.6
+      },
+      {
+        "name": "Трубка 13х042-2 РУ-ФЛЕКС СТ (60 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 274,
+        "price": 69.58,
+        "amount": 19064.92
+      },
+      {
+        "name": "Трубка 13х054-2 РУ-ФЛЕКС СТ (48 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 208,
+        "price": 109.72,
+        "amount": 22821.76
+      },
+      {
+        "name": "Трубка 13х028-2 РУ-ФЛЕКС СТ (72 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 30,
+        "price": 59.42,
+        "amount": 1782.6
+      },
+      {
+        "name": "Tрубка 13х035-2 РУ-ФЛЕКС СТ (60 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 12,
+        "price": 72.67,
+        "amount": 872.04
+      },
+      {
+        "name": "Трубка 13х022-2 РУ-ФЛЕКС СТ (84 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 1380,
+        "price": 50.32,
+        "amount": 69441.6
+      },
+      {
+        "name": "Трубка 13х089-2 РУ-ФЛЕКС СТ (30 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 36,
+        "price": 213.09,
+        "amount": 7671.24
+      },
+      {
+        "name": "Трубка 25х042-2 РУ-ФЛЕКС СТ (24 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 24,
+        "price": 326.38,
+        "amount": 7833.12
+      },
+      {
+        "name": "Изоляция ИЗОДОМ 13мм 28/13  (100 м)",
+        "article": null,
+        "unit": "м",
+        "quantity": 2790,
+        "price": 26.52,
+        "amount": 73986.89
+      }
+    ],
+    "pages_processed": 0,
+    "sheets_processed": 1,
+    "tokens_used": 2431,
+    "error": null
+  },
+  "Ровен Счёт_5244.pdf": {
+    "filename": "Ровен Счёт_5244.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Ровен Счёт_5244.pdf",
+    "items": [
+      {
+        "name": "Диффузор универсальный нерж. PAV-SS 200",
+        "article": null,
+        "unit": "шт",
+        "quantity": 12,
+        "price": 6579,
+        "amount": 78948
+      },
+      {
+        "name": "Решетка алюм. РНв ал. 750*350 RAL 9016",
+        "article": null,
+        "unit": "шт",
+        "quantity": 1,
+        "price": 3803.8,
+        "amount": 3803.8
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 203х10 (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 2,
+        "price": 2226.75,
+        "amount": 4453.5
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 102x10 (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 1,
+        "price": 1212,
+        "amount": 1212
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 102х3м (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 1,
+        "price": 324.75,
+        "amount": 324.75
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 127х10 (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 1,
+        "price": 1381.5,
+        "amount": 1381.5
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 127х3м (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 1,
+        "price": 420.75,
+        "amount": 420.75
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 160х10 (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 2,
+        "price": 1707,
+        "amount": 3414
+      },
+      {
+        "name": "Воздуховод гибкий неизолированный 160х2,5м (ALUSHINE)",
+        "article": null,
+        "unit": "упак",
+        "quantity": 1,
+        "price": 435.75,
+        "amount": 435.75
+      }
+    ],
+    "pages_processed": 2,
+    "tokens_used": 7908,
     "error": null
   },
   "403_2026315_202511271152_5492386_PRINTER2.TXT (1).pdf": {
     "filename": "403_2026315_202511271152_5492386_PRINTER2.TXT (1).pdf",
+    "source_path": "data\\uploads\\403_2026315_202511271152_5492386_PRINTER2.TXT (1).pdf",
     "items": [
       {
         "name": "Прибор приемно-контрольный и управлени я охранно-пожарный адресный РУБЕЖ-МК1",
@@ -1311,904 +968,110 @@
     "tokens_used": 18476,
     "error": null
   },
-  "5-ПР_21 – ОВ (1).pdf": {
-    "filename": "5-ПР_21 – ОВ (1).pdf",
+  "КП 1201038 АТК (3) (1).xls": {
+    "filename": "КП 1201038 АТК (3) (1).xls",
+    "source_path": "data\\uploads\\КП 1201038 АТК (3) (1).xls",
     "items": [
       {
-        "name": "Общие данные",
+        "name": "Клапан ПРОК-1-Н-1100*500-0",
         "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Характеристика систем",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План Подвала Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План подвала. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План подвала. Вентиляция. Монтажный план",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 1 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 2 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 3 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 4 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 5 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 6 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 7 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 8 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 9 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 10 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 11 этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 1 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 2 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 3 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 4 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 5 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 6 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 7 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 8 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 9 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 10 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План 11 этажа. Вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План технического этажа. Отопление",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План кровли",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "План этажа и кровли маш. отд. Отопление и вентиляция",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем В0.1/80.1p, B0.2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем В0.3, В0.4, В1-B11",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем ВЕ0.1, ДУО.1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем ДУ1, КИД1, П0.1",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы системП1, П0.2, ПО.З, ПДО.1-ПДО.4",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем ПД1-ПДЗ, ПЕ2",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Принципиальная схема ИТП",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы стояков Ст.1-Ст.12 (C01)",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы стояков Ст.13-Cm.19, Cm.22-Cm.25 (C01)",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы стояков Ст.20, Ст.21, Cm.26-Cm.28 (C01)",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Схемы систем отопления и теплоснабжения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Узля подключения систем отопления и теплоснабжения",
-        "article": null,
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Автостоянка, Венткамера приточная",
-        "article": null,
-        "unit": null,
+        "unit": "шт",
         "quantity": 1,
-        "price": null,
-        "amount": null
+        "price": 42907.21,
+        "amount": 42907.21
       },
       {
-        "name": "Автостоянка, венткамера приточная",
+        "name": "Клапан ПРОК-1-Н-1100*500-0",
         "article": null,
-        "unit": null,
-        "quantity": 2,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "ИТП",
-        "article": null,
-        "unit": null,
+        "unit": "шт",
         "quantity": 1,
-        "price": null,
-        "amount": null
+        "price": 42907.21,
+        "amount": 42907.21
       },
       {
-        "name": "ИТП",
+        "name": "Клапан ПРОК-1-Н-900*500-0",
         "article": null,
-        "unit": null,
+        "unit": "шт",
         "quantity": 1,
-        "price": null,
-        "amount": null
+        "price": 36741.6,
+        "amount": 36741.6
       },
       {
-        "name": "Насосная хоз. быт. водопровода. Водом. узел, Насосная хоз. быт. Водопровода",
+        "name": "Клапан ПРОК-1-Н-900*500-0",
         "article": null,
-        "unit": null,
+        "unit": "шт",
         "quantity": 1,
-        "price": null,
-        "amount": null
+        "price": 36741.6,
+        "amount": 36741.6
       },
       {
-        "name": "Насосная хоз. быт. водопровода. Водом. узел, Насосная хоз. быт. Водопровода",
+        "name": "Клапан ПРОК-1-Н-1200*600-0",
         "article": null,
-        "unit": null,
+        "unit": "шт",
         "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "КУИ паркинга",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Электрощитовая",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Дымоудаление из автостоянки 1",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Компенсация в автостоянку",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Подпор воздуха в тамбур-шлюз 009",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Подпор воздуха в тамбур-шлюз (зона безопасности) 010",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Подпор в шахут лифта ППП Ниж. зона",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "АУПТ",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "АУПТ",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Санузел",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "КУИ",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 117",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Общественное помещение с изменяемым функциональным назначением 112",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 118",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Общественное помещение с изменяемым функциональным назначением 113",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 116",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 115",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Общественное помещение с изменяемым функциональным назначением 114",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Машинное помещение лифта",
-        "article": null,
-        "unit": null,
-        "quantity": 2,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Помещение дежурного",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Машинное помещение лифта",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Совмещенные санузлы 10 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": 10,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Кухни 10 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": 10,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Совмещенные санузлы 11 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": 10,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Кухни 11 этажа",
-        "article": null,
-        "unit": null,
-        "quantity": 10,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Кладовая на 11 этаже",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 118",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 118",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Универсальная кабина с/у 118",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Подпор в шахут лифта ППП верх. зона",
-        "article": null,
-        "unit": null,
-        "quantity": 1,
-        "price": null,
-        "amount": null
+        "price": 48451.21,
+        "amount": 48451.21
       }
     ],
-    "pages_processed": 4,
-    "tokens_used": 18884,
+    "pages_processed": 0,
+    "sheets_processed": 1,
+    "tokens_used": 1443,
     "error": null
   },
-  "ДИГСТРЕЙД Счет на оплату № УТ-395 от 17.12.2025 (2).pdf": {
-    "filename": "ДИГСТРЕЙД Счет на оплату № УТ-395 от 17.12.2025 (2).pdf",
+  "+Водомер.xlsx": {
+    "filename": "+Водомер.xlsx",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\+Водомер.xlsx",
     "items": [
       {
-        "name": "Трубка Rokaflex ST 09x018-2",
-        "article": "УТ-00002468",
-        "unit": "пог. м",
-        "quantity": 1440,
-        "price": 22.54,
-        "amount": 32457.6
+        "name": "Расходомер-счетчик холодной и горячей воды ВСЭ М БИ Ду-25",
+        "article": "VM-3092-025-21B-54RS",
+        "unit": "шт",
+        "quantity": 1,
+        "price": 38360,
+        "amount": 38360
       },
       {
-        "name": "Трубка Rokaflex ST 09x022-2",
-        "article": "УТ-00002518",
-        "unit": "пог. м",
-        "quantity": 1620,
-        "price": 26.99,
-        "amount": 43723.8
+        "name": "Расходомер-счетчик холодной и горячей воды ВСЭ М И Ду-25",
+        "article": "VM-3121-025-21B-54RS",
+        "unit": "шт",
+        "quantity": 1,
+        "price": 38360,
+        "amount": 38360
+      }
+    ],
+    "pages_processed": 0,
+    "sheets_processed": 1,
+    "tokens_used": 1587,
+    "error": null
+  },
+  "Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf": {
+    "filename": "Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf",
+    "items": [
+      {
+        "name": "Мини КНС ANTARUS 2 HK1-50-16-8-1,1",
+        "article": null,
+        "unit": "шт.",
+        "quantity": 1,
+        "price": 936728.36,
+        "amount": 936728.36
       },
       {
-        "name": "Трубка Rokaflex ST 09x025-2",
-        "article": "УТ-00002469",
-        "unit": "пог. м",
-        "quantity": 1340,
-        "price": 30.08,
-        "amount": 40307.2
+        "name": "Насос дренажный ANTARUS НКД-40-7-7-1",
+        "article": null,
+        "unit": "шт.",
+        "quantity": 1,
+        "price": 26302.25,
+        "amount": 26302.25
       }
     ],
     "pages_processed": 1,
-    "tokens_used": 3856,
-    "error": null
-  },
-  "Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf": {
-    "filename": "Итеса К флекс Счет на оплату № 4195 от 27.06.2025.pdf",
-    "items": [
-      {
-        "name": "Трубка K-FLEX PE 09x018-2 COMPACT BLUE 150 м",
-        "article": "R090182118PE0",
-        "unit": "M",
-        "quantity": 2550,
-        "price": 24.75,
-        "amount": 63112.5
-      },
-      {
-        "name": "Трубка K-FLEX PE 09x022-2 COMPACT BLUE 120 м",
-        "article": "R090222118PE0",
-        "unit": "M",
-        "quantity": 5760,
-        "price": 27.75,
-        "amount": 159840.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 09x028-2 COMPACT BLUE 96 м",
-        "article": "R090282118PE0",
-        "unit": "M",
-        "quantity": 1440,
-        "price": 31.5,
-        "amount": 45360.0
-      },
-      {
-        "name": "Трубка КK-FLEX PE 09x018-2 COMPACT RED 150 м",
-        "article": "R090182118РЕ0",
-        "unit": "M",
-        "quantity": 2550,
-        "price": 24.75,
-        "amount": 63112.5
-      },
-      {
-        "name": "Трубка K-FLEX PE 09x022-2 COMPACT RED 120 м",
-        "article": "R090222118PE0",
-        "unit": "M",
-        "quantity": 5760,
-        "price": 27.75,
-        "amount": 159840.0
-      },
-      {
-        "name": "Трубка К-FLEX PE 09x028-2 COMPACT RED 96 м",
-        "article": "R090282118РЕ0",
-        "unit": "M",
-        "quantity": 1440,
-        "price": 31.5,
-        "amount": 45360.0
-      },
-      {
-        "name": "Трубка К-FLEX PE 20x022-2 108 м",
-        "article": "200222155PE0N",
-        "unit": "M",
-        "quantity": 216,
-        "price": 78.75,
-        "amount": 17010.0
-      },
-      {
-        "name": "Трубка К-FLEX PE 20x025-2 100 м",
-        "article": "200252155PE0N",
-        "unit": "M",
-        "quantity": 500,
-        "price": 84.0,
-        "amount": 42000.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20x028-2 88 м",
-        "article": "200282155PEON",
-        "unit": "M",
-        "quantity": 528,
-        "price": 88.5,
-        "amount": 46728.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20х035-2 70 м",
-        "article": "200352155PE0N",
-        "unit": "M",
-        "quantity": 490,
-        "price": 102.0,
-        "amount": 49980.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20x042-2 60 м",
-        "article": "200422155PEON",
-        "unit": "M",
-        "quantity": 180,
-        "price": 109.5,
-        "amount": 19710.0
-      },
-      {
-        "name": "Лента КK-FLEX 048-050 DUCT 1604H silver 24 шт/уп (50м)",
-        "article": "85NDAL4805016",
-        "unit": "шт",
-        "quantity": 3600,
-        "price": 621.75,
-        "amount": 2238300.0
-      },
-      {
-        "name": "Клей K-FLEX 2.6 It K 414 6 шт",
-        "article": "850CL020004",
-        "unit": "шт",
-        "quantity": 4,
-        "price": 3975.0,
-        "amount": 15900.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20х054-2 48 м",
-        "article": "200542155PE0N",
-        "unit": "M",
-        "quantity": 96,
-        "price": 138.75,
-        "amount": 13320.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20х076-2 26 м",
-        "article": "200762155PE0N",
-        "unit": "M",
-        "quantity": 208,
-        "price": 176.25,
-        "amount": 36660.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20х089-2 24 м",
-        "article": "200892155PE0N",
-        "unit": "M",
-        "quantity": 192,
-        "price": 261.75,
-        "amount": 50256.0
-      },
-      {
-        "name": "Трубка K-FLEX PE 20х110-2 14 м",
-        "article": "201102155PE0N",
-        "unit": "M",
-        "quantity": 154,
-        "price": 312.75,
-        "amount": 48163.5
-      },
-      {
-        "name": "Лента КK-FLEX 048-050 DUCT 1604H red 50м 24 шт",
-        "article": "85NDAL4805016",
-        "unit": "шт",
-        "quantity": 1200,
-        "price": 621.75,
-        "amount": 746100.0
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 5382,
-    "error": null
-  },
-  "Итеса Радиаторы Счет на оплату № 4171 от 26.06.2025 (2).pdf": {
-    "filename": "Итеса Радиаторы Счет на оплату № 4171 от 26.06.2025 (2).pdf",
-    "items": [
-      {
-        "name": "Радиатор стальной EVRA Compact C 22-400-400 без крепежа",
-        "article": "F0Z2204004010",
-        "unit": "Шт",
-        "quantity": 16,
-        "price": 3069.36,
-        "amount": 49109.69
-      },
-      {
-        "name": "Радиатор стальной EVRA Compact C 22-400-800 без крепежа",
-        "article": "F0Z2204008010",
-        "unit": "Шт",
-        "quantity": 16,
-        "price": 4937.72,
-        "amount": 79003.55
-      },
-      {
-        "name": "Радиатор стальной EVRA Compact C 22-400-1000 без крепежа",
-        "article": "F0Z2204010010",
-        "unit": "Шт",
-        "quantity": 32,
-        "price": 6033.98,
-        "amount": 193087.31
-      },
-      {
-        "name": "Кронштейн настенный для радиатора 400-21/22/33",
-        "article": "K15.4400",
-        "unit": "шт",
-        "quantity": 1260,
-        "price": 212.06,
-        "amount": 267193.08
-      },
-      {
-        "name": "Кронштейн настенный для радиатора 600-21/22/33",
-        "article": "K15.4600",
-        "unit": "Шт",
-        "quantity": 192,
-        "price": 212.06,
-        "amount": 40715.13
-      },
-      {
-        "name": "Радиатор стальной EVRA Ventil Compact CV 21-500-1600 без крепежа",
-        "article": "F0W2105016011",
-        "unit": "Шт",
-        "quantity": 1,
-        "price": 10779.76,
-        "amount": 10779.76
-      },
-      {
-        "name": "Радиатор стальной EVRA Ventil Compact CV 21-500-1800 без крепежа",
-        "article": "F0W2105018011",
-        "unit": "Шт",
-        "quantity": 1,
-        "price": 11808.79,
-        "amount": 11808.79
-      },
-      {
-        "name": "Радиатор стальной EVRA Ventil Compact CV 33-500-1400 без крепежа",
-        "article": "F0W3305014011",
-        "unit": "Шт",
-        "quantity": 1,
-        "price": 15086.74,
-        "amount": 15086.74
-      },
-      {
-        "name": "Кронштейн настенный для радиатора 500-21/22/33",
-        "article": "K15.4500",
-        "unit": "Шт",
-        "quantity": 7,
-        "price": 212.06,
-        "amount": 1484.41
-      }
-    ],
-    "pages_processed": 2,
-    "tokens_used": 12148,
+    "tokens_used": 3751,
     "error": null
   },
   "Коммерческое предложение № 91 от 03 февраля 2026 г.pdf": {
     "filename": "Коммерческое предложение № 91 от 03 февраля 2026 г.pdf",
+    "source_path": "data\\uploads\\исходники счетов для образцов\\Коммерческое предложение № 91 от 03 февраля 2026 г.pdf",
     "items": [
       {
         "name": "Радиатор РБС - 500 / 95 - 7 для нижнего подключения (с модулем А14, лев.)",
@@ -2397,1214 +1260,6 @@
     ],
     "pages_processed": 1,
     "tokens_used": 5826,
-    "error": null
-  },
-  "Неватом Счет на оплату № 18240 от 24.10.2025.pdf": {
-    "filename": "Неватом Счет на оплату № 18240 от 24.10.2025.pdf",
-    "items": [
-      {
-        "name": "Вентилятор радиальный VR-86-77-8,0-DU400-5,5/1000-1-0-P0",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 153413,
-        "amount": 95116.06
-      },
-      {
-        "name": "Вставка гибкая ВГ-800-Ш-DU400/600-ф.н",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 7190,
-        "amount": 4457.8
-      },
-      {
-        "name": "Вставка гибкая ВГ-560*560-Ш-DU400/600-ш3.3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 5451,
-        "amount": 3379.62
-      },
-      {
-        "name": "Виброизоляторы на пластине ДО № 40",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 8,
-        "price": 746,
-        "amount": 3700.16
-      },
-      {
-        "name": "Воздуховод-350*1000-1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 36,
-        "price": 9556,
-        "amount": 96324.48
-      },
-      {
-        "name": "Воздуховод-500-3000-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 11582,
-        "amount": 5211.9
-      },
-      {
-        "name": "Врезка-900*300-100-20-оц.-0.8-ш3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 15,
-        "price": 1116,
-        "amount": 4687.2
-      },
-      {
-        "name": "Вентилятор радиальный VR-86-77-8,0-DU400-5,5/1000-1-0-P0",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 153413,
-        "amount": 95116.06
-      },
-      {
-        "name": "Вставка гибкая ВГ-800-Ш-DU400/600-ф.н",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 7190,
-        "amount": 4457.8
-      },
-      {
-        "name": "Вставка гибкая ВГ-560*560-Ш-DU400/600-ш3.3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 5451,
-        "amount": 3379.62
-      },
-      {
-        "name": "Виброизоляторы на пластине ДО № 40",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 8,
-        "price": 746,
-        "amount": 3700.16
-      },
-      {
-        "name": "Воздуховод-350*1000-1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 36,
-        "price": 9556,
-        "amount": 96324.48
-      },
-      {
-        "name": "Воздуховод-500-3000-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 11582,
-        "amount": 5211.9
-      },
-      {
-        "name": "Врезка-900*300-100-20-оц.-0.8-ш3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 14,
-        "price": 1116,
-        "amount": 4374.72
-      },
-      {
-        "name": "Вентилятор VO-4,5-0-2-4/3000-25S1-01",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 74690,
-        "amount": 46307.8
-      },
-      {
-        "name": "Гибкая вставка для VO №4,5",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 2749,
-        "amount": 1704.38
-      },
-      {
-        "name": "Переходной патрубок VO-450",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 4920,
-        "amount": 3050.4
-      },
-      {
-        "name": "Входной конфузор VO-450/560",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 8250,
-        "amount": 5115
-      },
-      {
-        "name": "Воздуховод-500-3000-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 11582,
-        "amount": 5211.9
-      },
-      {
-        "name": "Воздуховод-350*900-1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 40,
-        "price": 8848,
-        "amount": 99097.6
-      },
-      {
-        "name": "Врезка-800*300-100-20-оц.-0.8-ш3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 15,
-        "price": 1023,
-        "amount": 4296.6
-      },
-      {
-        "name": "Вентилятор VO-4,5-0-2-4/3000-2 5S1-01",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 74690,
-        "amount": 46307.8
-      },
-      {
-        "name": "Гибкая вставка для VO №4,5",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 2749,
-        "amount": 1704.38
-      },
-      {
-        "name": "Переходной патрубок VO-450",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 4920,
-        "amount": 3050.4
-      },
-      {
-        "name": "Входной конфузор VO-450/560",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 8250,
-        "amount": 5115
-      },
-      {
-        "name": "Воздуховод-500-300 0-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 11582,
-        "amount": 5211.9
-      },
-      {
-        "name": "Воздуховод-350*900 -1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 40,
-        "price": 8848,
-        "amount": 99097.6
-      },
-      {
-        "name": "Врезка-800*300-100 -20-оц.-0.8-ш3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 14,
-        "price": 1023,
-        "amount": 4010.16
-      },
-      {
-        "name": "Вентилятор VO-6,3-0-2-11/3000-23G1-01",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 131190,
-        "amount": 81337.8
-      },
-      {
-        "name": "Гибкая вставка для VO №6,3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 3826,
-        "amount": 2372.12
-      },
-      {
-        "name": "Переходной патрубок VO-630",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 8560,
-        "amount": 5307.2
-      },
-      {
-        "name": "Входной конфузор VO-630/800",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 14600,
-        "amount": 9052
-      },
-      {
-        "name": "Воздуховод-630-300 0-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 14594,
-        "amount": 6567.3
-      },
-      {
-        "name": "Воздуховод-600*600 -1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 9,
-        "price": 8494,
-        "amount": 21404.88
-      },
-      {
-        "name": "Вентилятор VO-5,0-0-2-7,5/3000 -22N1-01",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 95840,
-        "amount": 59420.8
-      },
-      {
-        "name": "Гибкая вставка для VO №5,0",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 3056,
-        "amount": 1894.72
-      },
-      {
-        "name": "Переходной патрубок VO-500",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 5880,
-        "amount": 3645.6
-      },
-      {
-        "name": "Входной конфузор VO-500/630",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 9950,
-        "amount": 6169
-      },
-      {
-        "name": "Воздуховод-500-300 0-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 11582,
-        "amount": 5211.9
-      },
-      {
-        "name": "Воздуховод-250*600 -1410-оц.-0.8-τ2.τ2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 39,
-        "price": 6103,
-        "amount": 66644.76
-      },
-      {
-        "name": "Врезка-500*300-100 -20-оц.-0.8-ш2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 15,
-        "price": 744,
-        "amount": 3124.8
-      },
-      {
-        "name": "Фильтр-бокс FVG-600*350-200-4 5-оц.-т2.т2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 3336,
-        "amount": 2068.32
-      },
-      {
-        "name": "Сменная кассета FVG-G4-600*350",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 2860,
-        "amount": 1773.2
-      },
-      {
-        "name": "Нагреватель электрический NEP-600*350/22,5",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 43160,
-        "amount": 26759.2
-      },
-      {
-        "name": "Вставка гибкая ВГ-600*350-У-О-ш2. w2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 2,
-        "price": 2436,
-        "amount": 3020.64
-      },
-      {
-        "name": "Вентилятор VKP 600-350/31-4D",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 65389,
-        "amount": 40541.18
-      },
-      {
-        "name": "Воздуховод-250*250 -1410-оц.-0.8-т2.т2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 46,
-        "price": 3590,
-        "amount": 46239.2
-      },
-      {
-        "name": "Врезка-250*250-100 -20-оц.-0.8-ш2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 15,
-        "price": 465,
-        "amount": 1953
-      },
-      {
-        "name": "Вентилятор VO-7,1-0-2-5,5/3000 -15C1-01",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 103240,
-        "amount": 64008.8
-      },
-      {
-        "name": "Гибкая вставка для VO №7.1",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 4308,
-        "amount": 2670.96
-      },
-      {
-        "name": "Переходной патрубок VO-710",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 10040,
-        "amount": 6224.8
-      },
-      {
-        "name": "Входной конфузор VO-710/900",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 18580,
-        "amount": 11519.6
-      },
-      {
-        "name": "Воздуховод-630-300 0-оц.-0.8-г.г",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 14594,
-        "amount": 6567.3
-      },
-      {
-        "name": "Воздуховод-600*600 -1390-оц.-0.8-т3.т3",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 5,
-        "price": 8494,
-        "amount": 11891.6
-      },
-      {
-        "name": "Воздуховод-200*400 -1410-оц.-0.7-12.12",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 39,
-        "price": 3567,
-        "amount": 38951.64
-      },
-      {
-        "name": "Решетка PB-1-200*400-8-RAL 9016",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 1456,
-        "amount": 902.72
-      },
-      {
-        "name": "Регулятор PPB-200*400",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 1073,
-        "amount": 665.26
-      },
-      {
-        "name": "Воздуховод-150*200 -1410-оц.-0.7-т2.т2",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 57,
-        "price": 2081,
-        "amount": 33212.76
-      },
-      {
-        "name": "Решетка PB-1-150*200-6-RAL 9016",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 3,
-        "price": 745,
-        "amount": 1385.7
-      },
-      {
-        "name": "Регулятор PPB-150*200",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 3,
-        "price": 710,
-        "amount": 1320.6
-      },
-      {
-        "name": "Плита OSB-3 9мм (1,25х2,5м) (3,125м2)",
-        "article": null,
-        "unit": "м2",
-        "quantity": 3.125,
-        "price": 300,
-        "amount": 937.5
-      },
-      {
-        "name": "Плита OSB-3 12мм (1,25х2,5м) (3,125м2)",
-        "article": null,
-        "unit": "м2",
-        "quantity": 3.125,
-        "price": 350,
-        "amount": 1093.75
-      },
-      {
-        "name": "Плита OSB-3 15мм (1,25х2,5м) (3,125м2)",
-        "article": null,
-        "unit": "м2",
-        "quantity": 3.125,
-        "price": 400,
-        "amount": 1250
-      },
-      {
-        "name": "Плита OSB-3 18мм (1,25х2,5м) (3,125м2)",
-        "article": null,
-        "unit": "м2",
-        "quantity": 3.125,
-        "price": 450,
-        "amount": 1406.25
-      },
-      {
-        "name": "Плита OSB-3 22мм (1,25х2,5м) (3,125м2)",
-        "article": null,
-        "unit": "м2",
-        "quantity": 3.125,
-        "price": 500,
-        "amount": 1562.5
-      },
-      {
-        "name": "Воздуховод-150*150-1410-оц.-0.7-т2.т2",
-        "article": "61",
-        "unit": "шт.",
-        "quantity": 57,
-        "price": 1784.0,
-        "amount": 28472.64
-      },
-      {
-        "name": "Решетка PB-1-150*150-6-RAL 9016",
-        "article": "62",
-        "unit": "шт.",
-        "quantity": 3,
-        "price": 627.0,
-        "amount": 1166.22
-      },
-      {
-        "name": "Регулятор PPB-150*150",
-        "article": "63",
-        "unit": "шт.",
-        "quantity": 3,
-        "price": 620.0,
-        "amount": 1153.2
-      },
-      {
-        "name": "Вентилятор VKP 600-350/31-4D",
-        "article": "64",
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 65389.0,
-        "amount": 40541.18
-      },
-      {
-        "name": "Вставка гибкая ВГ-600*350-У-О-ш2. w2",
-        "article": "65",
-        "unit": "шт.",
-        "quantity": 2,
-        "price": 2436.0,
-        "amount": 3020.64
-      },
-      {
-        "name": "Воздуховод-200-300 0-оц.-0.8-г.г",
-        "article": "66",
-        "unit": "шт.",
-        "quantity": 15,
-        "price": 4633.0,
-        "amount": 31272.75
-      }
-    ],
-    "pages_processed": 4,
-    "tokens_used": 20254,
-    "error": null
-  },
-  "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г (1).pdf": {
-    "filename": "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г (1).pdf",
-    "items": [
-      {
-        "name": "Короткий эксцентрический переходник ПНД Ø110x50 SDR26",
-        "article": null,
-        "unit": "шт",
-        "quantity": 5,
-        "price": 390.0,
-        "amount": 1950.0
-      },
-      {
-        "name": "Крестовина 1-но-плоскостная 45° Ø110x110 SDR26 удлиненная",
-        "article": null,
-        "unit": "шт",
-        "quantity": 7,
-        "price": 2336.76,
-        "amount": 16357.32
-      },
-      {
-        "name": "Отвод 90° ПЭ Ø160 SDR26 6,3мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 2,
-        "price": 1900.0,
-        "amount": 3800.0
-      },
-      {
-        "name": "Тройник 45° ПЭ d110x110 SDR26 4,2мм удлиненный СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 21,
-        "price": 918.0,
-        "amount": 19278.0
-      },
-      {
-        "name": "Отвод 45° ПНД с удлинённым патрубком 110 SDR26 4,2мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 32,
-        "price": 586.6,
-        "amount": 18771.2
-      },
-      {
-        "name": "Труба ПНД 110 SDR 26 4,2мм",
-        "article": null,
-        "unit": "м",
-        "quantity": 208,
-        "price": 356.4,
-        "amount": 74131.2
-      },
-      {
-        "name": "Тройник 90° (88,5°) ПНД Ø110x110 SDR264,2 мм удлиненный CTM",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 898.0,
-        "amount": 59268.0
-      },
-      {
-        "name": "Отвод 90° ПНД Ø110 удлиненный SDR26 4,2мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 6,
-        "price": 909.0,
-        "amount": 5454.0
-      },
-      {
-        "name": "Ревизия 90° резьба/заглушка ПНД 110 SDR26 удлиненная СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 16,
-        "price": 2133.1,
-        "amount": 34129.6
-      },
-      {
-        "name": "Прочистка ПЭ Ø50 (Крышка/резьба)",
-        "article": null,
-        "unit": "шт",
-        "quantity": 3,
-        "price": 1440.0,
-        "amount": 4320.0
-      },
-      {
-        "name": "Прочистка 45° резьба/заглушка ПНД d110 SDR26 удлиненная /CTM",
-        "article": null,
-        "unit": "шт",
-        "quantity": 10,
-        "price": 2276.1,
-        "amount": 22761.0
-      },
-      {
-        "name": "Раструбная муфта ПНД d110 SDR26 с уплотнительным кольцом удлиненная СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 2,
-        "price": 842.4,
-        "amount": 1684.8
-      },
-      {
-        "name": "Заглушка ПНД Ø110 SDR17 6,6мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 1,
-        "price": 580.0,
-        "amount": 580.0
-      },
-      {
-        "name": "Труба ПНД Ø50 SDR17 3мм",
-        "article": null,
-        "unit": "м",
-        "quantity": 20,
-        "price": 200.0,
-        "amount": 4000.0
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 4823,
-    "error": null
-  },
-  "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf": {
-    "filename": "ПЭ СТМ Счет на оплату № 154 от 30 мая 2025 г.pdf",
-    "items": [
-      {
-        "name": "Короткий эксцентрический переходник ПНД Ø110x50 SDR26",
-        "article": null,
-        "unit": "шт",
-        "quantity": 5,
-        "price": 390.0,
-        "amount": 1950.0
-      },
-      {
-        "name": "Крестовина 1-но-плоскостная 45° Ø110x110 SDR26 удлиненная",
-        "article": null,
-        "unit": "шт",
-        "quantity": 7,
-        "price": 2336.76,
-        "amount": 16357.32
-      },
-      {
-        "name": "Отвод 90° ПЭ Ø160 SDR26 6,3мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 2,
-        "price": 1900.0,
-        "amount": 3800.0
-      },
-      {
-        "name": "Тройник 45° ПЭ d110x110 SDR26 4,2мм удлиненный СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 21,
-        "price": 918.0,
-        "amount": 19278.0
-      },
-      {
-        "name": "Отвод 45° ПНД с удлинённым патрубком 110 SDR26 4,2мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 32,
-        "price": 586.6,
-        "amount": 18771.2
-      },
-      {
-        "name": "Труба ПНД 110 SDR 26 4,2мм",
-        "article": null,
-        "unit": "м",
-        "quantity": 208,
-        "price": 356.4,
-        "amount": 74131.2
-      },
-      {
-        "name": "Тройник 90° (88,5°) ПНД Ø110x110 SDR264,2 мм удлиненный CTM",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 898.0,
-        "amount": 59268.0
-      },
-      {
-        "name": "Отвод 90° ПНД Ø110 удлиненный SDR26 4,2мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 6,
-        "price": 909.0,
-        "amount": 5454.0
-      },
-      {
-        "name": "Ревизия 90° резьба/заглушка ПНД 110 SDR26 удлиненная СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 16,
-        "price": 2133.1,
-        "amount": 34129.6
-      },
-      {
-        "name": "Прочистка ПЭ Ø50 (Крышка/резьба)",
-        "article": null,
-        "unit": "шт",
-        "quantity": 3,
-        "price": 1440.0,
-        "amount": 4320.0
-      },
-      {
-        "name": "Прочистка 45° резьба/заглушка ПНД d110 SDR26 удлиненная /CTM",
-        "article": null,
-        "unit": "шт",
-        "quantity": 10,
-        "price": 2276.1,
-        "amount": 22761.0
-      },
-      {
-        "name": "Раструбная муфта ПНД d110 SDR26 с уплотнительным кольцом удлиненная СТМ",
-        "article": null,
-        "unit": "шт",
-        "quantity": 2,
-        "price": 842.4,
-        "amount": 1684.8
-      },
-      {
-        "name": "Заглушка ПНД Ø110 SDR17 6,6мм",
-        "article": null,
-        "unit": "шт",
-        "quantity": 1,
-        "price": 580.0,
-        "amount": 580.0
-      },
-      {
-        "name": "Труба ПНД Ø50 SDR17 3мм",
-        "article": null,
-        "unit": "м",
-        "quantity": 20,
-        "price": 200.0,
-        "amount": 4000.0
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 4823,
-    "error": null
-  },
-  "Пожар Счет № 214 от 17.12.25.pdf": {
-    "filename": "Пожар Счет № 214 от 17.12.25.pdf",
-    "items": [
-      {
-        "name": "Клапан пожарный КПК-50-1, чугун, угол 125гр.",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 870.0,
-        "amount": 57420.0
-      },
-      {
-        "name": "Шкаф пожарный ШПК-320-12 НЗБ (картон)",
-        "article": null,
-        "unit": "шт",
-        "quantity": 33,
-        "price": 6670.0,
-        "amount": 220110.0
-      },
-      {
-        "name": "Огнетушитель порошковый ОП-4(3)АВСЕ",
-        "article": null,
-        "unit": "Шт",
-        "quantity": 66,
-        "price": 650.0,
-        "amount": 42900.0
-      },
-      {
-        "name": "Рукав пожарный типа \"Латекс\" ф-50 в сборе С ГР-50А",
-        "article": null,
-        "unit": "ШТ",
-        "quantity": 66,
-        "price": 2750.0,
-        "amount": 181500.0
-      },
-      {
-        "name": "Ствол пожарный РС-50A",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 220.0,
-        "amount": 14520.0
-      },
-      {
-        "name": "Головка муфтовая ГМ-50",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 115.0,
-        "amount": 7590.0
-      },
-      {
-        "name": "Диафрагма ф-56",
-        "article": null,
-        "unit": "шт",
-        "quantity": 66,
-        "price": 110.0,
-        "amount": 7260.0
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 4141,
-    "error": null
-  },
-  "Ровен Счёт_5244.pdf": {
-    "filename": "Ровен Счёт_5244.pdf",
-    "items": [
-      {
-        "name": "Диффузор универсальный нерж. PAV-SS 200",
-        "article": null,
-        "unit": "шт",
-        "quantity": 12,
-        "price": 6579,
-        "amount": 78948
-      },
-      {
-        "name": "Решетка алюм. РНв ал. 750*350 RAL 9016",
-        "article": null,
-        "unit": "шт",
-        "quantity": 1,
-        "price": 3803.8,
-        "amount": 3803.8
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 203х10 (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 2,
-        "price": 2226.75,
-        "amount": 4453.5
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 102x10 (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 1,
-        "price": 1212,
-        "amount": 1212
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 102х3м (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 1,
-        "price": 324.75,
-        "amount": 324.75
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 127х10 (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 1,
-        "price": 1381.5,
-        "amount": 1381.5
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 127х3м (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 1,
-        "price": 420.75,
-        "amount": 420.75
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 160х10 (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 2,
-        "price": 1707,
-        "amount": 3414
-      },
-      {
-        "name": "Воздуховод гибкий неизолированный 160х2,5м (ALUSHINE)",
-        "article": null,
-        "unit": "упак",
-        "quantity": 1,
-        "price": 435.75,
-        "amount": 435.75
-      }
-    ],
-    "pages_processed": 2,
-    "tokens_used": 7908,
-    "error": null
-  },
-  "Счетчики Эконом Счет на оплату (фирм.бланк) № 2500004860 от 27.08.2025 (2).pdf": {
-    "filename": "Счетчики Эконом Счет на оплату (фирм.бланк) № 2500004860 от 27.08.2025 (2).pdf",
-    "items": [
-      {
-        "name": "Счетчик холодной воды турбинный DUX СВТ-Х-50-200-ДГ (чугун), класс В",
-        "article": "СВТ-Х-50-200-ДГ",
-        "unit": "шт",
-        "quantity": 1,
-        "price": 10446,
-        "amount": 10446
-      },
-      {
-        "name": "Счетчик воды универсальный ЭКО НОМ СВ ДЛ-50 ДГ (латунь)+КМЧ",
-        "article": "СВДЛ50-002",
-        "unit": "шт",
-        "quantity": 1,
-        "price": 10756,
-        "amount": 10756
-      },
-      {
-        "name": "Счетчик воды универсальный ЭКО НОМ СВ Д-40 ДГ+КМЧ",
-        "article": "СВДГ40-003",
-        "unit": "кор",
-        "quantity": 0.33,
-        "price": 5894,
-        "amount": 5894
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 3868,
-    "error": null
-  },
-  "Сшитый итеса Счет на оплату № 4305 от 02.07.2025.pdf": {
-    "filename": "Сшитый итеса Счет на оплату № 4305 от 02.07.2025.pdf",
-    "items": [
-      {
-        "name": "ONE PLUS Трубка І образная 16*15-L250 акс. (60)",
-        "article": "3504023087",
-        "unit": "шт",
-        "quantity": 1856,
-        "price": 429.57,
-        "amount": 797280.58
-      },
-      {
-        "name": "ONE PLUS Труба РЕ-Ха 16*2.2 EVOH серая (200м) (3104015025)",
-        "article": "3504012146",
-        "unit": "м",
-        "quantity": 5000,
-        "price": 47.15,
-        "amount": 235764.48
-      },
-      {
-        "name": "ONE PLUS Труба РЕ-Ха 20*2.8 EVOH серая (100м) (3104015032)",
-        "article": "3504012151",
-        "unit": "м",
-        "quantity": 11400,
-        "price": 69.81,
-        "amount": 795803.91
-      },
-      {
-        "name": "ONE PLUS Труба РЕ-Ха 25*3.5 EVOH серая (50м) (3104015029)",
-        "article": "3504012154",
-        "unit": "м",
-        "quantity": 2850,
-        "price": 109.58,
-        "amount": 312315.49
-      },
-      {
-        "name": "ONE PLUS Гильза 16 латунная акс. (400/50) (3204023091)",
-        "article": "3504023037",
-        "unit": "шт",
-        "quantity": 6533,
-        "price": 40.85,
-        "amount": 266870.01
-      },
-      {
-        "name": "ONE PLUS Гильза 20 латунная акс. (300/30) (3204023089)",
-        "article": "3504023038",
-        "unit": "шт",
-        "quantity": 781,
-        "price": 45.25,
-        "amount": 35342.19
-      },
-      {
-        "name": "ONE PLUS Гильза 25 латунная акс. (200/20)",
-        "article": "3204023090",
-        "unit": "шт",
-        "quantity": 229,
-        "price": 67.27,
-        "amount": 15404.19
-      },
-      {
-        "name": "ONE PLUS Тройник 16 латунь акс. (120/20) (3204023062)",
-        "article": "3504023089",
-        "unit": "шт",
-        "quantity": 1561,
-        "price": 124.75,
-        "amount": 194734.87
-      },
-      {
-        "name": "ONE PLUS Тройник 20 латунь акс. (80/10) (3204023061)",
-        "article": "3504023090",
-        "unit": "шт",
-        "quantity": 109,
-        "price": 186.15,
-        "amount": 20289.99
-      },
-      {
-        "name": "ONE PLUS Тройник переходной 20-16-16 латунь акс. (100/10) (3204023048)",
-        "article": "3504023112",
-        "unit": "шт",
-        "quantity": 781,
-        "price": 148.48,
-        "amount": 115960.58
-      },
-      {
-        "name": "ONE PLUS Муфта с накидной гайкой под Евроконус 20*3/4 (110)",
-        "article": "3204023343",
-        "unit": "шт",
-        "quantity": 464,
-        "price": 157.53,
-        "amount": 73092.78
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 4758,
-    "error": null
-  },
-  "Элита 3360 2025_1_Мини КНС ANTARUS 2 HK1-50-16-8-1,11.PDF": {
-    "filename": "Элита 3360 2025_1_Мини КНС ANTARUS 2 HK1-50-16-8-1,11.PDF",
-    "items": [
-      {
-        "name": "Мини КНС ANTARUS 2 HK1-50-16-8-1,1",
-        "article": "432769",
-        "unit": null,
-        "quantity": null,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Основной насос ANTARUS HK1",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Резервный насос ANTARUS HK1",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Емкость из пропилена",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Шкаф управления",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Напорная труба ПВХ",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Клапан обратный",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Шаровый кран",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Клапан вакуумный",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Поплавковый выключатель",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 3,
-        "price": null,
-        "amount": null
-      },
-      {
-        "name": "Датчик уровня",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": null,
-        "amount": null
-      }
-    ],
-    "pages_processed": 4,
-    "tokens_used": 14920,
-    "error": null
-  },
-  "Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf": {
-    "filename": "Элита КНС дренажник КП 3 360_28_01_2025 (1).pdf",
-    "items": [
-      {
-        "name": "Мини КНС ANTARUS 2 HK1-50-16-8-1,1",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 936728.36,
-        "amount": 936728.36
-      },
-      {
-        "name": "Насос дренажный ANTARUS НКД-40-7-7-1",
-        "article": null,
-        "unit": "шт.",
-        "quantity": 1,
-        "price": 26302.25,
-        "amount": 26302.25
-      }
-    ],
-    "pages_processed": 1,
-    "tokens_used": 3751,
     "error": null
   }
 }
