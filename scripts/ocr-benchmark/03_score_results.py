@@ -7,6 +7,7 @@ source_invoice filename, then computes accuracy metrics.
 Output: scripts/ocr-benchmark/results/report.md
 """
 
+import argparse
 import io
 import json
 import os
@@ -18,6 +19,13 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 
 # ── Config ────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Score benchmark results")
+    parser.add_argument("--set", choices=["train", "holdout", "all"], default="all",
+                        help="Which benchmark set to score")
+    return parser.parse_args()
+
 
 NAME_SIM_THRESHOLD = 0.75   # min SequenceMatcher ratio for name match
 PRICE_TOL = 0.05            # 5% price tolerance (VAT rounding differences)
@@ -150,16 +158,30 @@ def find_gemini_result(gemini_data: dict, source_invoice: str) -> list | None:
 
 
 def main():
+    args = parse_args()
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(os.path.dirname(script_dir))
-    benchmark_dir = os.path.join(project_root, "scripts", "benchmark-ready")
+    if args.set == "all":
+        benchmark_dir = os.path.join(project_root, "scripts", "benchmark-ready")
+    else:
+        benchmark_dir = os.path.join(project_root, "scripts", "benchmark-ready", args.set)
     gemini_path = os.path.join(script_dir, "results", "gemini_results.json")
     report_path = os.path.join(script_dir, "results", "report.md")
 
     with open(gemini_path, encoding="utf-8") as f:
         gemini_data = json.load(f)
 
-    bench_files = [f for f in os.listdir(benchmark_dir) if f.endswith(".json")]
+    if args.set == "all":
+        bench_files = []
+        for subdir in ["train", "holdout"]:
+            sub_path = os.path.join(benchmark_dir, subdir)
+            if os.path.isdir(sub_path):
+                bench_files.extend(
+                    os.path.join(subdir, f)
+                    for f in os.listdir(sub_path) if f.endswith(".json")
+                )
+    else:
+        bench_files = [f for f in os.listdir(benchmark_dir) if f.endswith(".json")]
     print(f"Benchmark files: {len(bench_files)}")
     print(f"Gemini results: {len(gemini_data)} PDFs\n")
 
