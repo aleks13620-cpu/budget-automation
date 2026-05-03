@@ -15,11 +15,12 @@ function saveFeedback(
   projectId: number | null,
   specItemId: number | null,
   invoiceItemId: number | null,
+  supplierId: number | null = null,
 ) {
   try {
     db.prepare(
-      'INSERT INTO operator_feedback (type, project_id, spec_item_id, invoice_item_id) VALUES (?, ?, ?, ?)'
-    ).run(type, projectId, specItemId, invoiceItemId);
+      'INSERT INTO operator_feedback (type, project_id, supplier_id, spec_item_id, invoice_item_id) VALUES (?, ?, ?, ?, ?)'
+    ).run(type, projectId, supplierId, specItemId, invoiceItemId);
   } catch { /* table may not exist yet — ignore */ }
 }
 
@@ -456,7 +457,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
       );
     })();
 
-    saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id);
+    saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
     res.json({ confirmed: true });
   } catch (error) {
     res.status(500).json({
@@ -525,7 +526,7 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
         }
 
         learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, match.confidence ?? 0);
-        saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id);
+        saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
         updated++;
       }
     });
@@ -604,7 +605,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
       }
     })();
 
-    saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id);
+    saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
     res.json({ deleted: true });
   } catch (error) {
     res.status(500).json({
@@ -666,7 +667,7 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
           }
         }
 
-        saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id);
+        saveFeedback(db, 'reject', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
         updated++;
       }
     });
@@ -926,7 +927,7 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
       return Number(insertResult.lastInsertRowid);
     })();
 
-    saveFeedback(db, 'manual_select', projectId, specItemId, invoiceItemId);
+    saveFeedback(db, 'manual_select', projectId, specItemId, invoiceItemId, invoiceItem.supplier_id);
     res.json({
       matchId: result,
       confirmed: true,
@@ -1498,16 +1499,18 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
 router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
-    const { spec_item_id, invoice_item_id, comment } = req.body;
+    const { spec_item_id, invoice_item_id, supplier_id, comment } = req.body;
     if (!comment || !comment.trim()) {
       res.status(400).json({ error: 'Комментарий обязателен' });
       return;
     }
     const db = getDatabase();
+    const parsedSupplierId = supplier_id ? Number(supplier_id) : null;
+    const supplierId = parsedSupplierId !== null && Number.isFinite(parsedSupplierId) && parsedSupplierId > 0 ? parsedSupplierId : null;
     db.prepare(`
-      INSERT INTO operator_feedback (type, project_id, spec_item_id, invoice_item_id, comment)
-      VALUES ('error_report', ?, ?, ?, ?)
-    `).run(projectId, spec_item_id || null, invoice_item_id || null, comment.trim());
+      INSERT INTO operator_feedback (type, project_id, supplier_id, spec_item_id, invoice_item_id, comment)
+      VALUES ('error_report', ?, ?, ?, ?, ?)
+    `).run(projectId, supplierId, spec_item_id || null, invoice_item_id || null, comment.trim());
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при сохранении отзыва', details: error instanceof Error ? error.message : 'Unknown error' });

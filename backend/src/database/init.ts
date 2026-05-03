@@ -54,11 +54,13 @@ function initializeDatabase(): void {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
         project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+        supplier_id INTEGER REFERENCES suppliers(id),
         spec_item_id INTEGER REFERENCES specification_items(id) ON DELETE SET NULL,
         invoice_item_id INTEGER,
         comment TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
+      'ALTER TABLE operator_feedback ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)',
       `CREATE TABLE IF NOT EXISTS gigachat_match_cache (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         spec_text TEXT NOT NULL,
