@@ -2,7 +2,7 @@ services:
   app:
     image: ghcr.io/aleks13620-cpu/budget-automation:latest
     ports:
-      - "3001:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
       - ./database:/app/database
       - ./data/uploads:/app/data/uploads

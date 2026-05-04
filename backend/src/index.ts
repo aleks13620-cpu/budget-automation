@@ -22,9 +22,42 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
+    : ['http://localhost:5173', 'http://localhost:3001'],
+}));
+
+const API_SECRET = process.env.API_SECRET;
+if (API_SECRET) {
+  app.use('/api', (req, res, next) => {
+    if (req.path === '/health') return next();
+
+    const token = req.headers.authorization?.replace('Bearer ', '');
+    if (token !== API_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    next();
+  });
+}
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+const mutationLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Слишком много запросов, попробуйте через минуту' },
+});
+app.use('/api', (req, res, next) => {
+  if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
+    return mutationLimiter(req, res, next);
+  }
+
+  next();
+});
 
 // Rate limiting — защита платной GigaChat-квоты
 const gigachatLimiter = rateLimit({
