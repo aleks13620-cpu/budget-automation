@@ -557,23 +557,23 @@ router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const match = db.prepare(`
-      SELECT m.id, ii.name as invoice_name, i.supplier_id
+      SELECT m.id, si.name as spec_name, ii.name as invoice_name, i.supplier_id
       FROM matched_items m
-      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
-      LEFT JOIN invoices i ON ii.invoice_id = i.id
+      JOIN specification_items si ON m.specification_item_id = si.id
+      JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
-      id: number; invoice_name: string | null; supplier_id: number | null;
+      id: number; spec_name: string; invoice_name: string; supplier_id: number | null;
     } | undefined;
     if (!match) return res.status(404).json({ error: 'Матч не найден' });
 
     db.transaction(() => {
-      if (match.invoice_name) {
-        const invoicePattern = normalizeForMatching(match.invoice_name);
-        db.prepare(
-          'DELETE FROM matching_rules WHERE invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
-        ).run(invoicePattern, match.supplier_id, match.supplier_id);
-      }
+      const specPattern = normalizeForMatching(match.spec_name);
+      const invoicePattern = normalizeForMatching(match.invoice_name);
+      db.prepare(
+        'DELETE FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+      ).run(specPattern, invoicePattern, match.supplier_id, match.supplier_id);
 
       db.prepare('UPDATE matched_items SET is_confirmed = 0, is_selected = 0 WHERE id = ?').run(matchId);
     })();
