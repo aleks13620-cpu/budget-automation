@@ -7,7 +7,7 @@
  */
 
 import path from 'path';
-import { parsePdfFile, extractRawRows, parsePdfFromExtracted, SavedMapping } from './pdfParser';
+import { parsePdfFile, SavedMapping } from './pdfParser';
 import { parseExcelInvoice, excelToLegacy } from './excelInvoiceParser';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from './gigachatParser';
 import { validateInvoice } from './invoiceValidator';
@@ -157,8 +157,7 @@ export async function routeInvoiceFile(
 
   // ─── PDF ──────────────────────────────────────────────────────────────
   if (ext === '.pdf') {
-    const rawExtraction = await extractRawRows(filePath);
-    const pdfResult = parsePdfFromExtracted(rawExtraction.rows, rawExtraction.fullText, savedMapping);
+    const pdfResult = await parsePdfFile(filePath, savedMapping);
 
     const hasItems = pdfResult.items.length > 0;
 
