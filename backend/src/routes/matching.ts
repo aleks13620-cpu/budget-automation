@@ -296,7 +296,15 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     }>;
 
     const getMatches = db.prepare(`
-      SELECT m.id, m.invoice_item_id, m.confidence, m.match_type, m.is_confirmed, m.is_selected,
+      SELECT m.id, m.invoice_item_id, m.confidence, m.match_type,
+             CASE
+               WHEN m.match_type = 'exact_article' THEN 'Совпал артикул'
+               WHEN m.match_type = 'learned_rule' THEN 'Правило из истории'
+               WHEN m.match_type = 'name_similarity' THEN 'Похожее название'
+               WHEN m.match_type = 'name_characteristics' THEN 'Совпали характеристики'
+               ELSE 'Совпадение'
+             END as match_reason,
+             m.is_confirmed, m.is_selected,
              COALESCE(m.source, 'invoice') as source, COALESCE(m.is_analog, 0) as is_analog,
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
@@ -320,7 +328,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     const items = specItems.map(spec => {
         const matches = getMatches.all(spec.id) as Array<{
         id: number; invoice_item_id: number; confidence: number;
-        match_type: string; is_confirmed: number; is_selected: number;
+        match_type: string; match_reason: string; is_confirmed: number; is_selected: number;
         source: string; is_analog: number;
         invoice_name: string; article: string | null;
         invoice_unit: string | null; invoice_quantity: number | null;
@@ -354,6 +362,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
               amount: m.amount,
               confidence: m.confidence,
               matchType: m.match_type,
+              matchReason: m.match_reason,
               isConfirmed: m.is_confirmed === 1,
               isSelected: m.is_selected === 1,
               isAnalog: m.is_analog === 1,
