@@ -136,18 +136,27 @@ def parse_number(value) -> float | None:
     if isinstance(value, (int, float)):
         return float(value)
 
-    text = str(value).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
-    if not text:
+    text, _ = decode_mojibake(str(value))
+    text = text.strip().lower().replace("\xa0", " ")
+    match = re.search(r"[-+]?\d[\d\s.,]*", text)
+    if not match:
         return None
+    number = match.group(0).strip().replace(" ", "")
+    if "," in number and "." in number:
+        if number.rfind(",") > number.rfind("."):
+            number = number.replace(".", "").replace(",", ".")
+        else:
+            number = number.replace(",", "")
+    else:
+        number = number.replace(",", ".")
     try:
-        return float(text)
+        return float(number)
     except ValueError:
         return None
 
 
 def set_number(item: dict, key: str, value: float | None) -> None:
-    if value is not None:
-        item[key] = round(value, 4)
+    item[key] = round(value, 4) if value is not None else None
 
 
 def decode_mojibake(text: str) -> tuple[str, bool]:
@@ -264,10 +273,11 @@ def normalize_vat_duplicates(items: list[dict]) -> list[dict]:
             continue
 
         converted = dict(item)
-        price = parse_number(converted.get("price"))
-        amount = parse_number(converted.get("amount"))
-        set_number(converted, "price", price * 1.2 if price is not None else None)
-        set_number(converted, "amount", amount * 1.2 if amount is not None else None)
+        if i in net_indices:
+            price = parse_number(converted.get("price"))
+            amount = parse_number(converted.get("amount"))
+            set_number(converted, "price", price * 1.2 if price is not None else None)
+            set_number(converted, "amount", amount * 1.2 if amount is not None else None)
         normalized.append(converted)
 
     return normalized
@@ -413,6 +423,7 @@ def ocr_pdf_with_gemini(client: OpenAI, pdf_path: str, result_filename: str | No
         "error": None,
     }
 
+    doc = None
     try:
         doc = fitz.open(pdf_path)
         pages_to_process = min(len(doc), MAX_PAGES)
@@ -473,12 +484,14 @@ def ocr_pdf_with_gemini(client: OpenAI, pdf_path: str, result_filename: str | No
                     else:
                         raise
 
-        doc.close()
         result["items"] = normalize_items(all_items)
 
     except Exception as e:
         result["error"] = str(e)
         print(f"    ERROR: {e}")
+    finally:
+        if doc is not None:
+            doc.close()
 
     return result
 

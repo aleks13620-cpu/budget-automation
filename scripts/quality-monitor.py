@@ -158,12 +158,11 @@ def main() -> int:
         gemini_items = scorer.find_gemini_result(gemini_data, source_invoice)
 
         if gemini_items is None:
-            score = {"overall_score": None, "name_ok_pct": None, "price_ok_pct": None}
             grouped[supplier].append(
                 {
                     "file": path.relative_to(PROJECT_ROOT).as_posix(),
                     "source_invoice": source_invoice,
-                    "score": score,
+                    "score": None,
                 }
             )
             continue
@@ -180,10 +179,10 @@ def main() -> int:
     for supplier in sorted(grouped):
         documents = grouped[supplier]
         scores = [document["score"] for document in documents]
-        overall = avg_score([score.get("overall_score") for score in scores])
-        names = avg_score([score.get("name_ok_pct") for score in scores])
-        prices = avg_score([score.get("price_ok_pct") for score in scores])
-        has_unscorable = any(score.get("overall_score") is None for score in scores)
+        overall = avg_score([score.get("overall_score") if score is not None else None for score in scores])
+        names = avg_score([score.get("name_ok_pct") if score is not None else None for score in scores])
+        prices = avg_score([score.get("price_ok_pct") if score is not None else None for score in scores])
+        has_unscorable = any(score is None or score.get("overall_score") is None for score in scores)
         status = "FAIL" if has_unscorable else status_for(overall)
         rows.append(
             {

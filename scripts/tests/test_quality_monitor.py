@@ -124,3 +124,39 @@ def test_warn_detail_includes_worst_items(tmp_path, monkeypatch, capsys):
     assert "WARN" in output
     assert "[WARN] Warn Supplier" in output
     assert "worst items" in output
+
+
+def test_missing_gemini_result_reports_fail_without_crashing(tmp_path, monkeypatch, capsys):
+    monitor = load_quality_monitor()
+
+    benchmark_root = tmp_path / "benchmark-ready"
+    train_dir = benchmark_root / "train"
+    train_dir.mkdir(parents=True)
+    (benchmark_root / "holdout").mkdir()
+
+    benchmark_file = train_dir / "Missing Supplier_100_00.json"
+    benchmark_file.write_text(
+        json.dumps(
+            {
+                "source_invoice": "missing-supplier.pdf",
+                "supplier": "Missing Supplier",
+                "items": [{"name": "Valve DN20", "price_with_vat": 100.0}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    results_path = tmp_path / "gemini_results.json"
+    results_path.write_text("{}", encoding="utf-8")
+
+    monkeypatch.setattr(monitor, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(monitor, "BENCHMARK_ROOT", benchmark_root)
+    monkeypatch.setattr(monitor, "RESULTS_PATH", results_path)
+
+    exit_code = monitor.main()
+    output = capsys.readouterr().out
+
+    assert exit_code == 1
+    assert "| Missing Supplier | 0.0% | 0.0% | 0.0% | FAIL |" in output
+    assert "reason:        Gemini result not found" in output
