@@ -62,11 +62,10 @@ def status_for(overall: float | None) -> str:
     return "OK"
 
 
-def avg(values: list[float | None]) -> float | None:
-    clean = [value for value in values if value is not None]
-    if not clean:
-        return None
-    return sum(clean) / len(clean)
+def avg_score(values: list[float | None]) -> float:
+    if not values:
+        return 0.0
+    return sum(value if value is not None else 0.0 for value in values) / len(values)
 
 
 def print_table(rows: list[dict[str, Any]]) -> None:
@@ -79,15 +78,77 @@ def print_table(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def short_text(value: str, limit: int = 80) -> str:
+    value = value.replace("\n", " ").strip()
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
+
+
+def price_failure_count(score: dict[str, Any] | None) -> int:
+    if score is None:
+        return 0
+    return sum(
+        1
+        for match in score.get("matches", [])
+        if not match.get("price_ok")
+    )
+
+
+def worst_items(score: dict[str, Any] | None, threshold: float = 0.78) -> list[dict[str, Any]]:
+    if score is None:
+        return []
+    matches = [
+        match
+        for match in score.get("matches", [])
+        if match.get("name_sim", 0) < threshold
+    ]
+    return sorted(matches, key=lambda match: match.get("name_sim", 0))
+
+
+def print_status_details(rows: list[dict[str, Any]]) -> None:
+    problem_rows = [row for row in rows if row["status"] in {"WARN", "FAIL"}]
+    if not problem_rows:
+        return
+
+    print()
+    for row in problem_rows:
+        print(f"[{row['status']}] {row['supplier']}")
+        for doc in row["documents"]:
+            score = doc["score"]
+            print(f"  file:          {doc['file']}")
+            if score is None:
+                print(f"  source:        {doc['source_invoice'] or 'N/A'}")
+                print("  reason:        Gemini result not found")
+                continue
+
+            print(f"  items ref/gem: {score['item_count_ref']}/{score['item_count_gemini']}")
+            items = worst_items(score)
+            if items:
+                print("  worst items (name_sim < 0.78):")
+                for item in items[:5]:
+                    print(
+                        f"    - \"{short_text(item.get('ref_name', ''))}\" → "
+                        f"\"{short_text(item.get('gem_name', ''))}\" "
+                        f"(sim={item.get('name_sim', 0):.2f})"
+                    )
+            print(f"  price failures: {price_failure_count(score)}")
+
+
 def main() -> int:
     scorer = load_scorer()
 
     with RESULTS_PATH.open(encoding="utf-8") as f:
         gemini_data = json.load(f)
 
+    files = benchmark_files()
+    if not files:
+        print("FAIL: no benchmark JSON files found in train/holdout", file=sys.stderr)
+        return 1
+
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
 
-    for path in benchmark_files():
+    for path in files:
         with path.open(encoding="utf-8") as f:
             ref = json.load(f)
 
@@ -97,20 +158,33 @@ def main() -> int:
         gemini_items = scorer.find_gemini_result(gemini_data, source_invoice)
 
         if gemini_items is None:
+            score = {"overall_score": None, "name_ok_pct": None, "price_ok_pct": None}
             grouped[supplier].append(
-                {"overall_score": None, "name_ok_pct": None, "price_ok_pct": None}
+                {
+                    "file": path.relative_to(PROJECT_ROOT).as_posix(),
+                    "source_invoice": source_invoice,
+                    "score": score,
+                }
             )
             continue
 
-        grouped[supplier].append(scorer.score_document(ref_items, gemini_items))
+        grouped[supplier].append(
+            {
+                "file": path.relative_to(PROJECT_ROOT).as_posix(),
+                "source_invoice": source_invoice,
+                "score": scorer.score_document(ref_items, gemini_items),
+            }
+        )
 
     rows = []
     for supplier in sorted(grouped):
-        scores = grouped[supplier]
-        overall = avg([score.get("overall_score") for score in scores])
-        names = avg([score.get("name_ok_pct") for score in scores])
-        prices = avg([score.get("price_ok_pct") for score in scores])
-        status = status_for(overall)
+        documents = grouped[supplier]
+        scores = [document["score"] for document in documents]
+        overall = avg_score([score.get("overall_score") for score in scores])
+        names = avg_score([score.get("name_ok_pct") for score in scores])
+        prices = avg_score([score.get("price_ok_pct") for score in scores])
+        has_unscorable = any(score.get("overall_score") is None for score in scores)
+        status = "FAIL" if has_unscorable else status_for(overall)
         rows.append(
             {
                 "supplier": supplier,
@@ -118,10 +192,12 @@ def main() -> int:
                 "names": names,
                 "prices": prices,
                 "status": status,
+                "documents": documents,
             }
         )
 
     print_table(rows)
+    print_status_details(rows)
     return 1 if any(row["status"] == "FAIL" for row in rows) else 0
 
 
