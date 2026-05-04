@@ -1,5 +1,6 @@
 import fs from 'fs';
 import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
+import { USE_LEGACY_PARSER } from '../config';
 
 // pdf-parse v2 CJS import
 const { PDFParse } = require('pdf-parse');
@@ -801,6 +802,13 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
  * Main entry: reads PDF file, extracts rows, and parses.
  */
 export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
+  if (USE_LEGACY_PARSER) {
+    // Legacy path (same logic for now)
+    const { rows, fullText } = await extractRawRows(filePath);
+    return parsePdfFromExtracted(rows, fullText, savedMapping);
+  }
+
+  // New path (same logic for now - will diverge in step 3)
   const { rows, fullText } = await extractRawRows(filePath);
   return parsePdfFromExtracted(rows, fullText, savedMapping);
 }
