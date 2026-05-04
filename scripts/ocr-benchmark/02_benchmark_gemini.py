@@ -20,6 +20,7 @@ import base64
 import io
 import json
 import os
+import re
 import sys
 import time
 from difflib import SequenceMatcher
@@ -127,6 +128,164 @@ def parse_gemini_response(text: str) -> list:
     except json.JSONDecodeError as e:
         print(f"    JSON parse error: {e} | raw: {text[:200]}")
         return []
+
+
+def parse_number(value) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip().replace("\xa0", "").replace(" ", "").replace(",", ".")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def set_number(item: dict, key: str, value: float | None) -> None:
+    if value is not None:
+        item[key] = round(value, 4)
+
+
+def decode_mojibake(text: str) -> tuple[str, bool]:
+    """Decode UTF-8 text that was accidentally represented as cp1251 mojibake."""
+    if not isinstance(text, str):
+        return "", False
+    try:
+        decoded = text.encode("cp1251").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return text, False
+
+    has_cyrillic = any("\u0400" <= char <= "\u04ff" for char in decoded)
+    if decoded != text and has_cyrillic:
+        return decoded, True
+    return text, False
+
+
+def restore_mojibake(text: str, was_mojibake: bool) -> str:
+    if not was_mojibake:
+        return text
+    try:
+        return text.encode("utf-8").decode("cp1251")
+    except UnicodeDecodeError:
+        return text
+
+
+def canonical_text(value: str | None) -> str:
+    text, _ = decode_mojibake(value or "")
+    return re.sub(r"[^0-9a-z\u0400-\u04ff]+", "", text.lower())
+
+
+def same_article(a: dict, b: dict) -> bool:
+    article_a = canonical_text(a.get("article"))
+    article_b = canonical_text(b.get("article"))
+    return bool(article_a and article_b and article_a == article_b)
+
+
+def same_line_item(a: dict, b: dict) -> bool:
+    if same_article(a, b):
+        return True
+
+    name_a = canonical_text(a.get("name"))
+    name_b = canonical_text(b.get("name"))
+    if not name_a or not name_b:
+        return False
+    return SequenceMatcher(None, name_a, name_b).ratio() >= 0.78
+
+
+def normalize_rbs_radiator_name(name: str | None) -> str | None:
+    if not isinstance(name, str):
+        return name
+
+    text, was_mojibake = decode_mojibake(name)
+    pattern = (
+        r"^\s*"
+        r"\u0440\u0430\u0434\u0438\u0430\u0442\u043e\u0440"
+        r"\s+"
+        r"\u0440\u0431\u0441"
+        r"\s*-?\s*500\s*/\s*95\s*-?\s*(\d+)\s*(.*)$"
+    )
+    match = re.match(pattern, text.lower(), flags=re.IGNORECASE)
+    if not match:
+        return name
+
+    size, suffix = match.groups()
+    suffix = re.sub(r"\s+", " ", suffix).strip()
+    normalized = (
+        "\u0420\u0430\u0434\u0438\u0430\u0442\u043e\u0440 "
+        "\u0420\u0411\u0421 - 500 / 95 - "
+        f"{size}"
+    )
+    if suffix:
+        normalized = f"{normalized} {suffix}"
+    return restore_mojibake(normalized, was_mojibake)
+
+
+def normalize_vat_duplicates(items: list[dict]) -> list[dict]:
+    """
+    Some PDFs expose a main table without VAT and repeat selected lines with VAT.
+    When repeated article matches prove that pattern, keep the main table and
+    convert its prices/amounts to VAT-inclusive values.
+    """
+    net_indices = set()
+    vat_duplicate_indices = set()
+    same_article_net_indices = set()
+    same_article_vat_indices = set()
+
+    for i, first in enumerate(items):
+        first_price = parse_number(first.get("price"))
+        if not first_price:
+            continue
+
+        for j, second in enumerate(items[i + 1:], start=i + 1):
+            second_price = parse_number(second.get("price"))
+            if not second_price or second_price <= first_price:
+                continue
+            if abs((second_price / first_price) - 1.2) > 0.015:
+                continue
+            if not same_line_item(first, second):
+                continue
+
+            net_indices.add(i)
+            vat_duplicate_indices.add(j)
+            if same_article(first, second):
+                same_article_net_indices.add(i)
+                same_article_vat_indices.add(j)
+
+    if len(same_article_net_indices) < 3 or len(same_article_vat_indices) < 3:
+        return items
+
+    normalized = []
+    for i, item in enumerate(items):
+        if i in vat_duplicate_indices:
+            continue
+
+        converted = dict(item)
+        price = parse_number(converted.get("price"))
+        amount = parse_number(converted.get("amount"))
+        set_number(converted, "price", price * 1.2 if price is not None else None)
+        set_number(converted, "amount", amount * 1.2 if amount is not None else None)
+        normalized.append(converted)
+
+    return normalized
+
+
+def normalize_items(items: list) -> list[dict]:
+    normalized = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        item = dict(item)
+        item["name"] = normalize_rbs_radiator_name(item.get("name"))
+        for key in ("quantity", "price", "amount"):
+            set_number(item, key, parse_number(item.get(key)))
+        normalized.append(item)
+
+    return normalize_vat_duplicates(normalized)
 
 
 def load_benchmark_invoices(benchmark_dir: str) -> list[dict]:
@@ -315,7 +474,7 @@ def ocr_pdf_with_gemini(client: OpenAI, pdf_path: str, result_filename: str | No
                         raise
 
         doc.close()
-        result["items"] = all_items
+        result["items"] = normalize_items(all_items)
 
     except Exception as e:
         result["error"] = str(e)
@@ -359,7 +518,7 @@ def ocr_excel_with_gemini(client: OpenAI, excel_path: str, result_filename: str 
                 )
 
                 raw_text = response.choices[0].message.content or ""
-                result["items"] = parse_gemini_response(raw_text)
+                result["items"] = normalize_items(parse_gemini_response(raw_text))
 
                 if response.usage:
                     result["tokens_used"] += (
