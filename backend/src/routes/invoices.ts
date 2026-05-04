@@ -5,7 +5,7 @@ import fs from 'fs';
 import { getDatabase } from '../database';
 import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
-import { parsePdfFile, parsePdfFromExtracted, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
+import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
 import { routeInvoiceFile } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
@@ -213,10 +213,10 @@ async function processInvoiceFile(
   let initialResult;
   let lastExcelResult: ExcelParseResult | null = null;
   if (ext === '.pdf') {
-    const rawExtraction = await extractRawRows(file.path);
-    pdfRawRows = rawExtraction.rows;
-    pdfFullText = rawExtraction.fullText;
-    initialResult = parsePdfFromExtracted(pdfRawRows, pdfFullText);
+    const pdfParsed = await parsePdfFileWithExtraction(file.path);
+    pdfRawRows = pdfParsed.rows;
+    pdfFullText = pdfParsed.fullText;
+    initialResult = pdfParsed.parseResult;
   } else {
     lastExcelResult = parseExcelInvoice(file.path);
     initialResult = excelToLegacy(lastExcelResult);
@@ -289,7 +289,13 @@ async function processInvoiceFile(
             discountDetected: detectDiscount(pdfFullText),
           };
         } else {
-          parseResult = parsePdfFromExtracted(pdfRawRows, pdfFullText, savedMapping);
+          const pdfParsed = await parsePdfFileWithExtraction(file.path, savedMapping, {
+            rows: pdfRawRows,
+            fullText: pdfFullText,
+          });
+          pdfRawRows = pdfParsed.rows;
+          pdfFullText = pdfParsed.fullText;
+          parseResult = pdfParsed.parseResult;
         }
       } else {
         lastExcelResult = parseExcelInvoice(file.path, savedMapping);

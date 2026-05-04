@@ -557,6 +557,12 @@ export interface SavedMapping {
   separatorValue?: string | number[];
 }
 
+export interface PdfParseWithExtractionResult {
+  parseResult: InvoiceParseResult;
+  rows: string[][];
+  fullText: string;
+}
+
 /**
  * Check if a table looks like bank requisites (not product items).
  * Returns true if >= 3 negative markers found.
@@ -801,16 +807,32 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
 /**
  * Main entry: reads PDF file, extracts rows, and parses.
  */
-export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
+export async function parsePdfFileWithExtraction(
+  filePath: string,
+  savedMapping?: SavedMapping,
+  extracted?: { rows: string[][]; fullText: string },
+): Promise<PdfParseWithExtractionResult> {
   if (USE_LEGACY_PARSER) {
     // Legacy path (same logic for now)
-    const { rows, fullText } = await extractRawRows(filePath);
-    return parsePdfFromExtracted(rows, fullText, savedMapping);
+    const { rows, fullText } = extracted ?? await extractRawRows(filePath);
+    return {
+      parseResult: parsePdfFromExtracted(rows, fullText, savedMapping),
+      rows,
+      fullText,
+    };
   }
 
   // New path (same logic for now - will diverge in step 3)
-  const { rows, fullText } = await extractRawRows(filePath);
-  return parsePdfFromExtracted(rows, fullText, savedMapping);
+  const { rows, fullText } = extracted ?? await extractRawRows(filePath);
+  return {
+    parseResult: parsePdfFromExtracted(rows, fullText, savedMapping),
+    rows,
+    fullText,
+  };
+}
+
+export async function parsePdfFile(filePath: string, savedMapping?: SavedMapping): Promise<InvoiceParseResult> {
+  return (await parsePdfFileWithExtraction(filePath, savedMapping)).parseResult;
 }
 
 // --- Text splitting for Category B ---
