@@ -547,10 +547,28 @@ router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
     const matchId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
-    const match = db.prepare('SELECT id FROM matched_items WHERE id = ?').get(matchId);
+    const match = db.prepare(`
+      SELECT m.id, ii.name as invoice_name, i.supplier_id
+      FROM matched_items m
+      LEFT JOIN invoice_items ii ON m.invoice_item_id = ii.id
+      LEFT JOIN invoices i ON ii.invoice_id = i.id
+      WHERE m.id = ?
+    `).get(matchId) as {
+      id: number; invoice_name: string | null; supplier_id: number | null;
+    } | undefined;
     if (!match) return res.status(404).json({ error: 'Матч не найден' });
 
-    db.prepare('UPDATE matched_items SET is_confirmed = 0, is_selected = 0 WHERE id = ?').run(matchId);
+    db.transaction(() => {
+      if (match.invoice_name) {
+        const invoicePattern = normalizeForMatching(match.invoice_name);
+        db.prepare(
+          'DELETE FROM matching_rules WHERE invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+        ).run(invoicePattern, match.supplier_id, match.supplier_id);
+      }
+
+      db.prepare('UPDATE matched_items SET is_confirmed = 0, is_selected = 0 WHERE id = ?').run(matchId);
+    })();
+
     res.json({ unconfirmed: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при сбросе матча', details: error instanceof Error ? error.message : 'Unknown error' });
@@ -729,7 +747,7 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
         ).run(existingRule.id);
       } else {
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.75, 1, ?)'
+          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
         ).run(specPattern, invoicePattern, match.supplier_id);
       }
     })();
