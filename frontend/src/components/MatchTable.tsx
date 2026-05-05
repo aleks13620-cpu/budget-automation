@@ -326,9 +326,13 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                             )}
                           </div>
                           <div style={{ flex: 1 }}>{m.amount != null ? m.amount.toLocaleString('ru-RU') : '—'}</div>
-                          <div style={{ flex: '0 0 80px' }}>
+                          <div style={{ flex: '0 0 190px' }}>
                             <span className="confidence-badge" title={MATCH_TYPE_LABELS[m.matchType] || m.matchType}>
+                              {m.matchType === 'learned_rule' && <span title="Запомнено системой">🧠 </span>}
                               {Math.round(m.confidence * 100)}%
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: '#888', marginLeft: 4 }}>
+                              {m.matchReason}
                             </span>
                           </div>
                           <div style={{ flex: '0 0 150px', display: 'flex', gap: '0.25rem' }}>

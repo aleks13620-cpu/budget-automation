@@ -9,6 +9,7 @@ export interface MatchCandidate {
   source: 'invoice' | 'price_list';
   quantityScore: -1 | 0 | 1;
   dnScore: -1 | 0 | 1;
+  matchingRuleId?: number | null;
 }
 
 interface SpecItemRow {
@@ -271,6 +272,7 @@ function matchSpecItems(
     for (const inv of normalizedInvoice) {
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
+      let bestRuleId: number | null = null;
       let quantityScore: -1 | 0 | 1 = 0;
       let dnScore: -1 | 0 | 1 = 0;
       const rawNameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
@@ -405,6 +407,7 @@ function matchSpecItems(
             if (ruleConfidence > bestConfidence) {
               bestConfidence = ruleConfidence;
               bestType = 'learned_rule';
+              bestRuleId = rule.id;
             }
           }
         }
@@ -470,6 +473,7 @@ function matchSpecItems(
           source: inv.source ?? 'invoice',
           quantityScore,
           dnScore,
+          matchingRuleId: bestType === 'learned_rule' ? bestRuleId : null,
         });
       }
     }

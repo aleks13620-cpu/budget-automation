@@ -235,14 +235,14 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
 
     // Insert new candidates
     const insert = db.prepare(`
-      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
-      VALUES (?, ?, ?, ?, 0, ?, ?)
+      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source, matching_rule_id)
+      VALUES (?, ?, ?, ?, 0, ?, ?, ?)
     `);
 
     const insertAll = db.transaction(() => {
       for (const c of candidates) {
         const isSelected = bestCandidateBySpec.get(c.specItemId)?.invoiceItemId === c.invoiceItemId ? 1 : 0;
-        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, isSelected, c.source ?? 'invoice');
+        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, isSelected, c.source ?? 'invoice', c.matchingRuleId ?? null);
       }
     });
     insertAll();
@@ -298,10 +298,16 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     const getMatches = db.prepare(`
       SELECT m.id, m.invoice_item_id, m.confidence, m.match_type,
              CASE
-               WHEN m.match_type = 'exact_article' THEN 'Совпал артикул'
-               WHEN m.match_type = 'learned_rule' THEN 'Правило из истории'
-               WHEN m.match_type = 'name_similarity' THEN 'Похожее название'
-               WHEN m.match_type = 'name_characteristics' THEN 'Совпали характеристики'
+               WHEN m.match_type = 'exact_article'
+                    THEN 'Совпал артикул' || COALESCE(': ' || COALESCE(ii.article, pli.article), '')
+               WHEN m.match_type = 'learned_rule' AND mr.id IS NOT NULL
+                    THEN 'Правило: ' || mr.specification_pattern || ' → ' || mr.invoice_pattern
+               WHEN m.match_type = 'learned_rule'
+                    THEN 'Правило из истории'
+               WHEN m.match_type = 'name_similarity'
+                    THEN 'Похожее название (' || CAST(ROUND(m.confidence * 100) AS INTEGER) || '%)'
+               WHEN m.match_type = 'name_characteristics'
+                    THEN 'Совпали характеристики (' || CAST(ROUND(m.confidence * 100) AS INTEGER) || '%)'
                ELSE 'Совпадение'
              END as match_reason,
              m.is_confirmed, m.is_selected,
@@ -314,6 +320,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
              ii.amount,
              s.name as supplier_name, s.vat_rate, s.prices_include_vat
       FROM matched_items m
+      LEFT JOIN matching_rules mr ON m.matching_rule_id = mr.id
       LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
       LEFT JOIN invoices i ON ii.invoice_id = i.id
       LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
