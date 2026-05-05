@@ -1,0 +1,167 @@
+{
+  "date": "2026-05-05",
+  "summary": {
+    "total_projects": 12,
+    "projects_with_specs": 9,
+    "total_spec_items": 2687,
+    "total_invoice_items": 915,
+    "total_matches": 6,
+    "confirmed_matches": 3,
+    "auto_matches": 4,
+    "overall_match_rate": 0.1,
+    "overall_auto_rate": 66.7
+  },
+  "match_type_distribution": {
+    "learned_rule": 4,
+    "manual": 2
+  },
+  "per_project": [
+    {
+      "project_id": 20,
+      "project_name": "debug-compact-mapping",
+      "spec_items": 252,
+      "invoice_items": 6,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 7,
+      "project_name": "Новая самара  тест 9.02",
+      "spec_items": 70,
+      "invoice_items": 38,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 10,
+      "project_name": "Новая самара 4",
+      "spec_items": 417,
+      "invoice_items": 23,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 17,
+      "project_name": "Престиж",
+      "spec_items": 0,
+      "invoice_items": 56,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 16,
+      "project_name": "и волга",
+      "spec_items": 0,
+      "invoice_items": 117,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 11,
+      "project_name": "новая  самар 5",
+      "spec_items": 417,
+      "invoice_items": 34,
+      "total_matches": 6,
+      "confirmed_matches": 3,
+      "auto_matches": 4,
+      "match_rate": 0.7,
+      "auto_rate": 66.7,
+      "match_type_distribution": {
+        "learned_rule": 4,
+        "manual": 2
+      }
+    },
+    {
+      "project_id": 14,
+      "project_name": "новая самар 8",
+      "spec_items": 417,
+      "invoice_items": 103,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 12,
+      "project_name": "новая самара 6",
+      "spec_items": 417,
+      "invoice_items": 389,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 13,
+      "project_name": "новая самара 7",
+      "spec_items": 417,
+      "invoice_items": 20,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 19,
+      "project_name": "проверка спецификации",
+      "spec_items": 140,
+      "invoice_items": 0,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 18,
+      "project_name": "тест проект",
+      "spec_items": 140,
+      "invoice_items": 28,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    },
+    {
+      "project_id": 15,
+      "project_name": "уникум",
+      "spec_items": 0,
+      "invoice_items": 101,
+      "total_matches": 0,
+      "confirmed_matches": 0,
+      "auto_matches": 0,
+      "match_rate": 0.0,
+      "auto_rate": 0.0,
+      "match_type_distribution": {}
+    }
+  ]
+}
