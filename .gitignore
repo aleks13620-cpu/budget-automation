@@ -41,7 +41,7 @@ data/uploads/*
 *.tmp
 *.temp
 .claude/
-scripts/__pycache__/
+**/__pycache__/
 scripts/~$*.xlsx
 
 # Generated benchmark artifacts (contain project names from DB)
