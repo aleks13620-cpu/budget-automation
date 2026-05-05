@@ -88,6 +88,7 @@ function initializeDatabase(): void {
         times_used INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
+      'ALTER TABLE matched_items ADD COLUMN matching_rule_id INTEGER',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
