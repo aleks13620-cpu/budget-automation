@@ -1620,4 +1620,138 @@ router.get('/api/feedback/export', (req: Request, res: Response) => {
   }
 });
 
+// GET /api/matching/rules/conflicts - diagnostic list of conflicting matching rules
+router.get('/api/matching/rules/conflicts', (req: Request, res: Response) => {
+  try {
+    const db = getDatabase();
+    const rows = db.prepare(`
+      SELECT
+        CASE
+          WHEN (
+            (
+              COALESCE(r1.is_negative, 0) = 0
+              AND COALESCE(r2.is_negative, 0) = 1
+            )
+            OR (
+              COALESCE(r1.is_negative, 0) = 1
+              AND COALESCE(r2.is_negative, 0) = 0
+            )
+          )
+          AND r1.invoice_pattern COLLATE BINARY = r2.invoice_pattern COLLATE BINARY
+            THEN 'positive_vs_negative'
+          WHEN COALESCE(r1.is_negative, 0) = 0
+            AND COALESCE(r2.is_negative, 0) = 0
+            AND COALESCE(r1.is_analog, 0) <> COALESCE(r2.is_analog, 0)
+            THEN 'analog_mismatch'
+          ELSE 'different_invoice'
+        END as type,
+        r1.id as ruleA_id,
+        r1.specification_pattern as ruleA_specification_pattern,
+        r1.invoice_pattern as ruleA_invoice_pattern,
+        COALESCE(r1.confidence, 1.0) as ruleA_confidence,
+        COALESCE(r1.is_analog, 0) as ruleA_is_analog,
+        COALESCE(r1.is_negative, 0) as ruleA_is_negative,
+        r1.supplier_id as ruleA_supplier_id,
+        COALESCE(r1.times_used, 1) as ruleA_times_used,
+        COALESCE(r1.source, 'manual') as ruleA_source,
+        r2.id as ruleB_id,
+        r2.specification_pattern as ruleB_specification_pattern,
+        r2.invoice_pattern as ruleB_invoice_pattern,
+        COALESCE(r2.confidence, 1.0) as ruleB_confidence,
+        COALESCE(r2.is_analog, 0) as ruleB_is_analog,
+        COALESCE(r2.is_negative, 0) as ruleB_is_negative,
+        r2.supplier_id as ruleB_supplier_id,
+        COALESCE(r2.times_used, 1) as ruleB_times_used,
+        COALESCE(r2.source, 'manual') as ruleB_source
+      FROM matching_rules r1
+      JOIN matching_rules r2
+        ON r1.specification_pattern COLLATE BINARY = r2.specification_pattern COLLATE BINARY
+        AND r1.id < r2.id
+      WHERE (
+        (r1.supplier_id IS NULL AND r2.supplier_id IS NULL)
+        OR r1.supplier_id = r2.supplier_id
+      )
+      AND (
+        (
+          COALESCE(r1.is_negative, 0) = 0
+          AND COALESCE(r2.is_negative, 0) = 0
+          AND r1.invoice_pattern COLLATE BINARY <> r2.invoice_pattern COLLATE BINARY
+        )
+        OR (
+          (
+            (
+              COALESCE(r1.is_negative, 0) = 0
+              AND COALESCE(r2.is_negative, 0) = 1
+            )
+            OR (
+              COALESCE(r1.is_negative, 0) = 1
+              AND COALESCE(r2.is_negative, 0) = 0
+            )
+          )
+          AND r1.invoice_pattern COLLATE BINARY = r2.invoice_pattern COLLATE BINARY
+        )
+        OR (
+          COALESCE(r1.is_negative, 0) = 0
+          AND COALESCE(r2.is_negative, 0) = 0
+          AND COALESCE(r1.is_analog, 0) <> COALESCE(r2.is_analog, 0)
+        )
+      )
+      ORDER BY r1.specification_pattern, r1.id, r2.id
+    `).all() as Array<{
+      type: 'different_invoice' | 'positive_vs_negative' | 'analog_mismatch';
+      ruleA_id: number;
+      ruleA_specification_pattern: string;
+      ruleA_invoice_pattern: string;
+      ruleA_confidence: number;
+      ruleA_is_analog: number;
+      ruleA_is_negative: number;
+      ruleA_supplier_id: number | null;
+      ruleA_times_used: number;
+      ruleA_source: string;
+      ruleB_id: number;
+      ruleB_specification_pattern: string;
+      ruleB_invoice_pattern: string;
+      ruleB_confidence: number;
+      ruleB_is_analog: number;
+      ruleB_is_negative: number;
+      ruleB_supplier_id: number | null;
+      ruleB_times_used: number;
+      ruleB_source: string;
+    }>;
+
+    const conflicts = rows.map(row => ({
+      type: row.type,
+      ruleA: {
+        id: row.ruleA_id,
+        specification_pattern: row.ruleA_specification_pattern,
+        invoice_pattern: row.ruleA_invoice_pattern,
+        confidence: row.ruleA_confidence,
+        is_analog: row.ruleA_is_analog,
+        is_negative: row.ruleA_is_negative,
+        supplier_id: row.ruleA_supplier_id,
+        times_used: row.ruleA_times_used,
+        source: row.ruleA_source,
+      },
+      ruleB: {
+        id: row.ruleB_id,
+        specification_pattern: row.ruleB_specification_pattern,
+        invoice_pattern: row.ruleB_invoice_pattern,
+        confidence: row.ruleB_confidence,
+        is_analog: row.ruleB_is_analog,
+        is_negative: row.ruleB_is_negative,
+        supplier_id: row.ruleB_supplier_id,
+        times_used: row.ruleB_times_used,
+        source: row.ruleB_source,
+      },
+    }));
+
+    res.json({ conflicts, total: conflicts.length });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Error detecting matching rule conflicts',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 export default router;
