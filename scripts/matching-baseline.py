@@ -10,8 +10,10 @@ from __future__ import annotations
 import datetime as dt
 import io
 import json
+import os
 import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -175,6 +177,14 @@ def collect_metrics(conn: sqlite3.Connection, baseline_date: str) -> dict[str, A
     }
 
 
+def collect_metrics_snapshot(conn: sqlite3.Connection, baseline_date: str) -> dict[str, Any]:
+    conn.execute("BEGIN")
+    try:
+        return collect_metrics(conn, baseline_date)
+    finally:
+        conn.rollback()
+
+
 def format_table(metrics: dict[str, Any]) -> str:
     headers = ["Project", "Specs", "Inv.Items", "Matches", "Confirmed", "Auto", "Match%", "Auto%"]
     rows: list[list[str]] = []
@@ -243,9 +253,30 @@ def format_table(metrics: dict[str, Any]) -> str:
 
 def write_json(metrics: dict[str, Any]) -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with OUTPUT_PATH.open("w", encoding="utf-8") as output_file:
-        json.dump(metrics, output_file, ensure_ascii=False, indent=2)
-        output_file.write("\n")
+    temp_path: Path | None = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=OUTPUT_PATH.parent,
+            prefix=f".{OUTPUT_PATH.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as output_file:
+            temp_path = Path(output_file.name)
+            json.dump(metrics, output_file, ensure_ascii=False, indent=2)
+            output_file.write("\n")
+            output_file.flush()
+            os.fsync(output_file.fileno())
+
+        temp_path.replace(OUTPUT_PATH)
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def main() -> int:
@@ -258,7 +289,8 @@ def main() -> int:
     baseline_date = dt.date.today().isoformat()
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        metrics = collect_metrics(conn, baseline_date)
+        conn.execute("PRAGMA query_only = ON")
+        metrics = collect_metrics_snapshot(conn, baseline_date)
 
     print(format_table(metrics))
     write_json(metrics)
