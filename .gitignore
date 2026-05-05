@@ -43,3 +43,6 @@ data/uploads/*
 .claude/
 scripts/__pycache__/
 scripts/~$*.xlsx
+
+# Generated benchmark artifacts (contain project names from DB)
+scripts/benchmark-ready/matching-baseline.json
