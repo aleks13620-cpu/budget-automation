@@ -1,6 +1,6 @@
 # Статус стабилизации v2
 
-## Текущая фаза: Шаг 6б / 6в
+## Текущая фаза: Шаг 6в
 
 | Шаг | Задача | Ветка | Статус | Дата |
 |-----|--------|-------|--------|------|
@@ -17,5 +17,5 @@
 | 5а | Conflict detection в matching_rules | step-5a-conflict-detection | [x] | 2026-05-05 |
 | 5б | "Почему совпало" в UI | step-5b-match-reason | [x] | 2026-05-05 |
 | 6а | feedback-report.py | step-6a-feedback-report | [x] | 2026-05-05 |
-| 6б | export-benchmark.sh | step-6b-export-benchmark | [ ] | |
+| 6б | export-benchmark.sh | step-6b-export-benchmark | [x] | 2026-05-06 |
 | 6в | parser_overrides конфиг | step-6c-parser-overrides | [ ] | |
