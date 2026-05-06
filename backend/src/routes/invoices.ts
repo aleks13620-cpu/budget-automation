@@ -7,7 +7,7 @@ import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
-import { applyParserPriceOverrides, loadSupplierParserOverrides, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
+import { applyParserPriceOverrides, loadSupplierParserOverrides, loadSupplierPricesIncludeVat, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
 import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
@@ -92,13 +92,16 @@ function computeUnitPriceWithVat(
   amount: number | null,
   quantity: number | null,
   vatRate: number | null,
+  pricesIncludeVat: number | null,
 ): { unitPriceWithVat: number | null; source: 'raw' | 'derived_unit' } {
   if (amount != null && quantity != null && quantity > 0) {
-    const lineTotalWithVat = vatRate != null && vatRate > 0 ? amount * (1 + vatRate / 100) : amount;
+    const lineTotalWithVat = pricesIncludeVat === 0 && vatRate != null && vatRate > 0
+      ? amount * (1 + vatRate / 100)
+      : amount;
     return { unitPriceWithVat: Math.round((lineTotalWithVat / quantity) * 100) / 100, source: 'derived_unit' };
   }
   if (price == null) return { unitPriceWithVat: null, source: 'raw' };
-  if (vatRate != null && vatRate > 0) {
+  if (pricesIncludeVat === 0 && vatRate != null && vatRate > 0) {
     return { unitPriceWithVat: Math.round(price * (1 + vatRate / 100) * 100) / 100, source: 'raw' };
   }
   return { unitPriceWithVat: price, source: 'raw' };
@@ -444,18 +447,21 @@ async function processInvoiceFile(
 
   if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
     const supplierCtx = buildSupplierContext(supplierName, savedMapping);
+    const supplierPricesIncludeVat = loadSupplierPricesIncludeVat(supplierId);
     const priceOverride = await applyParserPriceOverrides(
       file.path,
       parseResult,
       parserOverrides,
       ext === '.pdf' ? 'pdf' : 'excel',
       supplierCtx,
+      supplierPricesIncludeVat,
     );
     parseResult = priceOverride.parseResult;
     priceOverrideNeedsAmountReview = priceOverride.needsAmountReview;
     priceOverrideReasonParts = priceOverride.reasonParts;
     if (priceOverride.gigachatParseQuality) lastGigaParseQuality = priceOverride.gigachatParseQuality;
     if (priceOverride.vatRate != null) parsedVatRate = priceOverride.vatRate;
+    if (priceOverride.mergedRows > 0) lastExcelResult = null;
   }
 
   const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
@@ -991,7 +997,7 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const invoice = db.prepare(`
-      SELECT i.*, s.name as supplier_name, s.vat_rate as supplier_vat_rate
+      SELECT i.*, s.name as supplier_name, s.vat_rate as supplier_vat_rate, s.prices_include_vat as supplier_prices_include_vat
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.id = ?
@@ -1006,8 +1012,9 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
     ).all(invoiceId);
     const inv = invoice as any;
     const vatRate = typeof inv.supplier_vat_rate === 'number' ? inv.supplier_vat_rate : null;
+    const pricesIncludeVat = typeof inv.supplier_prices_include_vat === 'number' ? inv.supplier_prices_include_vat : null;
     const items = (rawItems as Array<any>).map(item => {
-      const pricing = computeUnitPriceWithVat(item.price ?? null, item.amount ?? null, item.quantity ?? null, vatRate);
+      const pricing = computeUnitPriceWithVat(item.price ?? null, item.amount ?? null, item.quantity ?? null, vatRate, pricesIncludeVat);
       return {
         ...item,
         unit_price_with_vat: pricing.unitPriceWithVat,
@@ -1151,10 +1158,48 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     saveSnapshot(invoiceId, 'before_reparse', db);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
+    const source = ext === '.pdf' ? 'pdf' : 'excel';
+    let supplierName: string | null = null;
+    let supplierPricesIncludeVat: number | null = null;
+    if (invoice.supplier_id) {
+      const supplierRow = db.prepare('SELECT name, prices_include_vat FROM suppliers WHERE id = ?')
+        .get(invoice.supplier_id) as { name: string; prices_include_vat: number | null } | undefined;
+      supplierName = supplierRow?.name ?? null;
+      supplierPricesIncludeVat = supplierRow?.prices_include_vat ?? null;
+    }
+    const parserOverrides = loadSupplierParserOverrides(invoice.supplier_id, savedMapping);
+    logSupplierParserOverrides(source, invoice.supplier_id, parserOverrides);
+
     let reparseExcelResult: ExcelParseResult | null = null;
-    const parseResult = ext === '.pdf'
+    let parseResult = ext === '.pdf'
       ? await parsePdfFile(invoice.file_path, savedMapping)
       : (() => { reparseExcelResult = parseExcelInvoice(invoice.file_path, savedMapping); return excelToLegacy(reparseExcelResult); })();
+    let priceOverrideApplied = false;
+    let priceOverrideNeedsAmountReview = false;
+    let priceOverrideReasonParts: string[] = [];
+    let priceOverrideHasMetadata = false;
+    let priceOverrideVatAmount: number | null = null;
+    let priceOverrideVatRate: number | null = null;
+
+    if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
+      const supplierCtx = buildSupplierContext(supplierName, savedMapping);
+      const priceOverride = await applyParserPriceOverrides(
+        invoice.file_path,
+        parseResult,
+        parserOverrides,
+        source,
+        supplierCtx,
+        supplierPricesIncludeVat,
+      );
+      parseResult = priceOverride.parseResult;
+      priceOverrideApplied = priceOverride.applied;
+      priceOverrideNeedsAmountReview = priceOverride.needsAmountReview;
+      priceOverrideReasonParts = priceOverride.reasonParts;
+      priceOverrideHasMetadata = priceOverride.metadata !== undefined;
+      priceOverrideVatAmount = priceOverride.metadata?.vatAmount ?? null;
+      priceOverrideVatRate = priceOverride.metadata?.vat_rate ?? null;
+      if (priceOverride.mergedRows > 0) reparseExcelResult = null;
+    }
 
     // Replace items in transaction
     const insertItem = db.prepare(
@@ -1172,8 +1217,34 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       const newCategoryReason = reparseExcelResult
         ? `Проверено оператором, Excel confidence: ${reparseExcelResult.confidence.overall}%`
         : (parseResult.items.length > 0 ? `Проверено оператором: ${parseResult.items.length} позиций` : 'Колонки не распознаны после пересборки');
-      db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
-        .run(newStatus, parseResult.totalAmount, newCategory, newCategoryReason, invoiceId);
+      const finalCategoryReason = priceOverrideReasonParts.length > 0
+        ? `${newCategoryReason} | ${priceOverrideReasonParts.join('; ')}`
+        : newCategoryReason;
+      let newNeedsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+      if (priceOverrideNeedsAmountReview) newNeedsAmountReview = 1;
+      db.prepare(`
+        UPDATE invoices
+        SET status = ?,
+            total_amount = ?,
+            parsing_category = ?,
+            parsing_category_reason = ?,
+            needs_amount_review = CASE WHEN ? THEN ? ELSE needs_amount_review END,
+            vat_amount = CASE WHEN ? THEN ? ELSE vat_amount END,
+            vat_rate = CASE WHEN ? THEN ? ELSE vat_rate END
+        WHERE id = ?
+      `).run(
+        newStatus,
+        parseResult.totalAmount,
+        newCategory,
+        finalCategoryReason,
+        priceOverrideApplied ? 1 : 0,
+        newNeedsAmountReview,
+        priceOverrideHasMetadata ? 1 : 0,
+        priceOverrideVatAmount,
+        priceOverrideHasMetadata ? 1 : 0,
+        priceOverrideVatRate,
+        invoiceId,
+      );
     })();
 
     const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);

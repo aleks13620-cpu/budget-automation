@@ -127,6 +127,16 @@ export function loadSupplierParserOverrides(
   }
 }
 
+export function loadSupplierPricesIncludeVat(supplierId: number | null | undefined): number | null {
+  if (!supplierId) return null;
+
+  const row = getDatabase()
+    .prepare('SELECT prices_include_vat FROM suppliers WHERE id = ?')
+    .get(supplierId) as { prices_include_vat: number | null } | undefined;
+
+  return row?.prices_include_vat ?? null;
+}
+
 export function logSupplierParserOverrides(
   parserName: Exclude<InvoiceSource, 'gigachat_fallback'>,
   supplierId: number | null | undefined,
@@ -146,6 +156,9 @@ export interface ParserPriceOverrideResult {
   applied: boolean;
   needsAmountReview: boolean;
   reasonParts: string[];
+  mergedRows: number;
+  uncertainRows: number;
+  extraGigaRows: number;
 }
 
 function cloneParseResult(parseResult: InvoiceParseResult): InvoiceParseResult {
@@ -197,6 +210,67 @@ function unitsConflict(left: string | null, right: string | null): boolean {
 
 function hasFinancialValue(item: InvoiceRow): boolean {
   return item.price != null || item.amount != null;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function amountsMatchWithinTolerance(price: number, quantity: number, amount: number): boolean {
+  const expectedAmount = price * quantity;
+  const tolerance = Math.max(1.0, Math.abs(amount) * 0.02);
+  return Math.abs(expectedAmount - amount) <= tolerance;
+}
+
+function convertVatSemantics(
+  value: number,
+  vatIncluded: boolean | null | undefined,
+  vatRate: number | null | undefined,
+  supplierPricesIncludeVat: number | null | undefined,
+): number {
+  if (vatRate == null || vatRate <= 0) return value;
+  const factor = 1 + vatRate / 100;
+
+  if (vatIncluded === true && supplierPricesIncludeVat === 0) {
+    return roundMoney(value / factor);
+  }
+
+  if (vatIncluded === false && supplierPricesIncludeVat === 1) {
+    return roundMoney(value * factor);
+  }
+
+  return value;
+}
+
+function buildGigaFinancialOverride(
+  baseItem: InvoiceRow,
+  gigaItem: InvoiceRow,
+  metadata: InvoiceMetadata,
+  supplierPricesIncludeVat?: number | null,
+): { price: number; amount: number } | null {
+  let price = gigaItem.price;
+  let amount = gigaItem.amount;
+
+  if (price == null && amount != null && baseItem.quantity != null && baseItem.quantity > 0) {
+    price = roundMoney(amount / baseItem.quantity);
+  }
+  if (amount == null && price != null && baseItem.quantity != null && baseItem.quantity > 0) {
+    amount = roundMoney(price * baseItem.quantity);
+  }
+
+  if (price == null || amount == null) return null;
+
+  if (baseItem.quantity != null && baseItem.quantity > 0 && !amountsMatchWithinTolerance(price, baseItem.quantity, amount)) {
+    console.warn(
+      `[InvoiceRouter] price override uncertain: row=${baseItem.row_index}, price*quantity does not match amount`
+    );
+    return null;
+  }
+
+  return {
+    price: convertVatSemantics(price, metadata.vatIncluded, metadata.vat_rate, supplierPricesIncludeVat),
+    amount: convertVatSemantics(amount, metadata.vatIncluded, metadata.vat_rate, supplierPricesIncludeVat),
+  };
 }
 
 function chooseConfidentCandidate(
@@ -258,6 +332,7 @@ function findConfidentPriceMatch(
 function mergeGigaChatPrices(
   baseResult: InvoiceParseResult,
   gigaResult: GigaChatInvoiceResult,
+  supplierPricesIncludeVat?: number | null,
 ): {
   parseResult: InvoiceParseResult;
   mergedRows: number;
@@ -278,7 +353,8 @@ function mergeGigaChatPrices(
     const gigaItem = gigaResult.items[matchIndex]!;
     usedGigaIndexes.add(matchIndex);
 
-    if (!hasFinancialValue(gigaItem)) {
+    const financialOverride = buildGigaFinancialOverride(baseItem, gigaItem, gigaResult.metadata, supplierPricesIncludeVat);
+    if (!financialOverride) {
       uncertainRows += 1;
       return { ...baseItem };
     }
@@ -286,8 +362,8 @@ function mergeGigaChatPrices(
     mergedRows += 1;
     return {
       ...baseItem,
-      price: gigaItem.price != null ? gigaItem.price : baseItem.price,
-      amount: gigaItem.amount != null ? gigaItem.amount : baseItem.amount,
+      price: financialOverride.price,
+      amount: financialOverride.amount,
     };
   });
 
@@ -314,6 +390,7 @@ export async function applyParserPriceOverrides(
   parserOverrides: SupplierParserOverrides | undefined,
   source: 'pdf' | 'excel',
   supplierContext?: string,
+  supplierPricesIncludeVat?: number | null,
 ): Promise<ParserPriceOverrideResult> {
   const parseResult = cloneParseResult(baseResult);
 
@@ -323,6 +400,9 @@ export async function applyParserPriceOverrides(
       applied: false,
       needsAmountReview: false,
       reasonParts: [],
+      mergedRows: 0,
+      uncertainRows: 0,
+      extraGigaRows: 0,
     };
   }
 
@@ -334,6 +414,9 @@ export async function applyParserPriceOverrides(
       applied: true,
       needsAmountReview: true,
       reasonParts: [...reasonParts, 'price override uncertain: GigaChat not configured'],
+      mergedRows: 0,
+      uncertainRows: parseResult.items.length,
+      extraGigaRows: 0,
     };
   }
 
@@ -341,19 +424,27 @@ export async function applyParserPriceOverrides(
     const gigaResult = source === 'pdf'
       ? await parsePdfWithGigaChat(filePath, supplierContext)
       : await parseExcelWithGigaChat(filePath, supplierContext);
-    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult);
-    const totalUncertainRows = mergeResult.uncertainRows + mergeResult.extraGigaRows;
+    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult, supplierPricesIncludeVat);
+    const vatSemanticsMismatch =
+      (gigaResult.metadata.vatIncluded === true && supplierPricesIncludeVat === 0)
+      || (gigaResult.metadata.vatIncluded === false && supplierPricesIncludeVat === 1);
     const nextReasonParts = [
       ...reasonParts,
       `prices merged from GigaChat: ${mergeResult.mergedRows}/${parseResult.items.length} rows`,
     ];
 
-    if (totalUncertainRows > 0) {
-      nextReasonParts.push(`price override uncertain: ${totalUncertainRows} rows need review`);
+    if (mergeResult.uncertainRows > 0) {
+      nextReasonParts.push(`price override uncertain: ${mergeResult.uncertainRows} rows need review`);
+    }
+    if (mergeResult.extraGigaRows > 0) {
+      nextReasonParts.push(`price override uncertain: GigaChat returned ${mergeResult.extraGigaRows} unmatched extra rows`);
+    }
+    if (vatSemanticsMismatch) {
+      nextReasonParts.push(`price override uncertain: GigaChat vat_included=${gigaResult.metadata.vatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
     }
 
     console.log(
-      `[InvoiceRouter] prices_source=gigachat, merged=${mergeResult.mergedRows}/${parseResult.items.length}, uncertain=${totalUncertainRows}`
+      `[InvoiceRouter] prices_source=gigachat, merged=${mergeResult.mergedRows}/${parseResult.items.length}, uncertain=${mergeResult.uncertainRows}, extra=${mergeResult.extraGigaRows}, vat_included=${gigaResult.metadata.vatIncluded ?? 'unknown'}, prices_include_vat=${supplierPricesIncludeVat ?? 'unknown'}`
     );
 
     return {
@@ -362,8 +453,11 @@ export async function applyParserPriceOverrides(
       vatRate: gigaResult.metadata.vat_rate,
       gigachatParseQuality: gigaResult.parseQuality,
       applied: true,
-      needsAmountReview: totalUncertainRows > 0,
+      needsAmountReview: mergeResult.uncertainRows > 0 || mergeResult.extraGigaRows > 0 || vatSemanticsMismatch,
       reasonParts: nextReasonParts,
+      mergedRows: mergeResult.mergedRows,
+      uncertainRows: mergeResult.uncertainRows,
+      extraGigaRows: mergeResult.extraGigaRows,
     };
   } catch (error) {
     console.warn(`[InvoiceRouter] price override GigaChat failed: ${error instanceof Error ? error.message : error}`);
@@ -372,6 +466,9 @@ export async function applyParserPriceOverrides(
       applied: true,
       needsAmountReview: true,
       reasonParts: [...reasonParts, 'price override uncertain: GigaChat failed'],
+      mergedRows: 0,
+      uncertainRows: parseResult.items.length,
+      extraGigaRows: 0,
     };
   }
 }
@@ -403,6 +500,9 @@ export async function routeInvoiceFile(
   const parserOverrides = parserName
     ? loadSupplierParserOverrides(options.supplierId, savedMapping)
     : undefined;
+  const supplierPricesIncludeVat = parserName
+    ? loadSupplierPricesIncludeVat(options.supplierId)
+    : null;
 
   if (parserName) {
     logSupplierParserOverrides(parserName, options.supplierId, parserOverrides);
@@ -473,7 +573,14 @@ export async function routeInvoiceFile(
       }
     }
 
-    const priceOverride = await applyParserPriceOverrides(filePath, parseResult, parserOverrides, 'excel');
+    const priceOverride = await applyParserPriceOverrides(
+      filePath,
+      parseResult,
+      parserOverrides,
+      'excel',
+      undefined,
+      supplierPricesIncludeVat,
+    );
     const metadata = priceOverride.metadata ?? excelResult.metadata;
     const validation = priceOverride.applied
       ? validateInvoice(priceOverride.parseResult.items, metadata)
@@ -529,7 +636,14 @@ export async function routeInvoiceFile(
       }
     }
 
-    const priceOverride = await applyParserPriceOverrides(filePath, pdfResult, parserOverrides, 'pdf');
+    const priceOverride = await applyParserPriceOverrides(
+      filePath,
+      pdfResult,
+      parserOverrides,
+      'pdf',
+      undefined,
+      supplierPricesIncludeVat,
+    );
 
     return {
       source: 'pdf',
