@@ -48,10 +48,15 @@ export interface RouterParseResult {
   validation?: ValidationResult;
   /** Если парсинг шёл через GigaChat — эвристики полноты ответа */
   gigachatParseQuality?: GigaChatParseQuality;
+  /** Price override could not confidently merge every row. */
+  amountReviewRequired?: boolean;
+  /** Extra parsing_category_reason fragments from parser overrides. */
+  parsingReasonAdditions?: string[];
 }
 
 const EXCEL_EXTS = new Set(['.xlsx', '.xls']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.bmp']);
+type GigaChatInvoiceResult = Awaited<ReturnType<typeof parsePdfWithGigaChat>>;
 
 // ---------------------------------------------------------------------------
 // Вспомогательные функции
@@ -59,7 +64,7 @@ const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.bmp']);
 
 /** Конвертирует GigaChatInvoiceResult в InvoiceParseResult */
 function gigachatToLegacy(
-  gigaResult: Awaited<ReturnType<typeof parsePdfWithGigaChat>>
+  gigaResult: GigaChatInvoiceResult
 ): InvoiceParseResult {
   return {
     items: gigaResult.items,
@@ -133,6 +138,244 @@ export function logSupplierParserOverrides(
   );
 }
 
+export interface ParserPriceOverrideResult {
+  parseResult: InvoiceParseResult;
+  metadata?: InvoiceMetadata;
+  vatRate?: number | null;
+  gigachatParseQuality?: GigaChatParseQuality;
+  applied: boolean;
+  needsAmountReview: boolean;
+  reasonParts: string[];
+}
+
+function cloneParseResult(parseResult: InvoiceParseResult): InvoiceParseResult {
+  return {
+    ...parseResult,
+    items: parseResult.items.map(item => ({ ...item })),
+  };
+}
+
+function normalizeArticle(value: string | null): string {
+  return (value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeName(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\u0451/g, '\u0435')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeUnit(value: string | null): string {
+  return (value ?? '').normalize('NFKC').trim().replace(/[.\s]+/g, '').toLowerCase();
+}
+
+function quantitiesMatch(left: number | null, right: number | null): boolean {
+  if (left == null || right == null) return false;
+  const tolerance = Math.max(0.001, Math.abs(left) * 0.001);
+  return Math.abs(left - right) <= tolerance;
+}
+
+function quantitiesConflict(left: number | null, right: number | null): boolean {
+  return left != null && right != null && !quantitiesMatch(left, right);
+}
+
+function unitsMatch(left: string | null, right: string | null): boolean {
+  const normalizedLeft = normalizeUnit(left);
+  const normalizedRight = normalizeUnit(right);
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
+function unitsConflict(left: string | null, right: string | null): boolean {
+  const normalizedLeft = normalizeUnit(left);
+  const normalizedRight = normalizeUnit(right);
+  return normalizedLeft.length > 0 && normalizedRight.length > 0 && normalizedLeft !== normalizedRight;
+}
+
+function hasFinancialValue(item: InvoiceRow): boolean {
+  return item.price != null || item.amount != null;
+}
+
+function chooseConfidentCandidate(
+  baseItem: InvoiceRow,
+  candidateIndexes: number[],
+  gigaItems: InvoiceRow[],
+): number | null {
+  const compatible = candidateIndexes.filter(index => {
+    const candidate = gigaItems[index];
+    if (!candidate) return false;
+    return !quantitiesConflict(baseItem.quantity, candidate.quantity)
+      && !unitsConflict(baseItem.unit, candidate.unit);
+  });
+
+  if (compatible.length === 1) return compatible[0] ?? null;
+  if (compatible.length === 0) return null;
+
+  const scored = compatible.map(index => {
+    const candidate = gigaItems[index]!;
+    const score = (quantitiesMatch(baseItem.quantity, candidate.quantity) ? 2 : 0)
+      + (unitsMatch(baseItem.unit, candidate.unit) ? 1 : 0);
+    return { index, score };
+  });
+  const bestScore = Math.max(...scored.map(candidate => candidate.score));
+  const best = scored.filter(candidate => candidate.score === bestScore);
+
+  if (bestScore > 0 && best.length === 1) return best[0]!.index;
+  return null;
+}
+
+function findConfidentPriceMatch(
+  baseItem: InvoiceRow,
+  gigaItems: InvoiceRow[],
+  usedGigaIndexes: Set<number>,
+): number | null {
+  const article = normalizeArticle(baseItem.article);
+  if (article) {
+    const articleCandidates = gigaItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item, index }) => !usedGigaIndexes.has(index) && normalizeArticle(item.article) === article)
+      .map(({ index }) => index);
+
+    if (articleCandidates.length > 0) {
+      return chooseConfidentCandidate(baseItem, articleCandidates, gigaItems);
+    }
+  }
+
+  const name = normalizeName(baseItem.name);
+  if (!name) return null;
+
+  const nameCandidates = gigaItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item, index }) => !usedGigaIndexes.has(index) && normalizeName(item.name) === name)
+    .map(({ index }) => index);
+
+  return chooseConfidentCandidate(baseItem, nameCandidates, gigaItems);
+}
+
+function mergeGigaChatPrices(
+  baseResult: InvoiceParseResult,
+  gigaResult: GigaChatInvoiceResult,
+): {
+  parseResult: InvoiceParseResult;
+  mergedRows: number;
+  uncertainRows: number;
+  extraGigaRows: number;
+} {
+  const usedGigaIndexes = new Set<number>();
+  let mergedRows = 0;
+  let uncertainRows = 0;
+
+  const items = baseResult.items.map(baseItem => {
+    const matchIndex = findConfidentPriceMatch(baseItem, gigaResult.items, usedGigaIndexes);
+    if (matchIndex == null) {
+      uncertainRows += 1;
+      return { ...baseItem };
+    }
+
+    const gigaItem = gigaResult.items[matchIndex]!;
+    usedGigaIndexes.add(matchIndex);
+
+    if (!hasFinancialValue(gigaItem)) {
+      uncertainRows += 1;
+      return { ...baseItem };
+    }
+
+    mergedRows += 1;
+    return {
+      ...baseItem,
+      price: gigaItem.price != null ? gigaItem.price : baseItem.price,
+      amount: gigaItem.amount != null ? gigaItem.amount : baseItem.amount,
+    };
+  });
+
+  const extraGigaRows = gigaResult.items.filter((item, index) =>
+    !usedGigaIndexes.has(index) && hasFinancialValue(item)
+  ).length;
+
+  return {
+    parseResult: {
+      ...baseResult,
+      items,
+      totalAmount: gigaResult.metadata.totalWithVat ?? baseResult.totalAmount,
+      vatAmount: gigaResult.metadata.vatAmount ?? baseResult.vatAmount,
+    },
+    mergedRows,
+    uncertainRows,
+    extraGigaRows,
+  };
+}
+
+export async function applyParserPriceOverrides(
+  filePath: string,
+  baseResult: InvoiceParseResult,
+  parserOverrides: SupplierParserOverrides | undefined,
+  source: 'pdf' | 'excel',
+  supplierContext?: string,
+): Promise<ParserPriceOverrideResult> {
+  const parseResult = cloneParseResult(baseResult);
+
+  if (parserOverrides?.prices_source !== 'gigachat' || parseResult.items.length === 0) {
+    return {
+      parseResult,
+      applied: false,
+      needsAmountReview: false,
+      reasonParts: [],
+    };
+  }
+
+  const reasonParts = ['prices_source=gigachat'];
+
+  if (!isGigaChatConfigured()) {
+    return {
+      parseResult,
+      applied: true,
+      needsAmountReview: true,
+      reasonParts: [...reasonParts, 'price override uncertain: GigaChat not configured'],
+    };
+  }
+
+  try {
+    const gigaResult = source === 'pdf'
+      ? await parsePdfWithGigaChat(filePath, supplierContext)
+      : await parseExcelWithGigaChat(filePath, supplierContext);
+    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult);
+    const totalUncertainRows = mergeResult.uncertainRows + mergeResult.extraGigaRows;
+    const nextReasonParts = [
+      ...reasonParts,
+      `prices merged from GigaChat: ${mergeResult.mergedRows}/${parseResult.items.length} rows`,
+    ];
+
+    if (totalUncertainRows > 0) {
+      nextReasonParts.push(`price override uncertain: ${totalUncertainRows} rows need review`);
+    }
+
+    console.log(
+      `[InvoiceRouter] prices_source=gigachat, merged=${mergeResult.mergedRows}/${parseResult.items.length}, uncertain=${totalUncertainRows}`
+    );
+
+    return {
+      parseResult: mergeResult.parseResult,
+      metadata: gigaResult.metadata,
+      vatRate: gigaResult.metadata.vat_rate,
+      gigachatParseQuality: gigaResult.parseQuality,
+      applied: true,
+      needsAmountReview: totalUncertainRows > 0,
+      reasonParts: nextReasonParts,
+    };
+  } catch (error) {
+    console.warn(`[InvoiceRouter] price override GigaChat failed: ${error instanceof Error ? error.message : error}`);
+    return {
+      parseResult,
+      applied: true,
+      needsAmountReview: true,
+      reasonParts: [...reasonParts, 'price override uncertain: GigaChat failed'],
+    };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Публичное API
 // ---------------------------------------------------------------------------
@@ -157,8 +400,11 @@ export async function routeInvoiceFile(
         ? 'pdf'
         : null;
 
+  const parserOverrides = parserName
+    ? loadSupplierParserOverrides(options.supplierId, savedMapping)
+    : undefined;
+
   if (parserName) {
-    const parserOverrides = loadSupplierParserOverrides(options.supplierId, savedMapping);
     logSupplierParserOverrides(parserName, options.supplierId, parserOverrides);
   }
 
@@ -227,13 +473,22 @@ export async function routeInvoiceFile(
       }
     }
 
+    const priceOverride = await applyParserPriceOverrides(filePath, parseResult, parserOverrides, 'excel');
+    const metadata = priceOverride.metadata ?? excelResult.metadata;
+    const validation = priceOverride.applied
+      ? validateInvoice(priceOverride.parseResult.items, metadata)
+      : excelResult.validation;
+
     return {
       source: 'excel',
       category: excelResult.category,
-      parseResult,
-      metadata: excelResult.metadata,
+      parseResult: priceOverride.parseResult,
+      metadata,
       confidence: excelResult.confidence.overall,
-      validation: excelResult.validation,
+      validation,
+      gigachatParseQuality: priceOverride.gigachatParseQuality,
+      amountReviewRequired: priceOverride.needsAmountReview,
+      parsingReasonAdditions: priceOverride.reasonParts,
     };
   }
 
@@ -274,11 +529,17 @@ export async function routeInvoiceFile(
       }
     }
 
+    const priceOverride = await applyParserPriceOverrides(filePath, pdfResult, parserOverrides, 'pdf');
+
     return {
       source: 'pdf',
-      category: hasItems ? 'A' : 'C',
-      parseResult: pdfResult,
+      category: priceOverride.parseResult.items.length > 0 ? 'A' : 'C',
+      parseResult: priceOverride.parseResult,
+      metadata: priceOverride.metadata,
       confidence: hasItems ? 80 : 20,
+      gigachatParseQuality: priceOverride.gigachatParseQuality,
+      amountReviewRequired: priceOverride.needsAmountReview,
+      parsingReasonAdditions: priceOverride.reasonParts,
     };
   }
 

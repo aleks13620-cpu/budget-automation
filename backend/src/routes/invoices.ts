@@ -7,7 +7,7 @@ import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
-import { loadSupplierParserOverrides, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
+import { applyParserPriceOverrides, loadSupplierParserOverrides, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
 import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
@@ -375,9 +375,10 @@ async function processInvoiceFile(
   }
 
   let savedMapping: SavedMapping | undefined;
+  let parserOverrides: SupplierParserOverrides | undefined;
   if (supplierId) {
     savedMapping = loadSavedMapping(supplierId);
-    const parserOverrides = loadSupplierParserOverrides(supplierId, savedMapping);
+    parserOverrides = loadSupplierParserOverrides(supplierId, savedMapping);
     logSupplierParserOverrides(ext === '.pdf' ? 'pdf' : 'excel', supplierId, parserOverrides);
   }
 
@@ -432,18 +433,37 @@ async function processInvoiceFile(
     }
   }
 
-  applySupplierHeuristics(supplierName, parseResult.items);
-
-  const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
-
-  const needsGigaChat = parseResult.items.length === 0 ||
-    financialCoreMissing ||
-    (lastExcelResult !== null && lastExcelResult.category === 'C');
-
   let parsedVatRate: number = 22;
   let lastGigaParseQuality: GigaChatParseQuality | undefined;
   let gigachatFallbackSucceeded = false;
   let geminiOcrSucceeded = false;
+  let priceOverrideNeedsAmountReview = false;
+  let priceOverrideReasonParts: string[] = [];
+
+  applySupplierHeuristics(supplierName, parseResult.items);
+
+  if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
+    const supplierCtx = buildSupplierContext(supplierName, savedMapping);
+    const priceOverride = await applyParserPriceOverrides(
+      file.path,
+      parseResult,
+      parserOverrides,
+      ext === '.pdf' ? 'pdf' : 'excel',
+      supplierCtx,
+    );
+    parseResult = priceOverride.parseResult;
+    priceOverrideNeedsAmountReview = priceOverride.needsAmountReview;
+    priceOverrideReasonParts = priceOverride.reasonParts;
+    if (priceOverride.gigachatParseQuality) lastGigaParseQuality = priceOverride.gigachatParseQuality;
+    if (priceOverride.vatRate != null) parsedVatRate = priceOverride.vatRate;
+  }
+
+  const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
+  const preserveBaseRowsForPriceOverride = parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0;
+
+  const needsGigaChat = parseResult.items.length === 0 ||
+    (!preserveBaseRowsForPriceOverride && financialCoreMissing) ||
+    (lastExcelResult !== null && lastExcelResult.category === 'C');
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
@@ -563,6 +583,10 @@ async function processInvoiceFile(
     parsingCategoryReason = 'Понижено до B: отсутствуют валидные quantity/price/amount';
   }
 
+  if (priceOverrideReasonParts.length > 0) {
+    parsingCategoryReason += ` | ${priceOverrideReasonParts.join('; ')}`;
+  }
+
   const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
   const fileName = fixFilename(file.originalname);
 
@@ -571,6 +595,7 @@ async function processInvoiceFile(
   // Insert invoice and items in a transaction
   let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
   if (lastGigaParseQuality?.suggestElevatedReview) needsAmountReview = 1;
+  if (priceOverrideNeedsAmountReview) needsAmountReview = 1;
 
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
