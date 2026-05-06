@@ -64,12 +64,13 @@ type GigaChatInvoiceResult = Awaited<ReturnType<typeof parsePdfWithGigaChat>>;
 
 /** Конвертирует GigaChatInvoiceResult в InvoiceParseResult */
 function gigachatToLegacy(
-  gigaResult: GigaChatInvoiceResult
+  gigaResult: GigaChatInvoiceResult,
+  items: InvoiceRow[] = gigaResult.items,
 ): InvoiceParseResult {
   return {
-    items: gigaResult.items,
+    items,
     errors: [],
-    totalRows: gigaResult.items.length,
+    totalRows: items.length,
     skippedRows: 0,
     invoiceNumber: gigaResult.metadata.documentNumber,
     invoiceDate: gigaResult.metadata.documentDate,
@@ -127,14 +128,26 @@ export function loadSupplierParserOverrides(
   }
 }
 
-export function loadSupplierPricesIncludeVat(supplierId: number | null | undefined): number | null {
-  if (!supplierId) return null;
+export interface SupplierVatSettings {
+  vatRate: number | null;
+  pricesIncludeVat: number | null;
+}
+
+export function loadSupplierVatSettings(supplierId: number | null | undefined): SupplierVatSettings {
+  if (!supplierId) return { vatRate: null, pricesIncludeVat: null };
 
   const row = getDatabase()
-    .prepare('SELECT prices_include_vat FROM suppliers WHERE id = ?')
-    .get(supplierId) as { prices_include_vat: number | null } | undefined;
+    .prepare('SELECT vat_rate, prices_include_vat FROM suppliers WHERE id = ?')
+    .get(supplierId) as { vat_rate: number | null; prices_include_vat: number | null } | undefined;
 
-  return row?.prices_include_vat ?? null;
+  return {
+    vatRate: row?.vat_rate ?? null,
+    pricesIncludeVat: row?.prices_include_vat ?? null,
+  };
+}
+
+export function loadSupplierPricesIncludeVat(supplierId: number | null | undefined): number | null {
+  return loadSupplierVatSettings(supplierId).pricesIncludeVat;
 }
 
 export function logSupplierParserOverrides(
@@ -242,11 +255,69 @@ function convertVatSemantics(
   return value;
 }
 
+function hasVatSemanticsMismatch(
+  vatIncluded: boolean | null | undefined,
+  supplierPricesIncludeVat: number | null | undefined,
+): boolean {
+  return (vatIncluded === true && supplierPricesIncludeVat === 0)
+    || (vatIncluded === false && supplierPricesIncludeVat === 1);
+}
+
+export interface GigaChatVatNormalizationResult {
+  items: InvoiceRow[];
+  needsAmountReview: boolean;
+  reasonParts: string[];
+  vatRate: number | null;
+}
+
+export function normalizeGigaChatRowsForSupplierVat(
+  items: InvoiceRow[],
+  metadata: InvoiceMetadata,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): GigaChatVatNormalizationResult {
+  const vatRate = metadata.vat_rate ?? supplierVatRate ?? null;
+  const vatSemanticsMismatch = hasVatSemanticsMismatch(metadata.vatIncluded, supplierPricesIncludeVat);
+  const reasonParts: string[] = [];
+
+  if (vatSemanticsMismatch) {
+    reasonParts.push(`price override uncertain: GigaChat vat_included=${metadata.vatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+  }
+
+  if (vatSemanticsMismatch && (vatRate == null || vatRate <= 0)) {
+    reasonParts.push('price override uncertain: VAT semantics mismatch has no usable vat_rate');
+    return {
+      items: items.map(item => ({ ...item })),
+      needsAmountReview: true,
+      reasonParts,
+      vatRate,
+    };
+  }
+
+  const normalizedItems = items.map(item => ({
+    ...item,
+    price: item.price == null
+      ? null
+      : convertVatSemantics(item.price, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+    amount: item.amount == null
+      ? null
+      : convertVatSemantics(item.amount, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+  }));
+
+  return {
+    items: normalizedItems,
+    needsAmountReview: vatSemanticsMismatch,
+    reasonParts,
+    vatRate,
+  };
+}
+
 function buildGigaFinancialOverride(
   baseItem: InvoiceRow,
   gigaItem: InvoiceRow,
   metadata: InvoiceMetadata,
   supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
 ): { price: number; amount: number } | null {
   let price = gigaItem.price;
   let amount = gigaItem.amount;
@@ -267,9 +338,10 @@ function buildGigaFinancialOverride(
     return null;
   }
 
+  const vatRate = metadata.vat_rate ?? supplierVatRate ?? null;
   return {
-    price: convertVatSemantics(price, metadata.vatIncluded, metadata.vat_rate, supplierPricesIncludeVat),
-    amount: convertVatSemantics(amount, metadata.vatIncluded, metadata.vat_rate, supplierPricesIncludeVat),
+    price: convertVatSemantics(price, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+    amount: convertVatSemantics(amount, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
   };
 }
 
@@ -333,6 +405,7 @@ function mergeGigaChatPrices(
   baseResult: InvoiceParseResult,
   gigaResult: GigaChatInvoiceResult,
   supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
 ): {
   parseResult: InvoiceParseResult;
   mergedRows: number;
@@ -353,7 +426,7 @@ function mergeGigaChatPrices(
     const gigaItem = gigaResult.items[matchIndex]!;
     usedGigaIndexes.add(matchIndex);
 
-    const financialOverride = buildGigaFinancialOverride(baseItem, gigaItem, gigaResult.metadata, supplierPricesIncludeVat);
+    const financialOverride = buildGigaFinancialOverride(baseItem, gigaItem, gigaResult.metadata, supplierPricesIncludeVat, supplierVatRate);
     if (!financialOverride) {
       uncertainRows += 1;
       return { ...baseItem };
@@ -391,6 +464,7 @@ export async function applyParserPriceOverrides(
   source: 'pdf' | 'excel',
   supplierContext?: string,
   supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
 ): Promise<ParserPriceOverrideResult> {
   const parseResult = cloneParseResult(baseResult);
 
@@ -424,10 +498,9 @@ export async function applyParserPriceOverrides(
     const gigaResult = source === 'pdf'
       ? await parsePdfWithGigaChat(filePath, supplierContext)
       : await parseExcelWithGigaChat(filePath, supplierContext);
-    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult, supplierPricesIncludeVat);
-    const vatSemanticsMismatch =
-      (gigaResult.metadata.vatIncluded === true && supplierPricesIncludeVat === 0)
-      || (gigaResult.metadata.vatIncluded === false && supplierPricesIncludeVat === 1);
+    const effectiveVatRate = gigaResult.metadata.vat_rate ?? supplierVatRate ?? null;
+    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult, supplierPricesIncludeVat, effectiveVatRate);
+    const vatSemanticsMismatch = hasVatSemanticsMismatch(gigaResult.metadata.vatIncluded, supplierPricesIncludeVat);
     const nextReasonParts = [
       ...reasonParts,
       `prices merged from GigaChat: ${mergeResult.mergedRows}/${parseResult.items.length} rows`,
@@ -441,6 +514,9 @@ export async function applyParserPriceOverrides(
     }
     if (vatSemanticsMismatch) {
       nextReasonParts.push(`price override uncertain: GigaChat vat_included=${gigaResult.metadata.vatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+      if (effectiveVatRate == null || effectiveVatRate <= 0) {
+        nextReasonParts.push('price override uncertain: VAT semantics mismatch has no usable vat_rate');
+      }
     }
 
     console.log(
@@ -450,7 +526,7 @@ export async function applyParserPriceOverrides(
     return {
       parseResult: mergeResult.parseResult,
       metadata: gigaResult.metadata,
-      vatRate: gigaResult.metadata.vat_rate,
+      vatRate: effectiveVatRate,
       gigachatParseQuality: gigaResult.parseQuality,
       applied: true,
       needsAmountReview: mergeResult.uncertainRows > 0 || mergeResult.extraGigaRows > 0 || vatSemanticsMismatch,
@@ -500,9 +576,11 @@ export async function routeInvoiceFile(
   const parserOverrides = parserName
     ? loadSupplierParserOverrides(options.supplierId, savedMapping)
     : undefined;
-  const supplierPricesIncludeVat = parserName
-    ? loadSupplierPricesIncludeVat(options.supplierId)
-    : null;
+  const supplierVatSettings = parserName
+    ? loadSupplierVatSettings(options.supplierId)
+    : { vatRate: null, pricesIncludeVat: null };
+  const supplierPricesIncludeVat = supplierVatSettings.pricesIncludeVat;
+  const supplierVatRate = supplierVatSettings.vatRate;
 
   if (parserName) {
     logSupplierParserOverrides(parserName, options.supplierId, parserOverrides);
@@ -514,7 +592,13 @@ export async function routeInvoiceFile(
       throw new Error(`Изображения не поддерживаются: GigaChat не настроен (нет GIGACHAT_AUTH_KEY)`);
     }
     const gigaResult = await parsePdfWithGigaChat(filePath);
-    const parseResult = gigachatToLegacy(gigaResult);
+    const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+      gigaResult.items,
+      gigaResult.metadata,
+      supplierPricesIncludeVat,
+      supplierVatRate,
+    );
+    const parseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
     const validation = validateInvoice(parseResult.items, gigaResult.metadata);
     return {
       source: 'image',
@@ -524,6 +608,8 @@ export async function routeInvoiceFile(
       confidence: 90,
       validation,
       gigachatParseQuality: gigaResult.parseQuality,
+      amountReviewRequired: vatNormalization.needsAmountReview,
+      parsingReasonAdditions: vatNormalization.reasonParts,
     };
   }
 
@@ -538,7 +624,13 @@ export async function routeInvoiceFile(
       console.log(`[InvoiceRouter] Excel category=${excelResult.category}, items=${excelResult.items.length} — GigaChat fallback`);
       try {
         const gigaResult = await parseExcelWithGigaChat(filePath);
-        const gigaParseResult = gigachatToLegacy(gigaResult);
+        const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+          gigaResult.items,
+          gigaResult.metadata,
+          supplierPricesIncludeVat,
+          supplierVatRate,
+        );
+        const gigaParseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
         if (gigaParseResult.items.length === 0) {
           console.log(`[InvoiceRouter] GigaChat also returned 0 items — category C`);
           return {
@@ -559,6 +651,8 @@ export async function routeInvoiceFile(
           confidence: 85,
           validation,
           gigachatParseQuality: gigaResult.parseQuality,
+          amountReviewRequired: vatNormalization.needsAmountReview,
+          parsingReasonAdditions: vatNormalization.reasonParts,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
@@ -580,6 +674,7 @@ export async function routeInvoiceFile(
       'excel',
       undefined,
       supplierPricesIncludeVat,
+      supplierVatRate,
     );
     const metadata = priceOverride.metadata ?? excelResult.metadata;
     const validation = priceOverride.applied
@@ -609,7 +704,13 @@ export async function routeInvoiceFile(
       console.log(`[InvoiceRouter] PDF items=0 — GigaChat fallback`);
       try {
         const gigaResult = await parsePdfWithGigaChat(filePath);
-        const gigaParseResult = gigachatToLegacy(gigaResult);
+        const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+          gigaResult.items,
+          gigaResult.metadata,
+          supplierPricesIncludeVat,
+          supplierVatRate,
+        );
+        const gigaParseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
         if (gigaParseResult.items.length === 0) {
           console.log(`[InvoiceRouter] GigaChat PDF also returned 0 items — category C`);
           return {
@@ -630,6 +731,8 @@ export async function routeInvoiceFile(
           confidence: 85,
           validation,
           gigachatParseQuality: gigaResult.parseQuality,
+          amountReviewRequired: vatNormalization.needsAmountReview,
+          parsingReasonAdditions: vatNormalization.reasonParts,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
@@ -643,6 +746,7 @@ export async function routeInvoiceFile(
       'pdf',
       undefined,
       supplierPricesIncludeVat,
+      supplierVatRate,
     );
 
     return {

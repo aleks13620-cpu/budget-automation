@@ -340,6 +340,11 @@ export function sanitizeJSON(json: string): string {
 // Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга
 const VAT_RATES = new Set([0, 5, 7, 10, 18, 20, 22]);
 
+function normalizeVatRate(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return VAT_RATES.has(value) ? value : null;
+}
+
 function isValidArticle(s: string): boolean {
   if (s.length > 30) return false;
   if (/[а-яёА-ЯЁ]{11,}/.test(s)) return false;
@@ -405,7 +410,7 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
     buyerINN: data.buyer?.inn || null,
     totalWithVat: typeof data.total_with_vat === 'number' ? data.total_with_vat : null,
     vatAmount: typeof data.vat_amount === 'number' ? data.vat_amount : null,
-    vat_rate: (typeof data.vat_rate === 'number' && data.vat_rate > 0) ? data.vat_rate : 22,
+    vat_rate: normalizeVatRate(data.vat_rate),
     vatIncluded: typeof data.vat_included === 'boolean' ? data.vat_included : null,
   };
 }
