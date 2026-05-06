@@ -1,6 +1,6 @@
 # Статус стабилизации v2
 
-## Текущая фаза: Шаг 6г
+## Текущая фаза: Гейт перед Шагом 7
 
 | Шаг | Задача | Ветка | Статус | Дата |
 |-----|--------|-------|--------|------|
@@ -19,4 +19,4 @@
 | 6а | feedback-report.py | step-6a-feedback-report | [x] | 2026-05-05 |
 | 6б | export-benchmark.sh | step-6b-export-benchmark | [x] | 2026-05-06 |
 | 6в | parser_overrides конфиг | step-6c-parser-overrides | [x] | 2026-05-06 |
-| 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [ ] | |
+| 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [x] | 2026-05-06 |
