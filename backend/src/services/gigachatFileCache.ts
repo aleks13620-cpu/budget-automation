@@ -2,12 +2,24 @@ import crypto from 'crypto';
 import fs from 'fs';
 import { getDatabase } from '../database';
 
-export type GigaChatFileCachePurpose = 'invoice_pdf' | 'invoice_excel' | 'spec_pdf';
+type GigaChatInvoiceCacheBasePurpose = 'invoice_pdf' | 'invoice_excel';
+export type GigaChatFileCachePurpose = GigaChatInvoiceCacheBasePurpose | `${GigaChatInvoiceCacheBasePurpose}:ctx:${string}` | 'spec_pdf';
 
 export function sha256File(filePath: string): string {
   const h = crypto.createHash('sha256');
   h.update(fs.readFileSync(filePath));
   return h.digest('hex');
+}
+
+export function buildContextAwareGigaChatPurpose(
+  purpose: GigaChatInvoiceCacheBasePurpose,
+  supplierContext?: string,
+): GigaChatFileCachePurpose {
+  const normalizedContext = supplierContext?.trim();
+  if (!normalizedContext) return purpose;
+
+  const contextHash = crypto.createHash('sha256').update(normalizedContext).digest('hex');
+  return `${purpose}:ctx:${contextHash}`;
 }
 
 export function getGigaChatFileCache(fileHash: string, purpose: GigaChatFileCachePurpose): string | null {

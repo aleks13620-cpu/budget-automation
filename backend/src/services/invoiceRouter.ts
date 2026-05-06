@@ -48,10 +48,15 @@ export interface RouterParseResult {
   validation?: ValidationResult;
   /** Если парсинг шёл через GigaChat — эвристики полноты ответа */
   gigachatParseQuality?: GigaChatParseQuality;
+  /** Price override could not confidently merge every row. */
+  amountReviewRequired?: boolean;
+  /** Extra parsing_category_reason fragments from parser overrides. */
+  parsingReasonAdditions?: string[];
 }
 
 const EXCEL_EXTS = new Set(['.xlsx', '.xls']);
 const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.bmp']);
+type GigaChatInvoiceResult = Awaited<ReturnType<typeof parsePdfWithGigaChat>>;
 
 // ---------------------------------------------------------------------------
 // Вспомогательные функции
@@ -59,12 +64,13 @@ const IMAGE_EXTS = new Set(['.jpg', '.jpeg', '.png', '.tiff', '.bmp']);
 
 /** Конвертирует GigaChatInvoiceResult в InvoiceParseResult */
 function gigachatToLegacy(
-  gigaResult: Awaited<ReturnType<typeof parsePdfWithGigaChat>>
+  gigaResult: GigaChatInvoiceResult,
+  items: InvoiceRow[] = gigaResult.items,
 ): InvoiceParseResult {
   return {
-    items: gigaResult.items,
+    items,
     errors: [],
-    totalRows: gigaResult.items.length,
+    totalRows: items.length,
     skippedRows: 0,
     invoiceNumber: gigaResult.metadata.documentNumber,
     invoiceDate: gigaResult.metadata.documentDate,
@@ -122,6 +128,28 @@ export function loadSupplierParserOverrides(
   }
 }
 
+export interface SupplierVatSettings {
+  vatRate: number | null;
+  pricesIncludeVat: number | null;
+}
+
+export function loadSupplierVatSettings(supplierId: number | null | undefined): SupplierVatSettings {
+  if (!supplierId) return { vatRate: null, pricesIncludeVat: null };
+
+  const row = getDatabase()
+    .prepare('SELECT vat_rate, prices_include_vat FROM suppliers WHERE id = ?')
+    .get(supplierId) as { vat_rate: number | null; prices_include_vat: number | null } | undefined;
+
+  return {
+    vatRate: row?.vat_rate ?? null,
+    pricesIncludeVat: row?.prices_include_vat ?? null,
+  };
+}
+
+export function loadSupplierPricesIncludeVat(supplierId: number | null | undefined): number | null {
+  return loadSupplierVatSettings(supplierId).pricesIncludeVat;
+}
+
 export function logSupplierParserOverrides(
   parserName: Exclude<InvoiceSource, 'gigachat_fallback'>,
   supplierId: number | null | undefined,
@@ -131,6 +159,394 @@ export function logSupplierParserOverrides(
   console.log(
     `[InvoiceRouter] supplier_id=${supplierId ?? 'unknown'}, parser=${parserName}, parser_overrides=${JSON.stringify(parserOverrides)}`
   );
+}
+
+export interface ParserPriceOverrideResult {
+  parseResult: InvoiceParseResult;
+  metadata?: InvoiceMetadata;
+  vatRate?: number | null;
+  gigachatParseQuality?: GigaChatParseQuality;
+  applied: boolean;
+  needsAmountReview: boolean;
+  reasonParts: string[];
+  mergedRows: number;
+  uncertainRows: number;
+  extraGigaRows: number;
+}
+
+function cloneParseResult(parseResult: InvoiceParseResult): InvoiceParseResult {
+  return {
+    ...parseResult,
+    items: parseResult.items.map(item => ({ ...item })),
+  };
+}
+
+function normalizeArticle(value: string | null): string {
+  return (value ?? '').normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function normalizeName(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\u0451/g, '\u0435')
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim()
+    .replace(/\s+/g, ' ');
+}
+
+function normalizeUnit(value: string | null): string {
+  return (value ?? '').normalize('NFKC').trim().replace(/[.\s]+/g, '').toLowerCase();
+}
+
+function quantitiesMatch(left: number | null, right: number | null): boolean {
+  if (left == null || right == null) return false;
+  const tolerance = Math.max(0.001, Math.abs(left) * 0.001);
+  return Math.abs(left - right) <= tolerance;
+}
+
+function quantitiesConflict(left: number | null, right: number | null): boolean {
+  return left != null && right != null && !quantitiesMatch(left, right);
+}
+
+function unitsMatch(left: string | null, right: string | null): boolean {
+  const normalizedLeft = normalizeUnit(left);
+  const normalizedRight = normalizeUnit(right);
+  return normalizedLeft.length > 0 && normalizedLeft === normalizedRight;
+}
+
+function unitsConflict(left: string | null, right: string | null): boolean {
+  const normalizedLeft = normalizeUnit(left);
+  const normalizedRight = normalizeUnit(right);
+  return normalizedLeft.length > 0 && normalizedRight.length > 0 && normalizedLeft !== normalizedRight;
+}
+
+function hasFinancialValue(item: InvoiceRow): boolean {
+  return item.price != null || item.amount != null;
+}
+
+function roundMoney(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function amountsMatchWithinTolerance(price: number, quantity: number, amount: number): boolean {
+  const expectedAmount = price * quantity;
+  const tolerance = Math.max(1.0, Math.abs(amount) * 0.02);
+  return Math.abs(expectedAmount - amount) <= tolerance;
+}
+
+function convertVatSemantics(
+  value: number,
+  vatIncluded: boolean | null | undefined,
+  vatRate: number | null | undefined,
+  supplierPricesIncludeVat: number | null | undefined,
+): number {
+  if (vatRate == null || vatRate <= 0) return value;
+  const factor = 1 + vatRate / 100;
+
+  if (vatIncluded === true && supplierPricesIncludeVat === 0) {
+    return roundMoney(value / factor);
+  }
+
+  if (vatIncluded === false && supplierPricesIncludeVat === 1) {
+    return roundMoney(value * factor);
+  }
+
+  return value;
+}
+
+function hasVatSemanticsMismatch(
+  vatIncluded: boolean | null | undefined,
+  supplierPricesIncludeVat: number | null | undefined,
+): boolean {
+  return (vatIncluded === true && supplierPricesIncludeVat === 0)
+    || (vatIncluded === false && supplierPricesIncludeVat === 1);
+}
+
+export interface GigaChatVatNormalizationResult {
+  items: InvoiceRow[];
+  needsAmountReview: boolean;
+  reasonParts: string[];
+  vatRate: number | null;
+}
+
+export function normalizeGigaChatRowsForSupplierVat(
+  items: InvoiceRow[],
+  metadata: InvoiceMetadata,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): GigaChatVatNormalizationResult {
+  const vatRate = metadata.vat_rate ?? supplierVatRate ?? null;
+  const vatSemanticsMismatch = hasVatSemanticsMismatch(metadata.vatIncluded, supplierPricesIncludeVat);
+  const reasonParts: string[] = [];
+
+  if (vatSemanticsMismatch) {
+    reasonParts.push(`price override uncertain: GigaChat vat_included=${metadata.vatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+  }
+
+  if (vatSemanticsMismatch && (vatRate == null || vatRate <= 0)) {
+    reasonParts.push('price override uncertain: VAT semantics mismatch has no usable vat_rate');
+    return {
+      items: items.map(item => ({ ...item })),
+      needsAmountReview: true,
+      reasonParts,
+      vatRate,
+    };
+  }
+
+  const normalizedItems = items.map(item => ({
+    ...item,
+    price: item.price == null
+      ? null
+      : convertVatSemantics(item.price, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+    amount: item.amount == null
+      ? null
+      : convertVatSemantics(item.amount, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+  }));
+
+  return {
+    items: normalizedItems,
+    needsAmountReview: vatSemanticsMismatch,
+    reasonParts,
+    vatRate,
+  };
+}
+
+function buildGigaFinancialOverride(
+  baseItem: InvoiceRow,
+  gigaItem: InvoiceRow,
+  metadata: InvoiceMetadata,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): { price: number; amount: number } | null {
+  let price = gigaItem.price;
+  let amount = gigaItem.amount;
+
+  if (price == null && amount != null && baseItem.quantity != null && baseItem.quantity > 0) {
+    price = roundMoney(amount / baseItem.quantity);
+  }
+  if (amount == null && price != null && baseItem.quantity != null && baseItem.quantity > 0) {
+    amount = roundMoney(price * baseItem.quantity);
+  }
+
+  if (price == null || amount == null) return null;
+
+  if (baseItem.quantity != null && baseItem.quantity > 0 && !amountsMatchWithinTolerance(price, baseItem.quantity, amount)) {
+    console.warn(
+      `[InvoiceRouter] price override uncertain: row=${baseItem.row_index}, price*quantity does not match amount`
+    );
+    return null;
+  }
+
+  const vatRate = metadata.vat_rate ?? supplierVatRate ?? null;
+  return {
+    price: convertVatSemantics(price, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+    amount: convertVatSemantics(amount, metadata.vatIncluded, vatRate, supplierPricesIncludeVat),
+  };
+}
+
+function chooseConfidentCandidate(
+  baseItem: InvoiceRow,
+  candidateIndexes: number[],
+  gigaItems: InvoiceRow[],
+): number | null {
+  const compatible = candidateIndexes.filter(index => {
+    const candidate = gigaItems[index];
+    if (!candidate) return false;
+    return !quantitiesConflict(baseItem.quantity, candidate.quantity)
+      && !unitsConflict(baseItem.unit, candidate.unit);
+  });
+
+  if (compatible.length === 1) return compatible[0] ?? null;
+  if (compatible.length === 0) return null;
+
+  const scored = compatible.map(index => {
+    const candidate = gigaItems[index]!;
+    const score = (quantitiesMatch(baseItem.quantity, candidate.quantity) ? 2 : 0)
+      + (unitsMatch(baseItem.unit, candidate.unit) ? 1 : 0);
+    return { index, score };
+  });
+  const bestScore = Math.max(...scored.map(candidate => candidate.score));
+  const best = scored.filter(candidate => candidate.score === bestScore);
+
+  if (bestScore > 0 && best.length === 1) return best[0]!.index;
+  return null;
+}
+
+function findConfidentPriceMatch(
+  baseItem: InvoiceRow,
+  gigaItems: InvoiceRow[],
+  usedGigaIndexes: Set<number>,
+): number | null {
+  const article = normalizeArticle(baseItem.article);
+  if (article) {
+    const articleCandidates = gigaItems
+      .map((item, index) => ({ item, index }))
+      .filter(({ item, index }) => !usedGigaIndexes.has(index) && normalizeArticle(item.article) === article)
+      .map(({ index }) => index);
+
+    if (articleCandidates.length > 0) {
+      return chooseConfidentCandidate(baseItem, articleCandidates, gigaItems);
+    }
+  }
+
+  const name = normalizeName(baseItem.name);
+  if (!name) return null;
+
+  const nameCandidates = gigaItems
+    .map((item, index) => ({ item, index }))
+    .filter(({ item, index }) => !usedGigaIndexes.has(index) && normalizeName(item.name) === name)
+    .map(({ index }) => index);
+
+  return chooseConfidentCandidate(baseItem, nameCandidates, gigaItems);
+}
+
+function mergeGigaChatPrices(
+  baseResult: InvoiceParseResult,
+  gigaResult: GigaChatInvoiceResult,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): {
+  parseResult: InvoiceParseResult;
+  mergedRows: number;
+  uncertainRows: number;
+  extraGigaRows: number;
+} {
+  const usedGigaIndexes = new Set<number>();
+  let mergedRows = 0;
+  let uncertainRows = 0;
+
+  const items = baseResult.items.map(baseItem => {
+    const matchIndex = findConfidentPriceMatch(baseItem, gigaResult.items, usedGigaIndexes);
+    if (matchIndex == null) {
+      uncertainRows += 1;
+      return { ...baseItem };
+    }
+
+    const gigaItem = gigaResult.items[matchIndex]!;
+    usedGigaIndexes.add(matchIndex);
+
+    const financialOverride = buildGigaFinancialOverride(baseItem, gigaItem, gigaResult.metadata, supplierPricesIncludeVat, supplierVatRate);
+    if (!financialOverride) {
+      uncertainRows += 1;
+      return { ...baseItem };
+    }
+
+    mergedRows += 1;
+    return {
+      ...baseItem,
+      price: financialOverride.price,
+      amount: financialOverride.amount,
+    };
+  });
+
+  const extraGigaRows = gigaResult.items.filter((item, index) =>
+    !usedGigaIndexes.has(index) && hasFinancialValue(item)
+  ).length;
+
+  return {
+    parseResult: {
+      ...baseResult,
+      items,
+      totalAmount: gigaResult.metadata.totalWithVat ?? baseResult.totalAmount,
+      vatAmount: gigaResult.metadata.vatAmount ?? baseResult.vatAmount,
+    },
+    mergedRows,
+    uncertainRows,
+    extraGigaRows,
+  };
+}
+
+export async function applyParserPriceOverrides(
+  filePath: string,
+  baseResult: InvoiceParseResult,
+  parserOverrides: SupplierParserOverrides | undefined,
+  source: 'pdf' | 'excel',
+  supplierContext?: string,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): Promise<ParserPriceOverrideResult> {
+  const parseResult = cloneParseResult(baseResult);
+
+  if (parserOverrides?.prices_source !== 'gigachat' || parseResult.items.length === 0) {
+    return {
+      parseResult,
+      applied: false,
+      needsAmountReview: false,
+      reasonParts: [],
+      mergedRows: 0,
+      uncertainRows: 0,
+      extraGigaRows: 0,
+    };
+  }
+
+  const reasonParts = ['prices_source=gigachat'];
+
+  if (!isGigaChatConfigured()) {
+    return {
+      parseResult,
+      applied: true,
+      needsAmountReview: true,
+      reasonParts: [...reasonParts, 'price override uncertain: GigaChat not configured'],
+      mergedRows: 0,
+      uncertainRows: parseResult.items.length,
+      extraGigaRows: 0,
+    };
+  }
+
+  try {
+    const gigaResult = source === 'pdf'
+      ? await parsePdfWithGigaChat(filePath, supplierContext)
+      : await parseExcelWithGigaChat(filePath, supplierContext);
+    const effectiveVatRate = gigaResult.metadata.vat_rate ?? supplierVatRate ?? null;
+    const mergeResult = mergeGigaChatPrices(parseResult, gigaResult, supplierPricesIncludeVat, effectiveVatRate);
+    const vatSemanticsMismatch = hasVatSemanticsMismatch(gigaResult.metadata.vatIncluded, supplierPricesIncludeVat);
+    const nextReasonParts = [
+      ...reasonParts,
+      `prices merged from GigaChat: ${mergeResult.mergedRows}/${parseResult.items.length} rows`,
+    ];
+
+    if (mergeResult.uncertainRows > 0) {
+      nextReasonParts.push(`price override uncertain: ${mergeResult.uncertainRows} rows need review`);
+    }
+    if (mergeResult.extraGigaRows > 0) {
+      nextReasonParts.push(`price override uncertain: GigaChat returned ${mergeResult.extraGigaRows} unmatched extra rows`);
+    }
+    if (vatSemanticsMismatch) {
+      nextReasonParts.push(`price override uncertain: GigaChat vat_included=${gigaResult.metadata.vatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+      if (effectiveVatRate == null || effectiveVatRate <= 0) {
+        nextReasonParts.push('price override uncertain: VAT semantics mismatch has no usable vat_rate');
+      }
+    }
+
+    console.log(
+      `[InvoiceRouter] prices_source=gigachat, merged=${mergeResult.mergedRows}/${parseResult.items.length}, uncertain=${mergeResult.uncertainRows}, extra=${mergeResult.extraGigaRows}, vat_included=${gigaResult.metadata.vatIncluded ?? 'unknown'}, prices_include_vat=${supplierPricesIncludeVat ?? 'unknown'}`
+    );
+
+    return {
+      parseResult: mergeResult.parseResult,
+      metadata: gigaResult.metadata,
+      vatRate: effectiveVatRate,
+      gigachatParseQuality: gigaResult.parseQuality,
+      applied: true,
+      needsAmountReview: mergeResult.uncertainRows > 0 || mergeResult.extraGigaRows > 0 || vatSemanticsMismatch,
+      reasonParts: nextReasonParts,
+      mergedRows: mergeResult.mergedRows,
+      uncertainRows: mergeResult.uncertainRows,
+      extraGigaRows: mergeResult.extraGigaRows,
+    };
+  } catch (error) {
+    console.warn(`[InvoiceRouter] price override GigaChat failed: ${error instanceof Error ? error.message : error}`);
+    return {
+      parseResult,
+      applied: true,
+      needsAmountReview: true,
+      reasonParts: [...reasonParts, 'price override uncertain: GigaChat failed'],
+      mergedRows: 0,
+      uncertainRows: parseResult.items.length,
+      extraGigaRows: 0,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -157,8 +573,16 @@ export async function routeInvoiceFile(
         ? 'pdf'
         : null;
 
+  const parserOverrides = parserName
+    ? loadSupplierParserOverrides(options.supplierId, savedMapping)
+    : undefined;
+  const supplierVatSettings = parserName
+    ? loadSupplierVatSettings(options.supplierId)
+    : { vatRate: null, pricesIncludeVat: null };
+  const supplierPricesIncludeVat = supplierVatSettings.pricesIncludeVat;
+  const supplierVatRate = supplierVatSettings.vatRate;
+
   if (parserName) {
-    const parserOverrides = loadSupplierParserOverrides(options.supplierId, savedMapping);
     logSupplierParserOverrides(parserName, options.supplierId, parserOverrides);
   }
 
@@ -168,7 +592,13 @@ export async function routeInvoiceFile(
       throw new Error(`Изображения не поддерживаются: GigaChat не настроен (нет GIGACHAT_AUTH_KEY)`);
     }
     const gigaResult = await parsePdfWithGigaChat(filePath);
-    const parseResult = gigachatToLegacy(gigaResult);
+    const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+      gigaResult.items,
+      gigaResult.metadata,
+      supplierPricesIncludeVat,
+      supplierVatRate,
+    );
+    const parseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
     const validation = validateInvoice(parseResult.items, gigaResult.metadata);
     return {
       source: 'image',
@@ -178,6 +608,8 @@ export async function routeInvoiceFile(
       confidence: 90,
       validation,
       gigachatParseQuality: gigaResult.parseQuality,
+      amountReviewRequired: vatNormalization.needsAmountReview,
+      parsingReasonAdditions: vatNormalization.reasonParts,
     };
   }
 
@@ -192,7 +624,13 @@ export async function routeInvoiceFile(
       console.log(`[InvoiceRouter] Excel category=${excelResult.category}, items=${excelResult.items.length} — GigaChat fallback`);
       try {
         const gigaResult = await parseExcelWithGigaChat(filePath);
-        const gigaParseResult = gigachatToLegacy(gigaResult);
+        const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+          gigaResult.items,
+          gigaResult.metadata,
+          supplierPricesIncludeVat,
+          supplierVatRate,
+        );
+        const gigaParseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
         if (gigaParseResult.items.length === 0) {
           console.log(`[InvoiceRouter] GigaChat also returned 0 items — category C`);
           return {
@@ -213,6 +651,8 @@ export async function routeInvoiceFile(
           confidence: 85,
           validation,
           gigachatParseQuality: gigaResult.parseQuality,
+          amountReviewRequired: vatNormalization.needsAmountReview,
+          parsingReasonAdditions: vatNormalization.reasonParts,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
@@ -227,13 +667,30 @@ export async function routeInvoiceFile(
       }
     }
 
+    const priceOverride = await applyParserPriceOverrides(
+      filePath,
+      parseResult,
+      parserOverrides,
+      'excel',
+      undefined,
+      supplierPricesIncludeVat,
+      supplierVatRate,
+    );
+    const metadata = priceOverride.metadata ?? excelResult.metadata;
+    const validation = priceOverride.applied
+      ? validateInvoice(priceOverride.parseResult.items, metadata)
+      : excelResult.validation;
+
     return {
       source: 'excel',
       category: excelResult.category,
-      parseResult,
-      metadata: excelResult.metadata,
+      parseResult: priceOverride.parseResult,
+      metadata,
       confidence: excelResult.confidence.overall,
-      validation: excelResult.validation,
+      validation,
+      gigachatParseQuality: priceOverride.gigachatParseQuality,
+      amountReviewRequired: priceOverride.needsAmountReview,
+      parsingReasonAdditions: priceOverride.reasonParts,
     };
   }
 
@@ -247,7 +704,13 @@ export async function routeInvoiceFile(
       console.log(`[InvoiceRouter] PDF items=0 — GigaChat fallback`);
       try {
         const gigaResult = await parsePdfWithGigaChat(filePath);
-        const gigaParseResult = gigachatToLegacy(gigaResult);
+        const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+          gigaResult.items,
+          gigaResult.metadata,
+          supplierPricesIncludeVat,
+          supplierVatRate,
+        );
+        const gigaParseResult = gigachatToLegacy(gigaResult, vatNormalization.items);
         if (gigaParseResult.items.length === 0) {
           console.log(`[InvoiceRouter] GigaChat PDF also returned 0 items — category C`);
           return {
@@ -268,17 +731,33 @@ export async function routeInvoiceFile(
           confidence: 85,
           validation,
           gigachatParseQuality: gigaResult.parseQuality,
+          amountReviewRequired: vatNormalization.needsAmountReview,
+          parsingReasonAdditions: vatNormalization.reasonParts,
         };
       } catch (err) {
         console.warn(`[InvoiceRouter] GigaChat fallback failed: ${err instanceof Error ? err.message : err}`);
       }
     }
 
+    const priceOverride = await applyParserPriceOverrides(
+      filePath,
+      pdfResult,
+      parserOverrides,
+      'pdf',
+      undefined,
+      supplierPricesIncludeVat,
+      supplierVatRate,
+    );
+
     return {
       source: 'pdf',
-      category: hasItems ? 'A' : 'C',
-      parseResult: pdfResult,
+      category: priceOverride.parseResult.items.length > 0 ? 'A' : 'C',
+      parseResult: priceOverride.parseResult,
+      metadata: priceOverride.metadata,
       confidence: hasItems ? 80 : 20,
+      gigachatParseQuality: priceOverride.gigachatParseQuality,
+      amountReviewRequired: priceOverride.needsAmountReview,
+      parsingReasonAdditions: priceOverride.reasonParts,
     };
   }
 

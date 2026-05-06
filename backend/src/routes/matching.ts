@@ -318,7 +318,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
              ii.quantity as invoice_quantity,
              COALESCE(ii.price, pli.price) as price,
              ii.amount,
-             s.name as supplier_name, s.vat_rate, s.prices_include_vat
+             s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat
       FROM matched_items m
       LEFT JOIN matching_rules mr ON m.matching_rule_id = mr.id
       LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
@@ -1130,7 +1130,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
              ii.amount as invoice_amount,
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
-             s.name as supplier_name, s.vat_rate, s.prices_include_vat,
+             s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat,
              m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1

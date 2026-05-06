@@ -7,7 +7,7 @@ import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
-import { loadSupplierParserOverrides, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
+import { applyParserPriceOverrides, loadSupplierParserOverrides, loadSupplierPricesIncludeVat, loadSupplierVatSettings, logSupplierParserOverrides, normalizeGigaChatRowsForSupplierVat, routeInvoiceFile } from '../services/invoiceRouter';
 import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
@@ -42,16 +42,20 @@ function isDeliveryItem(name: string): boolean {
 }
 
 // Helper: compute needs_amount_review flag
-// Returns 1 if Σ(price×quantity) diverges from totalWithVat by more than 15%
+// Returns 1 if VAT-normalized row totals diverge from totalWithVat by more than 15%
 function computeNeedsAmountReview(
-  items: Array<{ price: number | null; quantity: number | null }>,
-  totalWithVat: number | null
+  items: Array<{ price: number | null; quantity: number | null; amount?: number | null }>,
+  totalWithVat: number | null,
+  vatRate: number | null = null,
+  pricesIncludeVat: number | null = null,
 ): number {
   if (!totalWithVat || totalWithVat <= 0 || items.length === 0) return 0;
   const sumItems = items.reduce((acc, it) => {
-    const p = it.price ?? 0;
-    const q = it.quantity ?? 0;
-    return acc + p * q;
+    const lineAmount = it.amount ?? ((it.price ?? 0) * (it.quantity ?? 0));
+    const lineAmountWithVat = pricesIncludeVat === 0 && vatRate != null && vatRate > 0
+      ? lineAmount * (1 + vatRate / 100)
+      : lineAmount;
+    return acc + lineAmountWithVat;
   }, 0);
   if (sumItems === 0) return 0;
   const deviation = Math.abs(sumItems - totalWithVat) / totalWithVat;
@@ -92,13 +96,16 @@ function computeUnitPriceWithVat(
   amount: number | null,
   quantity: number | null,
   vatRate: number | null,
+  pricesIncludeVat: number | null,
 ): { unitPriceWithVat: number | null; source: 'raw' | 'derived_unit' } {
   if (amount != null && quantity != null && quantity > 0) {
-    const lineTotalWithVat = vatRate != null && vatRate > 0 ? amount * (1 + vatRate / 100) : amount;
+    const lineTotalWithVat = pricesIncludeVat === 0 && vatRate != null && vatRate > 0
+      ? amount * (1 + vatRate / 100)
+      : amount;
     return { unitPriceWithVat: Math.round((lineTotalWithVat / quantity) * 100) / 100, source: 'derived_unit' };
   }
   if (price == null) return { unitPriceWithVat: null, source: 'raw' };
-  if (vatRate != null && vatRate > 0) {
+  if (pricesIncludeVat === 0 && vatRate != null && vatRate > 0) {
     return { unitPriceWithVat: Math.round(price * (1 + vatRate / 100) * 100) / 100, source: 'raw' };
   }
   return { unitPriceWithVat: price, source: 'raw' };
@@ -267,11 +274,16 @@ router.patch('/api/suppliers/:id/parser-overrides', (req: Request, res: Response
 });
 
 function saveSnapshot(invoiceId: number, action: string, db: ReturnType<typeof getDatabase>): void {
-  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId);
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoiceId);
   const maxVerRow = db.prepare('SELECT MAX(version) as v FROM invoice_items_history WHERE invoice_id = ?').get(invoiceId) as { v: number | null } | undefined;
   const maxVer = maxVerRow?.v ?? 0;
   db.prepare('INSERT INTO invoice_items_history (invoice_id, version, items_snapshot, action) VALUES (?,?,?,?)')
     .run(invoiceId, maxVer + 1, JSON.stringify(items), action);
+}
+
+function invoiceItemsSnapshotJson(invoiceId: number, db: ReturnType<typeof getDatabase>): string {
+  const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(invoiceId);
+  return JSON.stringify(items);
 }
 
 // Helper: process a single invoice file (parse, detect supplier, insert into DB)
@@ -298,7 +310,7 @@ async function processInvoiceFile(
   // For images — delegate entirely to invoiceRouter (GigaChat)
   if (IMAGE_EXTS.has(ext)) {
     const routerResult = await routeInvoiceFile(file.path);
-    const parseResult = routerResult.parseResult;
+    let parseResult = routerResult.parseResult;
     const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
     const fileName = fixFilename(file.originalname);
     const supplierNameImg = parseResult.supplierName;
@@ -311,16 +323,37 @@ async function processInvoiceFile(
       const parserOverrides = loadSupplierParserOverrides(supplierIdImg);
       logSupplierParserOverrides('image', supplierIdImg, parserOverrides);
     }
+    const imgVatSettings = loadSupplierVatSettings(supplierIdImg);
+    const imgVatNormalization = routerResult.metadata
+      ? normalizeGigaChatRowsForSupplierVat(
+        parseResult.items,
+        routerResult.metadata,
+        imgVatSettings.pricesIncludeVat,
+        imgVatSettings.vatRate,
+      )
+      : null;
+    if (imgVatNormalization) {
+      parseResult = { ...parseResult, items: imgVatNormalization.items };
+    }
     let imgReason = `Image/GigaChat confidence=${routerResult.confidence}`;
     if (routerResult.gigachatParseQuality?.warnings.length) {
       imgReason += ` | ${routerResult.gigachatParseQuality.warnings.join('; ')}`;
     }
-    let imgNeedsReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+    if (routerResult.parsingReasonAdditions?.length) {
+      imgReason += ` | ${routerResult.parsingReasonAdditions.join('; ')}`;
+    }
+    if (imgVatNormalization?.reasonParts.length) {
+      imgReason += ` | ${imgVatNormalization.reasonParts.join('; ')}`;
+    }
+    const imgVatRate = routerResult.metadata?.vat_rate ?? imgVatSettings.vatRate ?? 22;
+    const imgPricesIncludeVat = imgVatSettings.pricesIncludeVat;
+    let imgNeedsReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, imgVatRate, imgPricesIncludeVat);
     if (routerResult.gigachatParseQuality?.suggestElevatedReview) imgNeedsReview = 1;
+    if (routerResult.amountReviewRequired || imgVatNormalization?.needsAmountReview) imgNeedsReview = 1;
     const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const invoiceIdImg = db.transaction(() => {
-      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, imgReason, null, imgNeedsReview, 22);
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, imgReason, null, imgNeedsReview, imgVatRate ?? 22);
       const iid = Number(r.lastInsertRowid);
       for (const item of parseResult.items) {
         insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
@@ -375,11 +408,13 @@ async function processInvoiceFile(
   }
 
   let savedMapping: SavedMapping | undefined;
+  let parserOverrides: SupplierParserOverrides | undefined;
   if (supplierId) {
     savedMapping = loadSavedMapping(supplierId);
-    const parserOverrides = loadSupplierParserOverrides(supplierId, savedMapping);
+    parserOverrides = loadSupplierParserOverrides(supplierId, savedMapping);
     logSupplierParserOverrides(ext === '.pdf' ? 'pdf' : 'excel', supplierId, parserOverrides);
   }
+  const supplierVatSettings = loadSupplierVatSettings(supplierId);
 
   function isGigaChatOnlyMapping(m: SavedMapping): boolean {
     return !!m.gigachatLearned && !m.separatorMethod;
@@ -432,18 +467,40 @@ async function processInvoiceFile(
     }
   }
 
-  applySupplierHeuristics(supplierName, parseResult.items);
-
-  const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
-
-  const needsGigaChat = parseResult.items.length === 0 ||
-    financialCoreMissing ||
-    (lastExcelResult !== null && lastExcelResult.category === 'C');
-
-  let parsedVatRate: number = 22;
+  let parsedVatRate: number = supplierVatSettings.vatRate ?? 22;
   let lastGigaParseQuality: GigaChatParseQuality | undefined;
   let gigachatFallbackSucceeded = false;
   let geminiOcrSucceeded = false;
+  let priceOverrideNeedsAmountReview = false;
+  let priceOverrideReasonParts: string[] = [];
+
+  applySupplierHeuristics(supplierName, parseResult.items);
+
+  if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
+    const supplierCtx = buildSupplierContext(supplierName, savedMapping);
+    const priceOverride = await applyParserPriceOverrides(
+      file.path,
+      parseResult,
+      parserOverrides,
+      ext === '.pdf' ? 'pdf' : 'excel',
+      supplierCtx,
+      supplierVatSettings.pricesIncludeVat,
+      parsedVatRate,
+    );
+    parseResult = priceOverride.parseResult;
+    priceOverrideNeedsAmountReview = priceOverride.needsAmountReview;
+    priceOverrideReasonParts = priceOverride.reasonParts;
+    if (priceOverride.gigachatParseQuality) lastGigaParseQuality = priceOverride.gigachatParseQuality;
+    if (priceOverride.vatRate != null) parsedVatRate = priceOverride.vatRate;
+    if (priceOverride.mergedRows > 0) lastExcelResult = null;
+  }
+
+  const financialCoreMissing = !hasValidFinancialCore(parseResult.items);
+  const preserveBaseRowsForPriceOverride = parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0;
+
+  const needsGigaChat = parseResult.items.length === 0 ||
+    (!preserveBaseRowsForPriceOverride && financialCoreMissing) ||
+    (lastExcelResult !== null && lastExcelResult.category === 'C');
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
@@ -480,8 +537,17 @@ async function processInvoiceFile(
           }
         }
 
+        const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+          gigaResult.items,
+          gigaResult.metadata,
+          supplierVatSettings.pricesIncludeVat,
+          parsedVatRate,
+        );
+        if (vatNormalization.needsAmountReview) priceOverrideNeedsAmountReview = true;
+        if (vatNormalization.reasonParts.length) priceOverrideReasonParts.push(...vatNormalization.reasonParts);
+
         parseResult = {
-          items: gigaResult.items,
+          items: vatNormalization.items,
           errors: [],
           totalRows: gigaResult.items.length,
           skippedRows: 0,
@@ -495,7 +561,7 @@ async function processInvoiceFile(
         applySupplierHeuristics(resolvedSupplierName, parseResult.items);
         gigachatFallbackSucceeded = gigaResult.items.length > 0;
         lastGigaParseQuality = gigaResult.parseQuality;
-        parsedVatRate = gigaResult.metadata.vat_rate ?? 22;
+        parsedVatRate = vatNormalization.vatRate ?? parsedVatRate;
         if (lastExcelResult) lastExcelResult = null; // сбрасываем чтобы категория считалась заново
       }
     } catch (err) {
@@ -563,14 +629,20 @@ async function processInvoiceFile(
     parsingCategoryReason = 'Понижено до B: отсутствуют валидные quantity/price/amount';
   }
 
+  if (priceOverrideReasonParts.length > 0) {
+    parsingCategoryReason += ` | ${priceOverrideReasonParts.join('; ')}`;
+  }
+
   const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
   const fileName = fixFilename(file.originalname);
 
   console.log(`Invoice parse: file=${fileName}, items=${parseResult.items.length}, status=${status}, errors=${parseResult.errors.length}`);
 
   // Insert invoice and items in a transaction
-  let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null);
+  const supplierPricesIncludeVatForReview = loadSupplierPricesIncludeVat(supplierId);
+  let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, parsedVatRate, supplierPricesIncludeVatForReview);
   if (lastGigaParseQuality?.suggestElevatedReview) needsAmountReview = 1;
+  if (priceOverrideNeedsAmountReview) needsAmountReview = 1;
 
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
@@ -966,7 +1038,7 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const invoice = db.prepare(`
-      SELECT i.*, s.name as supplier_name, s.vat_rate as supplier_vat_rate
+      SELECT i.*, s.name as supplier_name, s.vat_rate as supplier_vat_rate, s.prices_include_vat as supplier_prices_include_vat
       FROM invoices i
       LEFT JOIN suppliers s ON i.supplier_id = s.id
       WHERE i.id = ?
@@ -980,9 +1052,12 @@ router.get('/api/invoices/:id', (req: Request, res: Response) => {
       'SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index'
     ).all(invoiceId);
     const inv = invoice as any;
-    const vatRate = typeof inv.supplier_vat_rate === 'number' ? inv.supplier_vat_rate : null;
+    const vatRate = typeof inv.supplier_vat_rate === 'number'
+      ? inv.supplier_vat_rate
+      : (typeof inv.vat_rate === 'number' ? inv.vat_rate : null);
+    const pricesIncludeVat = typeof inv.supplier_prices_include_vat === 'number' ? inv.supplier_prices_include_vat : null;
     const items = (rawItems as Array<any>).map(item => {
-      const pricing = computeUnitPriceWithVat(item.price ?? null, item.amount ?? null, item.quantity ?? null, vatRate);
+      const pricing = computeUnitPriceWithVat(item.price ?? null, item.amount ?? null, item.quantity ?? null, vatRate, pricesIncludeVat);
       return {
         ...item,
         unit_price_with_vat: pricing.unitPriceWithVat,
@@ -1098,8 +1173,8 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     const db = getDatabase();
 
     const invoice = db.prepare(
-      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
-    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+      'SELECT id, file_name, file_path, supplier_id, vat_rate FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null; vat_rate: number | null } | undefined;
 
     if (!invoice) {
       return res.status(404).json({ error: 'Счёт не найден' });
@@ -1122,14 +1197,52 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       return res.status(400).json({ error: 'Нет настроек колонок — сохраните mapping или укажите в запросе' });
     }
 
-    // Save snapshot before overwriting items
-    saveSnapshot(invoiceId, 'before_reparse', db);
+    const baseItemsSnapshot = invoiceItemsSnapshotJson(invoiceId, db);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
+    const source = ext === '.pdf' ? 'pdf' : 'excel';
+    let supplierName: string | null = null;
+    let supplierVatRate: number | null = null;
+    let supplierPricesIncludeVat: number | null = null;
+    if (invoice.supplier_id) {
+      const supplierRow = db.prepare('SELECT name, vat_rate, prices_include_vat FROM suppliers WHERE id = ?')
+        .get(invoice.supplier_id) as { name: string; vat_rate: number | null; prices_include_vat: number | null } | undefined;
+      supplierName = supplierRow?.name ?? null;
+      supplierVatRate = supplierRow?.vat_rate ?? null;
+      supplierPricesIncludeVat = supplierRow?.prices_include_vat ?? null;
+    }
+    const parserOverrides = loadSupplierParserOverrides(invoice.supplier_id, savedMapping);
+    logSupplierParserOverrides(source, invoice.supplier_id, parserOverrides);
+
     let reparseExcelResult: ExcelParseResult | null = null;
-    const parseResult = ext === '.pdf'
+    let parseResult = ext === '.pdf'
       ? await parsePdfFile(invoice.file_path, savedMapping)
       : (() => { reparseExcelResult = parseExcelInvoice(invoice.file_path, savedMapping); return excelToLegacy(reparseExcelResult); })();
+    let priceOverrideApplied = false;
+    let priceOverrideNeedsAmountReview = false;
+    let priceOverrideReasonParts: string[] = [];
+    let priceOverrideVatAmount: number | null = null;
+    let priceOverrideVatRate: number | null = null;
+
+    if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
+      const supplierCtx = buildSupplierContext(supplierName, savedMapping);
+      const priceOverride = await applyParserPriceOverrides(
+        invoice.file_path,
+        parseResult,
+        parserOverrides,
+        source,
+        supplierCtx,
+        supplierPricesIncludeVat,
+        supplierVatRate ?? invoice.vat_rate,
+      );
+      parseResult = priceOverride.parseResult;
+      priceOverrideApplied = priceOverride.applied;
+      priceOverrideNeedsAmountReview = priceOverride.needsAmountReview;
+      priceOverrideReasonParts = priceOverride.reasonParts;
+      priceOverrideVatAmount = priceOverride.metadata?.vatAmount ?? null;
+      priceOverrideVatRate = priceOverride.vatRate ?? null;
+      if (priceOverride.mergedRows > 0) reparseExcelResult = null;
+    }
 
     // Replace items in transaction
     const insertItem = db.prepare(
@@ -1137,6 +1250,10 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     );
 
     db.transaction(() => {
+      if (invoiceItemsSnapshotJson(invoiceId, db) !== baseItemsSnapshot) {
+        throw Object.assign(new Error('invoice_items_changed_during_reparse'), { status: 409 });
+      }
+      saveSnapshot(invoiceId, 'before_reparse', db);
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       for (const item of parseResult.items) {
         insertItem.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
@@ -1147,8 +1264,35 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       const newCategoryReason = reparseExcelResult
         ? `Проверено оператором, Excel confidence: ${reparseExcelResult.confidence.overall}%`
         : (parseResult.items.length > 0 ? `Проверено оператором: ${parseResult.items.length} позиций` : 'Колонки не распознаны после пересборки');
-      db.prepare('UPDATE invoices SET status = ?, total_amount = ?, parsing_category = ?, parsing_category_reason = ? WHERE id = ?')
-        .run(newStatus, parseResult.totalAmount, newCategory, newCategoryReason, invoiceId);
+      const finalCategoryReason = priceOverrideReasonParts.length > 0
+        ? `${newCategoryReason} | ${priceOverrideReasonParts.join('; ')}`
+        : newCategoryReason;
+      const reviewVatRate = priceOverrideVatRate ?? supplierVatRate ?? invoice.vat_rate;
+      let newNeedsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, reviewVatRate, supplierPricesIncludeVat);
+      if (priceOverrideNeedsAmountReview) newNeedsAmountReview = 1;
+      db.prepare(`
+        UPDATE invoices
+        SET status = ?,
+            total_amount = ?,
+            parsing_category = ?,
+            parsing_category_reason = ?,
+            needs_amount_review = CASE WHEN ? THEN ? ELSE needs_amount_review END,
+            vat_amount = CASE WHEN ? THEN ? ELSE vat_amount END,
+            vat_rate = CASE WHEN ? THEN ? ELSE vat_rate END
+        WHERE id = ?
+      `).run(
+        newStatus,
+        parseResult.totalAmount,
+        newCategory,
+        finalCategoryReason,
+        priceOverrideApplied ? 1 : 0,
+        newNeedsAmountReview,
+        priceOverrideVatAmount != null ? 1 : 0,
+        priceOverrideVatAmount,
+        priceOverrideVatRate != null ? 1 : 0,
+        priceOverrideVatRate,
+        invoiceId,
+      );
     })();
 
     const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(invoiceId);
@@ -1161,7 +1305,15 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
     });
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse error:', error);
-    res.status(500).json({ error: 'Ошибка при повторном парсинге', details: error instanceof Error ? error.message : 'Unknown error' });
+    const status = typeof (error as { status?: unknown })?.status === 'number'
+      ? (error as { status: number }).status
+      : 500;
+    res.status(status).json({
+      error: status === 409
+        ? 'Строки счёта изменились во время перепарсинга, повторите reparse'
+        : 'Ошибка при повторном парсинге',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
   }
 });
 
@@ -1172,8 +1324,8 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     const db = getDatabase();
 
     const invoice = db.prepare(
-      'SELECT id, file_name, file_path, supplier_id FROM invoices WHERE id = ?'
-    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null } | undefined;
+      'SELECT id, file_name, file_path, supplier_id, vat_rate FROM invoices WHERE id = ?'
+    ).get(invoiceId) as { id: number; file_name: string; file_path: string; supplier_id: number | null; vat_rate: number | null } | undefined;
 
     if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
     if (!invoice.file_path || !fs.existsSync(invoice.file_path)) {
@@ -1184,16 +1336,17 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       return res.status(503).json({ error: 'GigaChat не настроен (нет GIGACHAT_AUTH_KEY)' });
     }
 
-    // Save snapshot before overwriting items
-    saveSnapshot(invoiceId, 'before_reparse_gigachat', db);
+    const baseItemsSnapshot = invoiceItemsSnapshotJson(invoiceId, db);
 
     const ext = path.extname(invoice.file_name).toLowerCase();
 
     // Build supplier context from saved parser config
     let reparseSupplierCtx: string | undefined;
+    let currentSupplierName: string | null = null;
     if (invoice.supplier_id) {
       const supplierRow = db.prepare('SELECT name FROM suppliers WHERE id = ?').get(invoice.supplier_id) as { name: string } | undefined;
-      reparseSupplierCtx = buildSupplierContext(supplierRow?.name ?? null, loadSavedMapping(invoice.supplier_id));
+      currentSupplierName = supplierRow?.name ?? null;
+      reparseSupplierCtx = buildSupplierContext(currentSupplierName, loadSavedMapping(invoice.supplier_id));
     }
 
     let gigaResult;
@@ -1203,12 +1356,10 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       gigaResult = await parseExcelWithGigaChat(invoice.file_path, reparseSupplierCtx);
     }
 
-    const items = gigaResult.items;
     const meta  = gigaResult.metadata;
-    const newStatus = items.length > 0 ? 'verified' : 'needs_mapping';
 
     // Fuzzy supplier match: если GigaChat нашёл поставщика — проверить по БД
-    let resolvedSupplierName = meta.supplierName;
+    let resolvedSupplierName = meta.supplierName ?? currentSupplierName;
     if (meta.supplierName) {
       const allSuppliers = db.prepare('SELECT name FROM suppliers').all() as { name: string }[];
       if (allSuppliers.length > 0) {
@@ -1221,24 +1372,42 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
     }
 
     // Найти или создать поставщика по уточнённому имени
-    let resolvedSupplierId: number | null = null;
+    let resolvedSupplierId: number | null = invoice.supplier_id;
     if (resolvedSupplierName) {
       const existingS = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(resolvedSupplierName) as { id: number } | undefined;
       resolvedSupplierId = existingS ? existingS.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(resolvedSupplierName).lastInsertRowid);
     }
 
-    let reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null);
+    const reparseVatSettings = loadSupplierVatSettings(resolvedSupplierId);
+    const effectiveReparseVatRate = meta.vat_rate ?? reparseVatSettings.vatRate ?? invoice.vat_rate ?? null;
+    const vatNormalization = normalizeGigaChatRowsForSupplierVat(
+      gigaResult.items,
+      meta,
+      reparseVatSettings.pricesIncludeVat,
+      effectiveReparseVatRate,
+    );
+    const items = vatNormalization.items;
+    const newStatus = items.length > 0 ? 'verified' : 'needs_mapping';
+    let reparsedNeedsReview = computeNeedsAmountReview(items, meta.totalWithVat ?? null, effectiveReparseVatRate, reparseVatSettings.pricesIncludeVat);
     const pq = gigaResult.parseQuality;
     let reparseReason = `GigaChat reparse, позиций: ${items.length}`;
     if (pq?.warnings.length) {
       reparseReason += ` | ${pq.warnings.join('; ')}`;
     }
+    if (vatNormalization.reasonParts.length) {
+      reparseReason += ` | ${vatNormalization.reasonParts.join('; ')}`;
+    }
     if (pq?.suggestElevatedReview) reparsedNeedsReview = 1;
+    if (vatNormalization.needsAmountReview) reparsedNeedsReview = 1;
 
     db.transaction(() => {
+      if (invoiceItemsSnapshotJson(invoiceId, db) !== baseItemsSnapshot) {
+        throw Object.assign(new Error('invoice_items_changed_during_reparse'), { status: 409 });
+      }
+      saveSnapshot(invoiceId, 'before_reparse_gigachat', db);
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
       db.prepare(
-        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, parsing_category=?, parsing_category_reason=?, needs_amount_review=? WHERE id=?'
+        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, vat_rate=?, parsing_category=?, parsing_category_reason=?, needs_amount_review=? WHERE id=?'
       ).run(
         newStatus,
         resolvedSupplierId,
@@ -1246,6 +1415,7 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
         meta.documentDate,
         meta.totalWithVat,
         meta.vatAmount ?? null,
+        effectiveReparseVatRate,
         items.length > 0 ? 'A' : 'B',
         reparseReason,
         reparsedNeedsReview,
@@ -1268,6 +1438,15 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
   } catch (error) {
     console.error('POST /api/invoices/:id/reparse-gigachat error:', error instanceof Error ? error.message : String(error));
     const details = error instanceof Error ? error.message : 'Unknown error';
+    if (typeof (error as { status?: unknown })?.status === 'number') {
+      const status = (error as { status: number }).status;
+      return res.status(status).json({
+        error: status === 409
+          ? 'Строки счёта изменились во время перепарсинга, повторите reparse'
+          : 'Ошибка GigaChat reparse',
+        details,
+      });
+    }
     // 502 — сбой внешнего GigaChat или отказ модели, не внутренняя логика БД
     res.status(502).json({ error: 'Ошибка GigaChat reparse', details });
   }
@@ -1531,9 +1710,16 @@ router.get('/api/projects/:id/delivery-total', (req: Request, res: Response) => 
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
     const row = db.prepare(`
-      SELECT COALESCE(SUM(ii.amount), 0) as total
+      SELECT COALESCE(SUM(
+        CASE
+          WHEN s.prices_include_vat = 0 AND COALESCE(s.vat_rate, i.vat_rate) > 0
+            THEN COALESCE(ii.amount, COALESCE(ii.price, 0) * COALESCE(ii.quantity, 0), 0) * (1 + COALESCE(s.vat_rate, i.vat_rate) / 100.0)
+          ELSE COALESCE(ii.amount, COALESCE(ii.price, 0) * COALESCE(ii.quantity, 0), 0)
+        END
+      ), 0) as total
       FROM invoice_items ii
       JOIN invoices i ON i.id = ii.invoice_id
+      LEFT JOIN suppliers s ON s.id = i.supplier_id
       WHERE i.project_id = ? AND ii.is_delivery = 1
     `).get(projectId) as { total: number };
     res.json({ total: row.total });

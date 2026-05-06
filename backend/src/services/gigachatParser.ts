@@ -16,7 +16,13 @@ import {
 } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata } from '../types/invoice';
 import { evaluateGigaChatParseQuality, type GigaChatParseQuality } from './gigachatParseQuality';
-import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
+import {
+  sha256File,
+  getGigaChatFileCache,
+  setGigaChatFileCache,
+  buildContextAwareGigaChatPurpose,
+  type GigaChatFileCachePurpose,
+} from './gigachatFileCache';
 import { balanceJsonBrackets } from './gigachatUtils';
 
 export type { GigaChatParseQuality } from './gigachatParseQuality';
@@ -28,7 +34,7 @@ const SCAN_PDF_TEXT_THRESHOLD = 200;
 
 function cacheGigaChatInvoice(
   filePath: string,
-  purpose: 'invoice_pdf' | 'invoice_excel',
+  purpose: GigaChatFileCachePurpose,
   data: GigaChatInvoiceResult,
 ): void {
   try {
@@ -334,6 +340,11 @@ export function sanitizeJSON(json: string): string {
 // Типичные ставки НДС — если цены совпадают с этими значениями, скорее всего ошибка парсинга
 const VAT_RATES = new Set([0, 5, 7, 10, 18, 20, 22]);
 
+function normalizeVatRate(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return VAT_RATES.has(value) ? value : null;
+}
+
 function isValidArticle(s: string): boolean {
   if (s.length > 30) return false;
   if (/[а-яёА-ЯЁ]{11,}/.test(s)) return false;
@@ -399,7 +410,8 @@ function mapMetadata(data: GigaChatParsedJSON): InvoiceMetadata {
     buyerINN: data.buyer?.inn || null,
     totalWithVat: typeof data.total_with_vat === 'number' ? data.total_with_vat : null,
     vatAmount: typeof data.vat_amount === 'number' ? data.vat_amount : null,
-    vat_rate: (typeof data.vat_rate === 'number' && data.vat_rate > 0) ? data.vat_rate : 22,
+    vat_rate: normalizeVatRate(data.vat_rate),
+    vatIncluded: typeof data.vat_included === 'boolean' ? data.vat_included : null,
   };
 }
 
@@ -464,16 +476,17 @@ export async function parsePdfWithGigaChat(filePath: string, supplierContext?: s
 async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierContext?: string): Promise<GigaChatInvoiceResult> {
   const models = getGigaChatFileJsonModelCandidates();
   const contextPrefix = supplierContext ? `${supplierContext}\n\n` : '';
+  const cachePurpose = buildContextAwareGigaChatPurpose('invoice_pdf', supplierContext);
   let fileId: string | null = null;
   let lastRaw = '';
   let lastError: Error | null = null;
 
   if (mimeType === 'application/pdf') {
     try {
-      const cached = getGigaChatFileCache(sha256File(filePath), 'invoice_pdf');
+      const cached = getGigaChatFileCache(sha256File(filePath), cachePurpose);
       if (cached) {
         const parsed = JSON.parse(cached) as GigaChatInvoiceResult;
-        console.log('[GigaChatParser] invoice_pdf cache hit');
+        console.log(`[GigaChatParser] ${cachePurpose} context-aware cache hit, ctx=${cachePurpose.includes(':ctx:') ? 'yes' : 'no'}`);
         return parsed;
       }
     } catch (e) {
@@ -553,7 +566,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
                   );
                   continue modelLoop;
                 }
-                cacheGigaChatInvoice(filePath, 'invoice_pdf', out);
+                cacheGigaChatInvoice(filePath, cachePurpose, out);
                 return out;
               }
             } else if (pdfIsScan) {
@@ -581,7 +594,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
                 );
                 continue modelLoop;
               }
-              cacheGigaChatInvoice(filePath, 'invoice_pdf', outScan);
+              cacheGigaChatInvoice(filePath, cachePurpose, outScan);
               return outScan;
             }
           }
@@ -600,7 +613,7 @@ async function parsePdfViaFileApi(filePath: string, mimeType: string, supplierCo
             );
             continue modelLoop;
           }
-          cacheGigaChatInvoice(filePath, 'invoice_pdf', outFile);
+          cacheGigaChatInvoice(filePath, cachePurpose, outFile);
           return outFile;
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err));
@@ -665,10 +678,12 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
     throw new Error(`Не удалось извлечь текст из Excel-файла: ${filePath}`);
   }
 
+  const cachePurpose = buildContextAwareGigaChatPurpose('invoice_excel', supplierContext);
+
   try {
-    const cached = getGigaChatFileCache(sha256File(filePath), 'invoice_excel');
+    const cached = getGigaChatFileCache(sha256File(filePath), cachePurpose);
     if (cached) {
-      console.log('[GigaChatParser] invoice_excel cache hit');
+      console.log(`[GigaChatParser] ${cachePurpose} context-aware cache hit, ctx=${cachePurpose.includes(':ctx:') ? 'yes' : 'no'}`);
       return JSON.parse(cached) as GigaChatInvoiceResult;
     }
   } catch (e) {
@@ -722,7 +737,7 @@ export async function parseExcelWithGigaChat(filePath: string, supplierContext?:
           );
           continue modelLoop;
         }
-        cacheGigaChatInvoice(filePath, 'invoice_excel', out);
+        cacheGigaChatInvoice(filePath, cachePurpose, out);
         return out;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
