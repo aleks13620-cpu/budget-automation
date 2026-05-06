@@ -83,7 +83,79 @@ Gemini OCR (только для сканов)
 **Правило для Электротехмонтаж и подобных:**
 - Gemini парсит текст/позиции (в этом он хорош)
 - Цены берутся из GigaChat или ручного ввода (Gemini здесь ненадёжен)
-- Это оформляется как отдельный режим: `gemini_text_gigachat_prices`
+- Это НЕ оформляется как отдельный именованный режим (`gemini_text_gigachat_prices` и т.п.).
+- Это оформляется как supplier-level конфигурация в `supplier_parser_configs.config.parser_overrides`:
+  ```json
+  {
+    "parser_overrides": {
+      "text_source": "gemini",
+      "prices_source": "gigachat"
+    }
+  }
+  ```
+
+### 1.2.1. Следующий шаг: исполнение `parser_overrides`
+
+**Моё мнение:** это нужно внести в следующий шаг реализации обязательно. Иначе мы снова получим не решение проблемы, а только новый способ её записать в конфиг.
+
+Сейчас шаг `6в parser_overrides конфиг` создаёт правильную основу:
+- API сохраняет overrides: `PATCH /api/suppliers/:id/parser-overrides` (`backend/src/routes/invoices.ts`)
+- upload flow после определения поставщика читает и логирует overrides (`loadSupplierParserOverrides(...)`, `logSupplierParserOverrides(...)`)
+- старые сохранения parser config не должны терять `parser_overrides`
+
+Но это пока только конфигурация. Правило ещё не выполняется: при `prices_source = "gigachat"` система пока не запускает отдельное извлечение цен из GigaChat и не подменяет/сверяет цены в позициях.
+
+**Факты из кода:**
+- `parser_overrides` уже валидируется и сохраняется в `backend/src/routes/invoices.ts` (`PATCH /api/suppliers/:id/parser-overrides`).
+- `invoiceRouter.ts` умеет прочитать `parser_overrides` из `supplier_parser_configs` (`loadSupplierParserOverrides`).
+- В `processInvoiceFile()` overrides читаются после определения `supplierId` и логируются для PDF/Excel.
+- GigaChat-парсеры уже есть: `parsePdfWithGigaChat(...)` и `parseExcelWithGigaChat(...)`.
+- Но сейчас GigaChat вызывается только как fallback, когда нативный результат плохой (`needsGigaChat`), а не как supplier-specific источник цен при хорошем тексте и плохих ценах.
+
+**Что нужно реализовать следующим шагом:**
+1. После нативного/Gemini результата получить `parser_overrides` для supplier.
+2. Если `parser_overrides.prices_source === "gigachat"`:
+   - вызвать GigaChat-парсер для того же файла;
+   - сопоставить строки нативного/Gemini результата со строками GigaChat по `article`, нормализованному `name`, `quantity`, `unit`;
+   - заменить только финансовые поля (`price`, `amount`, возможно `vat_rate`/`vatAmount`), не трогая текстовые поля, если `text_source = "gemini"`;
+   - если уверенного сопоставления строк нет — не заменять молча, а ставить `needs_amount_review = 1` и писать причину в `parsing_category_reason`.
+3. Добавить в `parsing_category_reason` источник решения, например:
+   - `text_source=gemini, prices_source=gigachat`
+   - `prices merged from GigaChat: 18/20 rows`
+   - `price override uncertain: 2 rows need review`
+4. Проверить на benchmark:
+   - для `Электротехмонтаж` должны вырасти цены;
+   - названия/позиции не должны ухудшиться;
+   - другие поставщики не должны менять поведение, если у них нет `parser_overrides`.
+
+**Сценарии использования:**
+
+Сценарий A — Электротехмонтаж:
+1. Админ ставит поставщику:
+   ```json
+   { "parser_overrides": { "text_source": "gemini", "prices_source": "gigachat" } }
+   ```
+2. Оператор загружает счёт.
+3. Gemini/основной OCR даёт хорошие названия и позиции, но цены плохие.
+4. Система берёт текстовые поля из Gemini/основного результата, цены сверяет через GigaChat.
+5. Оператор видит меньше ручной правки по ценам.
+
+Сценарий B — обычный поставщик без overrides:
+1. Оператор загружает Excel/PDF.
+2. Система работает как раньше: нативный парсер → GigaChat fallback только при плохом результате.
+3. Нет лишних API-вызовов и задержек.
+
+Сценарий C — GigaChat не смог уверенно сопоставить строки:
+1. Система не подменяет цены вслепую.
+2. Счёт получает `needs_amount_review = 1`.
+3. Оператор проверяет только спорные строки.
+
+**Definition of Done:**
+- `parser_overrides.prices_source = "gigachat"` реально меняет поведение парсинга.
+- Без overrides поведение и benchmark остаются прежними.
+- В `parsing_category_reason` видно, какие источники были использованы.
+- При неуверенном merge цены не затираются молча.
+- `npx tsc --noEmit` проходит.
 
 ---
 

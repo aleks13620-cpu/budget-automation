@@ -15,12 +15,23 @@ import { isGigaChatConfigured } from './gigachatService';
 import { InvoiceRow, InvoiceMetadata, InvoiceParseResult } from '../types/invoice';
 import { ValidationResult } from '../types/validation';
 import type { GigaChatParseQuality } from './gigachatParseQuality';
+import { getDatabase } from '../database';
 
 // ---------------------------------------------------------------------------
 // Типы
 // ---------------------------------------------------------------------------
 
 export type InvoiceSource = 'excel' | 'pdf' | 'image' | 'gigachat_fallback';
+export type ParserOverrideSource = 'gemini' | 'gigachat';
+
+export interface SupplierParserOverrides {
+  prices_source?: ParserOverrideSource;
+  text_source?: ParserOverrideSource;
+}
+
+export interface RouteInvoiceOptions {
+  supplierId?: number | null;
+}
 
 export interface RouterParseResult {
   /** Источник данных */
@@ -64,6 +75,64 @@ function gigachatToLegacy(
   };
 }
 
+function isParserOverrideSource(value: unknown): value is ParserOverrideSource {
+  return value === 'gemini' || value === 'gigachat';
+}
+
+export function readParserOverridesFromConfig(config: unknown): SupplierParserOverrides | undefined {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return undefined;
+
+  const rawOverrides = (config as { parser_overrides?: unknown }).parser_overrides;
+  if (!rawOverrides || typeof rawOverrides !== 'object' || Array.isArray(rawOverrides)) {
+    return undefined;
+  }
+
+  const overridesRecord = rawOverrides as Record<string, unknown>;
+  const overrides: SupplierParserOverrides = {};
+
+  if (isParserOverrideSource(overridesRecord.prices_source)) {
+    overrides.prices_source = overridesRecord.prices_source;
+  }
+  if (isParserOverrideSource(overridesRecord.text_source)) {
+    overrides.text_source = overridesRecord.text_source;
+  }
+
+  return Object.keys(overrides).length > 0 ? overrides : undefined;
+}
+
+export function loadSupplierParserOverrides(
+  supplierId: number | null | undefined,
+  savedMapping?: SavedMapping,
+): SupplierParserOverrides | undefined {
+  const mappingOverrides = readParserOverridesFromConfig(savedMapping);
+  if (mappingOverrides) return mappingOverrides;
+  if (!supplierId) return undefined;
+
+  const row = getDatabase()
+    .prepare('SELECT config FROM supplier_parser_configs WHERE supplier_id = ?')
+    .get(supplierId) as { config: string } | undefined;
+
+  if (!row) return undefined;
+
+  try {
+    return readParserOverridesFromConfig(JSON.parse(row.config));
+  } catch (error) {
+    console.warn(`[InvoiceRouter] Invalid supplier parser config JSON for supplier_id=${supplierId}: ${error instanceof Error ? error.message : error}`);
+    return undefined;
+  }
+}
+
+export function logSupplierParserOverrides(
+  parserName: Exclude<InvoiceSource, 'gigachat_fallback'>,
+  supplierId: number | null | undefined,
+  parserOverrides?: SupplierParserOverrides,
+): void {
+  if (!parserOverrides) return;
+  console.log(
+    `[InvoiceRouter] supplier_id=${supplierId ?? 'unknown'}, parser=${parserName}, parser_overrides=${JSON.stringify(parserOverrides)}`
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Публичное API
 // ---------------------------------------------------------------------------
@@ -77,8 +146,21 @@ function gigachatToLegacy(
 export async function routeInvoiceFile(
   filePath: string,
   savedMapping?: SavedMapping,
+  options: RouteInvoiceOptions = {},
 ): Promise<RouterParseResult> {
   const ext = path.extname(filePath).toLowerCase();
+  const parserName = IMAGE_EXTS.has(ext)
+    ? 'image'
+    : EXCEL_EXTS.has(ext)
+      ? 'excel'
+      : ext === '.pdf'
+        ? 'pdf'
+        : null;
+
+  if (parserName) {
+    const parserOverrides = loadSupplierParserOverrides(options.supplierId, savedMapping);
+    logSupplierParserOverrides(parserName, options.supplierId, parserOverrides);
+  }
 
   // ─── Изображения → GigaChat ───────────────────────────────────────────
   if (IMAGE_EXTS.has(ext)) {
