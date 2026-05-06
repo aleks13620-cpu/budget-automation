@@ -3,6 +3,44 @@ import { getDatabase } from '../database';
 
 const router = Router();
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function loadExistingParserOverrides(
+  db: ReturnType<typeof getDatabase>,
+  supplierId: number,
+): unknown {
+  const row = db.prepare(
+    'SELECT config FROM supplier_parser_configs WHERE supplier_id = ?'
+  ).get(supplierId) as { config: string } | undefined;
+
+  if (!row) return undefined;
+
+  try {
+    const parsed = JSON.parse(row.config) as unknown;
+    if (!isPlainObject(parsed) || !isPlainObject(parsed.parser_overrides)) {
+      return undefined;
+    }
+    return parsed.parser_overrides;
+  } catch {
+    return undefined;
+  }
+}
+
+function preserveParserOverrides(
+  config: Record<string, unknown>,
+  db: ReturnType<typeof getDatabase>,
+  supplierId: number,
+): Record<string, unknown> {
+  if (config.parser_overrides !== undefined) return config;
+
+  const parserOverrides = loadExistingParserOverrides(db, supplierId);
+  if (parserOverrides === undefined) return config;
+
+  return { ...config, parser_overrides: parserOverrides };
+}
+
 // GET /api/suppliers — list all suppliers
 router.get('/api/suppliers', (_req: Request, res: Response) => {
   try {
@@ -72,11 +110,12 @@ router.put('/api/suppliers/:id/parser-config', (req: Request, res: Response) => 
     }
 
     const { config } = req.body;
-    if (!config || typeof config !== 'object') {
+    if (!isPlainObject(config)) {
       return res.status(400).json({ error: 'Конфигурация обязательна' });
     }
 
-    const configJson = JSON.stringify(config);
+    const configToSave = preserveParserOverrides(config, db, supplierId);
+    const configJson = JSON.stringify(configToSave);
 
     db.prepare(`
       INSERT INTO supplier_parser_configs (supplier_id, config)
@@ -86,7 +125,7 @@ router.put('/api/suppliers/:id/parser-config', (req: Request, res: Response) => 
         updated_at = CURRENT_TIMESTAMP
     `).run(supplierId, configJson);
 
-    res.json({ saved: true, config });
+    res.json({ saved: true, config: configToSave });
   } catch (error) {
     console.error('PUT /api/suppliers/:id/parser-config error:', error);
     res.status(500).json({ error: 'Ошибка при сохранении конфигурации парсера' });

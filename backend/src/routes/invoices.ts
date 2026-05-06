@@ -7,7 +7,8 @@ import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
-import { routeInvoiceFile } from '../services/invoiceRouter';
+import { loadSupplierParserOverrides, logSupplierParserOverrides, routeInvoiceFile } from '../services/invoiceRouter';
+import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
 import { isGigaChatConfigured } from '../services/gigachatService';
@@ -148,6 +149,123 @@ function loadSavedMapping(supplierId: number): SavedMapping | undefined {
   return undefined;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isParserOverrideSource(value: unknown): value is 'gemini' | 'gigachat' {
+  return value === 'gemini' || value === 'gigachat';
+}
+
+function normalizeParserOverrides(value: unknown): SupplierParserOverrides | null {
+  if (!isPlainObject(value)) return null;
+
+  const parserOverrides: SupplierParserOverrides = {};
+
+  if (value.prices_source !== undefined) {
+    if (!isParserOverrideSource(value.prices_source)) return null;
+    parserOverrides.prices_source = value.prices_source;
+  }
+
+  if (value.text_source !== undefined) {
+    if (!isParserOverrideSource(value.text_source)) return null;
+    parserOverrides.text_source = value.text_source;
+  }
+
+  return parserOverrides;
+}
+
+function mergeParserOverrides(
+  config: Record<string, unknown>,
+  parserOverrides: SupplierParserOverrides,
+): SupplierParserOverrides {
+  const existingOverrides = normalizeParserOverrides(config.parser_overrides) ?? {};
+  return { ...existingOverrides, ...parserOverrides };
+}
+
+function preserveParserOverrides(
+  nextConfig: Record<string, unknown>,
+  existingConfig: Record<string, unknown>,
+): Record<string, unknown> {
+  if (nextConfig.parser_overrides !== undefined) return nextConfig;
+
+  const existingOverrides = normalizeParserOverrides(existingConfig.parser_overrides);
+  if (!existingOverrides || Object.keys(existingOverrides).length === 0) {
+    return nextConfig;
+  }
+
+  return { ...nextConfig, parser_overrides: existingOverrides };
+}
+
+function loadSupplierParserConfig(
+  db: ReturnType<typeof getDatabase>,
+  supplierId: number,
+): Record<string, unknown> {
+  const existing = db.prepare(
+    'SELECT config FROM supplier_parser_configs WHERE supplier_id = ?'
+  ).get(supplierId) as { config: string } | undefined;
+
+  if (!existing) return {};
+
+  const parsed = parseJsonSafe<Record<string, unknown>>(
+    existing.config,
+    {},
+    'load supplier_parser_configs'
+  );
+  return isPlainObject(parsed) ? parsed : {};
+}
+
+// PATCH /api/suppliers/:id/parser-overrides - merge supplier parser overrides into saved parser config
+router.patch('/api/suppliers/:id/parser-overrides', (req: Request, res: Response) => {
+  try {
+    const supplierId = Number(req.params.id);
+    if (!Number.isInteger(supplierId) || supplierId <= 0) {
+      return res.status(400).json({ error: 'Invalid supplier id' });
+    }
+
+    const parserOverrides = normalizeParserOverrides(req.body?.parser_overrides);
+    if (!parserOverrides || Object.keys(parserOverrides).length === 0) {
+      return res.status(400).json({ error: 'parser_overrides must be an object with gemini/gigachat sources' });
+    }
+
+    const db = getDatabase();
+    const supplier = db.prepare('SELECT id FROM suppliers WHERE id = ?').get(supplierId);
+    if (!supplier) {
+      return res.status(404).json({ error: 'Supplier not found' });
+    }
+
+    const existing = db.prepare(
+      'SELECT id, config FROM supplier_parser_configs WHERE supplier_id = ?'
+    ).get(supplierId) as { id: number; config: string } | undefined;
+
+    const existingConfig = existing
+      ? parseJsonSafe<Record<string, unknown>>(
+          existing.config,
+          {},
+          'PATCH /api/suppliers/:id/parser-overrides supplier_parser_configs'
+        )
+      : {};
+    const config = isPlainObject(existingConfig) ? existingConfig : {};
+    const nextParserOverrides = mergeParserOverrides(config, parserOverrides);
+    const nextConfig = { ...config, parser_overrides: nextParserOverrides };
+    const nextConfigJson = JSON.stringify(nextConfig);
+
+    if (existing) {
+      db.prepare('UPDATE supplier_parser_configs SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(nextConfigJson, existing.id);
+    } else {
+      db.prepare('INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?)').run(
+        supplierId,
+        nextConfigJson,
+      );
+    }
+
+    res.json({ ok: true, parser_overrides: nextParserOverrides });
+  } catch (error) {
+    console.error('PATCH /api/suppliers/:id/parser-overrides error:', error);
+    res.status(500).json({ error: 'Failed to save parser overrides' });
+  }
+});
+
 function saveSnapshot(invoiceId: number, action: string, db: ReturnType<typeof getDatabase>): void {
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ?').all(invoiceId);
   const maxVerRow = db.prepare('SELECT MAX(version) as v FROM invoice_items_history WHERE invoice_id = ?').get(invoiceId) as { v: number | null } | undefined;
@@ -188,6 +306,10 @@ async function processInvoiceFile(
     if (supplierNameImg) {
       const existing = db.prepare('SELECT id FROM suppliers WHERE name = ?').get(supplierNameImg) as { id: number } | undefined;
       supplierIdImg = existing ? existing.id : Number(db.prepare('INSERT INTO suppliers (name, vat_rate) VALUES (?, 22)').run(supplierNameImg).lastInsertRowid);
+    }
+    if (supplierIdImg) {
+      const parserOverrides = loadSupplierParserOverrides(supplierIdImg);
+      logSupplierParserOverrides('image', supplierIdImg, parserOverrides);
     }
     let imgReason = `Image/GigaChat confidence=${routerResult.confidence}`;
     if (routerResult.gigachatParseQuality?.warnings.length) {
@@ -252,15 +374,21 @@ async function processInvoiceFile(
     }
   }
 
+  let savedMapping: SavedMapping | undefined;
+  if (supplierId) {
+    savedMapping = loadSavedMapping(supplierId);
+    const parserOverrides = loadSupplierParserOverrides(supplierId, savedMapping);
+    logSupplierParserOverrides(ext === '.pdf' ? 'pdf' : 'excel', supplierId, parserOverrides);
+  }
+
   function isGigaChatOnlyMapping(m: SavedMapping): boolean {
     return !!m.gigachatLearned && !m.separatorMethod;
   }
 
   // Check for saved parser config and re-parse if available
   let parseResult = initialResult;
-  if (supplierId) {
-    const savedMapping = loadSavedMapping(supplierId);
-    if (savedMapping && !isGigaChatOnlyMapping(savedMapping)) {
+  if (supplierId && savedMapping) {
+    if (!isGigaChatOnlyMapping(savedMapping)) {
       if (ext === '.pdf' && pdfRawRows && pdfFullText !== null) {
         if (savedMapping.separatorMethod) {
           const splitRows = splitTextWithSeparator(pdfFullText, savedMapping.separatorMethod, savedMapping.separatorValue);
@@ -319,7 +447,7 @@ async function processInvoiceFile(
 
   if (needsGigaChat && isGigaChatConfigured()) {
     try {
-      const supplierCtx = buildSupplierContext(supplierName, supplierId ? loadSavedMapping(supplierId) : undefined);
+      const supplierCtx = buildSupplierContext(supplierName, savedMapping);
       let gigaResult;
       if (ext === '.pdf') {
         console.log(`[InvoiceRouter] PDF items=${parseResult.items.length}, financialCoreMissing=${financialCoreMissing} — GigaChat fallback`);
@@ -1372,7 +1500,11 @@ router.post('/api/invoices/:id/reparse-with-separator', async (req: Request, res
 
     // Optionally save separator config for supplier
     if (invoice.supplier_id && parseResult.items.length > 0) {
-      const fullConfig = { ...colMapping, headerRow: mapping.headerRow, separatorMethod, separatorValue };
+      const existingConfig = loadSupplierParserConfig(db, invoice.supplier_id);
+      const fullConfig = preserveParserOverrides(
+        { ...colMapping, headerRow: mapping.headerRow, separatorMethod, separatorValue },
+        existingConfig,
+      );
       db.prepare(`
         INSERT INTO supplier_parser_configs (supplier_id, config) VALUES (?, ?)
         ON CONFLICT(supplier_id) DO UPDATE SET config = excluded.config, updated_at = CURRENT_TIMESTAMP
