@@ -1,5 +1,12 @@
 # Статус стабилизации v2
 
+## Связанные материалы
+- [Активный master-plan](plan_stabilization_v2_2026-05-03.md)
+- [Правила работы с планами](../README.md)
+- [Журнал реализации](../../IMPLEMENTATION_LOG.md)
+- [Benchmark reports](../../benchmark-reports/)
+- [Бизнес KPI](../../../.business/goals/kpi.md)
+
 ## Текущая фаза: Гейт перед Шагом 7
 
 | Шаг | Задача | Ветка | Статус | Дата |
@@ -20,3 +27,4 @@
 | 6б | export-benchmark.sh | step-6b-export-benchmark | [x] | 2026-05-06 |
 | 6в | parser_overrides конфиг | step-6c-parser-overrides | [x] | 2026-05-06 |
 | 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [x] | 2026-05-06 |
+| 7 | Field-level quality report без изменения парсинга | — | [ ] | |
