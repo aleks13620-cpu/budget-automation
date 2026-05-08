@@ -59,6 +59,18 @@ CATEGORY_C_SCANS = (
     "ПК Курс doc02851820251216123708 (1).pdf",
     "ПК Курс doc02851820251216123708 (1)1.pdf",
 )
+KNOWN_PROBLEM_DOCUMENTS = (
+    {
+        "title": "Электротехмонтаж",
+        "supplier_aliases": ("Электротехмонтаж",),
+        "source_invoice": "403_2026315_202511271152_5492386_PRINTER2.TXT (1).pdf",
+    },
+    {
+        "title": "САНТЕХПРОМ",
+        "supplier_aliases": ("САНТЕХПРОМ", "ООО САНТЕХПРОМ"),
+        "source_invoice": "Коммерческое предложение № 91 от 03 февраля 2026 г.pdf",
+    },
+)
 
 
 @dataclass
@@ -113,7 +125,26 @@ def parse_args() -> argparse.Namespace:
         default=REPORT_PATH,
         help="Markdown report path",
     )
+    parser.add_argument(
+        "--full-row-details",
+        action="store_true",
+        help="Render full row-level details for all documents (default is compact startup mode)",
+    )
+    parser.add_argument(
+        "--max-row-detail-docs",
+        type=int,
+        default=6,
+        help="Maximum documents in compact row-details mode",
+    )
     return parser.parse_args()
+
+
+def ensure_output_within_results_dir(output: Path) -> Path:
+    output_resolved = output.resolve()
+    results_resolved = RESULTS_DIR.resolve()
+    if not output_resolved.is_relative_to(results_resolved):
+        raise ValueError(f"--output must be inside {results_resolved}")
+    return output_resolved
 
 
 def load_legacy_scorer() -> ModuleType:
@@ -830,19 +861,38 @@ def count_statuses(document: DocumentReport, field_name: str, statuses: set[str]
     return sum(1 for row in document.rows if row.statuses.get(field_name) in statuses)
 
 
+def find_known_problem_document(documents: list[DocumentReport], spec: dict[str, Any]) -> DocumentReport | None:
+    source_invoice = normalize_text(spec.get("source_invoice"))
+    if source_invoice:
+        by_source = next(
+            (doc for doc in documents if normalize_text(doc.source_invoice) == source_invoice),
+            None,
+        )
+        if by_source is not None:
+            return by_source
+
+    aliases = [normalize_text(alias) for alias in spec.get("supplier_aliases", ())]
+    for alias in aliases:
+        by_supplier = next((doc for doc in documents if normalize_text(doc.supplier) == alias), None)
+        if by_supplier is not None:
+            return by_supplier
+    return None
+
+
 def known_problem_entries(documents: list[DocumentReport]) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
 
-    for supplier in KNOWN_PROBLEM_SUPPLIERS:
-        document = next((doc for doc in documents if normalize_text(doc.supplier) == normalize_text(supplier)), None)
+    for known_spec in KNOWN_PROBLEM_DOCUMENTS:
+        title = known_spec["title"]
+        document = find_known_problem_document(documents, known_spec)
         if document is None:
             entries.append(
                 {
                     "severity": 999,
-                    "title": supplier,
+                    "title": title,
                     "kind": "document",
                     "split": "n/a",
-                    "source": "n/a",
+                    "source": known_spec.get("source_invoice", "n/a"),
                     "label": "РИСК ЭТАЛОНА",
                     "evidence": [
                         "Документ не найден в текущем JSON boundary (train/holdout).",
@@ -862,36 +912,46 @@ def known_problem_entries(documents: list[DocumentReport]) -> list[dict[str, Any
         line_missing_ref = count_statuses(document, "line_amount", {"MISSING_REF"})
 
         evidence: list[str] = []
-        label = "OCR РИСК"
+        label = "РИСК НАБЛЮДЕНИЯ"
         severity = 0
         next_action = "Проверить документ вручную и уточнить точечную причину финансового расхождения."
+        has_ocr_risk = False
 
         if row_issue_count:
+            has_ocr_risk = True
             severity += 120 + row_issue_count * 10
             evidence.append(f"Сопоставление строк: {row_issue_count} issue(s), выводы по финансовым полям частично низкой надёжности.")
             next_action = "Сначала исправить/подтвердить row matching для проблемных строк, потом переоценить quantity/unit/amount."
         if qty_fail or unit_fail:
+            has_ocr_risk = True
             severity += qty_fail * 20 + unit_fail * 18
             evidence.append(
                 f"Field FAIL/MISSING_RESULT: quantity={qty_fail}, unit={unit_fail} (конкретный финансовый риск по строкам)."
             )
-            if normalize_text(document.supplier) == normalize_text("САНТЕХПРОМ"):
+            if normalize_text(document.supplier) in {
+                normalize_text("САНТЕХПРОМ"),
+                normalize_text("ООО САНТЕХПРОМ"),
+            }:
                 next_action = "Проверить field-level quantity/unit по строкам и подтвердить, что риск не скрыт средним score."
         if amount_fail:
+            has_ocr_risk = True
             severity += amount_fail * 8
             evidence.append(f"Result amount invariant FAIL/MISSING_RESULT: {amount_fail} строк(и).")
         if legacy_price is not None:
             evidence.append(f"Legacy price signal: {pct(legacy_price)} (compatibility signal, не field-level gate).")
             if legacy_price < 0.95:
+                has_ocr_risk = True
                 severity += int((0.95 - legacy_price) * 100)
         if line_missing_ref:
             evidence.append(
                 f"line_amount: MISSING_REF={line_missing_ref} => РИСК ЭТАЛОНА, это пробел reference данных, не ошибка OCR."
             )
-            if severity == 0:
-                label = "РИСК ЭТАЛОНА"
+            if not has_ocr_risk:
                 severity += 60
                 next_action = "Дополнить benchmark явным line_amount для строк документа, затем пересчитать field-level риск."
+
+        if has_ocr_risk:
+            label = "OCR РИСК"
 
         if not evidence:
             evidence.append("Явных FAIL по текущему boundary нет; документ удерживается как known problem для регрессионного контроля.")
@@ -923,7 +983,9 @@ def known_problem_entries(documents: list[DocumentReport]) -> list[dict[str, Any
             "evidence": [
                 "Эта группа выводится отдельно и не смешивается со средними по обычным train/holdout PDF/XLS/XLSX.",
                 "Текущий JSON boundary не включает category_c_list.json, поэтому пересчёт не выполняется в этом отчёте.",
-                f"Legacy list: {', '.join(CATEGORY_C_SCANS)}",
+                f"Legacy scan file: {CATEGORY_C_SCANS[0]}",
+                f"Legacy scan file: {CATEGORY_C_SCANS[1]}",
+                f"Legacy scan file: {CATEGORY_C_SCANS[2]}",
             ],
             "next_action": "Добавить отдельный scoped прогон для category C и сравнивать его метрики отдельно от обычных документов.",
         }
@@ -932,7 +994,29 @@ def known_problem_entries(documents: list[DocumentReport]) -> list[dict[str, Any
     return sorted(entries, key=lambda item: -item["severity"])
 
 
-def render_report(documents: list[DocumentReport], selected_set: str) -> list[str]:
+def document_problem_score(document: DocumentReport) -> int:
+    score = 0
+    if document.row_count_status != "OK":
+        score += 40
+    score += len(document.row_matching_issues) * 50
+    for row in document.rows:
+        if row.statuses["quantity_number"] in {"FAIL", "MISSING_RESULT"}:
+            score += 10
+        if row.statuses["unit"] in {"FAIL", "MISSING_RESULT"}:
+            score += 8
+        if row.statuses["result_line_amount_invariant"] in {"FAIL", "MISSING_RESULT"}:
+            score += 4
+        if row.statuses["name"] == "FAIL":
+            score += 1
+    return score
+
+
+def render_report(
+    documents: list[DocumentReport],
+    selected_set: str,
+    full_row_details: bool = False,
+    max_row_detail_docs: int = 6,
+) -> list[str]:
     lines: list[str] = []
     lines.append("# Field-Level OCR Benchmark Report\n\n")
     lines.append("Generated from existing JSON only. No external OCR/LLM/API calls are made by this report script.\n\n")
@@ -1025,28 +1109,25 @@ def render_report(documents: list[DocumentReport], selected_set: str) -> list[st
 
     lines.append("## Known problem documents\n\n")
     known_entries = known_problem_entries(documents)
-    known_problem_lines = 0
     max_known_problem_lines = 200
+    known_problem_lines: list[str] = []
     for entry in known_entries:
-        if known_problem_lines >= max_known_problem_lines:
-            lines.append("- ... truncated: limit reached for known problem section (max 200 lines).\n")
-            break
-        lines.append(f"### {entry['title']}\n\n")
-        known_problem_lines += 3
-        lines.append(f"- Scope: `{entry['split']}`\n")
-        lines.append(f"- Source: `{md_cell(entry['source'])}`\n")
-        lines.append(f"- Type: **{entry['label']}**\n")
-        known_problem_lines += 3
+        entry_lines = [
+            f"### {entry['title']}\n\n",
+            f"- Scope: `{entry['split']}`\n",
+            f"- Source: `{md_cell(entry['source'])}`\n",
+            f"- Type: **{entry['label']}**\n",
+        ]
         for reason in entry["evidence"]:
-            if known_problem_lines >= max_known_problem_lines:
-                break
-            lines.append(f"- Evidence: {md_cell(reason, 140)}\n")
-            known_problem_lines += 1
-        if known_problem_lines >= max_known_problem_lines:
-            lines.append("- ... truncated: limit reached for known problem section (max 200 lines).\n")
+            entry_lines.append(f"- Evidence: {md_cell(reason)}\n")
+        entry_lines.append(f"- **Next action:** {md_cell(entry['next_action'], 140)}\n\n")
+
+        if len(known_problem_lines) + len(entry_lines) > max_known_problem_lines:
+            if len(known_problem_lines) < max_known_problem_lines:
+                known_problem_lines.append("- ... truncated: limit reached for known problem section (max 200 lines).\n")
             break
-        lines.append(f"- **Next action:** {md_cell(entry['next_action'], 140)}\n\n")
-        known_problem_lines += 2
+        known_problem_lines.extend(entry_lines)
+    lines.extend(known_problem_lines)
 
     lines.append("## Benchmark Gaps And Not Applicable Metrics\n\n")
     lines.append("| Metric | Contract status now | Reason |\n")
@@ -1074,7 +1155,35 @@ def render_report(documents: list[DocumentReport], selected_set: str) -> list[st
     lines.append("\n")
 
     lines.append("## Field-Level Row Details\n\n")
-    for document in documents:
+    problem_scores = {id(document): document_problem_score(document) for document in documents}
+    sorted_documents = sorted(
+        documents,
+        key=lambda document: (
+            -problem_scores[id(document)],
+            document.split,
+            normalize_text(document.supplier),
+        ),
+    )
+    if full_row_details:
+        row_detail_documents = sorted_documents
+        lines.append("- Full mode: all documents are shown (`--full-row-details`).\n\n")
+    else:
+        max_docs = max(1, max_row_detail_docs)
+        problematic = [document for document in sorted_documents if problem_scores[id(document)] > 0]
+        if not problematic:
+            problematic = sorted_documents
+        row_detail_documents = problematic[:max_docs]
+        omitted_docs = len(sorted_documents) - len(row_detail_documents)
+        lines.append(
+            f"- Compact mode: showing top {len(row_detail_documents)} problematic document(s) for fast triage at startup volume.\n"
+        )
+        if omitted_docs > 0:
+            lines.append(
+                f"- Omitted documents: {omitted_docs}. Use `--full-row-details` to output all documents when needed.\n"
+            )
+        lines.append("\n")
+
+    for document in row_detail_documents:
         lines.append(f"### {document.split}: {md_cell(document.supplier)}\n\n")
         lines.append(f"- Source invoice: `{md_cell(document.source_invoice)}`\n")
         lines.append(f"- Benchmark file: `{document.benchmark_path.relative_to(PROJECT_ROOT).as_posix()}`\n")
@@ -1117,6 +1226,11 @@ def render_report(documents: list[DocumentReport], selected_set: str) -> list[st
 
 def main() -> int:
     args = parse_args()
+    try:
+        output_path = ensure_output_within_results_dir(args.output)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
 
     with GEMINI_RESULTS_PATH.open(encoding="utf-8") as f:
         gemini_data = json.load(f)
@@ -1133,14 +1247,19 @@ def main() -> int:
             ref = json.load(f)
         documents.append(build_document_report(split, path, ref, gemini_data, legacy_scorer))
 
-    report_lines = render_report(documents, args.set)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text("".join(report_lines), encoding="utf-8")
+    report_lines = render_report(
+        documents,
+        args.set,
+        full_row_details=args.full_row_details,
+        max_row_detail_docs=args.max_row_detail_docs,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text("".join(report_lines), encoding="utf-8")
 
     exact_matches = sum(1 for document in documents if document.exact_result_found)
     risks = collect_financial_risks(documents)
     row_issues = sum(len(document.row_matching_issues) for document in documents)
-    print(f"Field-level report: {args.output}")
+    print(f"Field-level report: {output_path}")
     print(f"Documents: {len(documents)}; exact Gemini matches: {exact_matches}/{len(documents)}")
     print(f"Top financial risks: {len(risks)}; likely row-matching issues: {row_issues}")
     return 0
