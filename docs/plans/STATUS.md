@@ -7,7 +7,7 @@
 - [Benchmark reports](../../benchmark-reports/)
 - [Бизнес KPI](../../../.business/goals/kpi.md)
 
-## Текущая фаза: Гейт перед Шагом 7
+## Текущая фаза: Шаг 8
 
 | Шаг | Задача | Ветка | Статус | Дата |
 |-----|--------|-------|--------|------|
@@ -27,4 +27,4 @@
 | 6б | export-benchmark.sh | step-6b-export-benchmark | [x] | 2026-05-06 |
 | 6в | parser_overrides конфиг | step-6c-parser-overrides | [x] | 2026-05-06 |
 | 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [x] | 2026-05-06 |
-| 7 | Field-level quality report без изменения парсинга | — | [ ] | |
+| 7 | Field-level quality report без изменения парсинга | step-7b-field-quality-report | [x] | 2026-05-08 |
