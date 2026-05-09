@@ -46,3 +46,10 @@ scripts/~$*.xlsx
 
 # Generated benchmark artifacts (contain project names from DB)
 scripts/benchmark-ready/matching-baseline.json
+
+# Agent workspace
+AI_WORKSPACE/
+
+# Temporary benchmark split reports
+scripts/ocr-benchmark/results/field_quality_report_train.md
+scripts/ocr-benchmark/results/field_quality_report_holdout.md

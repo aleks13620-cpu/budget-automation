@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, TextIO
 
 
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -354,13 +354,27 @@ def pct(value: float | None) -> str:
     return f"{value * 100:.1f}%"
 
 
-def find_exact_result(gemini_data: dict[str, Any], source_invoice: str) -> dict[str, Any] | None:
+def build_result_filename_index(gemini_data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    index: dict[str, dict[str, Any]] = {}
+    for doc in gemini_data.values():
+        if not isinstance(doc, dict):
+            continue
+        filename = doc.get("filename")
+        if not isinstance(filename, str) or not filename:
+            continue
+        # Keep the first match to preserve previous fallback semantics.
+        index.setdefault(filename, doc)
+    return index
+
+
+def find_exact_result(
+    gemini_data: dict[str, Any],
+    result_by_filename: dict[str, dict[str, Any]],
+    source_invoice: str,
+) -> dict[str, Any] | None:
     if source_invoice in gemini_data:
         return gemini_data[source_invoice]
-    for doc in gemini_data.values():
-        if isinstance(doc, dict) and doc.get("filename") == source_invoice:
-            return doc
-    return None
+    return result_by_filename.get(source_invoice)
 
 
 def unique_article_indexes(items: list[dict[str, Any]]) -> dict[str, int]:
@@ -631,13 +645,17 @@ def build_document_report(
     ref: dict[str, Any],
     gemini_data: dict[str, Any],
     legacy_scorer: ModuleType,
+    result_by_filename: dict[str, dict[str, Any]] | None = None,
 ) -> DocumentReport:
     source_invoice = ref.get("source_invoice", "")
     supplier = ref.get("supplier") or path.stem
     ref_items = ref.get("items", [])
     warnings = integrity_warnings(ref, ref_items)
 
-    exact_result = find_exact_result(gemini_data, source_invoice)
+    if result_by_filename is None:
+        result_by_filename = build_result_filename_index(gemini_data)
+
+    exact_result = find_exact_result(gemini_data, result_by_filename, source_invoice)
     legacy_items = legacy_scorer.find_gemini_result(gemini_data, source_invoice)
     legacy_score = legacy_scorer.score_document(ref_items, legacy_items) if legacy_items is not None else None
 
@@ -1011,13 +1029,22 @@ def document_problem_score(document: DocumentReport) -> int:
     return score
 
 
-def render_report(
+def render_report_to(
+    output: TextIO,
     documents: list[DocumentReport],
     selected_set: str,
     full_row_details: bool = False,
     max_row_detail_docs: int = 6,
-) -> list[str]:
-    lines: list[str] = []
+) -> None:
+    class _LineWriter:
+        def append(self, text: str) -> None:
+            output.write(text)
+
+        def extend(self, items: list[str]) -> None:
+            for item in items:
+                output.write(item)
+
+    lines = _LineWriter()
     lines.append("# Field-Level OCR Benchmark Report\n\n")
     lines.append("Generated from existing JSON only. No external OCR/LLM/API calls are made by this report script.\n\n")
     lines.append("## Source Boundary\n\n")
@@ -1221,7 +1248,27 @@ def render_report(
             )
         lines.append("\n")
 
-    return lines
+    return None
+
+
+def render_report(
+    documents: list[DocumentReport],
+    selected_set: str,
+    full_row_details: bool = False,
+    max_row_detail_docs: int = 6,
+) -> list[str]:
+    """
+    Backward-compatible API for tests/tools that expect list[str].
+    """
+    buffer = io.StringIO()
+    render_report_to(
+        buffer,
+        documents,
+        selected_set,
+        full_row_details=full_row_details,
+        max_row_detail_docs=max_row_detail_docs,
+    )
+    return [buffer.getvalue()]
 
 
 def main() -> int:
@@ -1234,6 +1281,7 @@ def main() -> int:
 
     with GEMINI_RESULTS_PATH.open(encoding="utf-8") as f:
         gemini_data = json.load(f)
+    result_by_filename = build_result_filename_index(gemini_data)
 
     legacy_scorer = load_legacy_scorer()
     files = benchmark_files(args.set)
@@ -1245,16 +1293,26 @@ def main() -> int:
     for split, path in files:
         with path.open(encoding="utf-8") as f:
             ref = json.load(f)
-        documents.append(build_document_report(split, path, ref, gemini_data, legacy_scorer))
+        documents.append(
+            build_document_report(
+                split,
+                path,
+                ref,
+                gemini_data,
+                legacy_scorer,
+                result_by_filename=result_by_filename,
+            )
+        )
 
-    report_lines = render_report(
-        documents,
-        args.set,
-        full_row_details=args.full_row_details,
-        max_row_detail_docs=args.max_row_detail_docs,
-    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text("".join(report_lines), encoding="utf-8")
+    with output_path.open("w", encoding="utf-8") as output:
+        render_report_to(
+            output,
+            documents,
+            args.set,
+            full_row_details=args.full_row_details,
+            max_row_detail_docs=args.max_row_detail_docs,
+        )
 
     exact_matches = sum(1 for document in documents if document.exact_result_found)
     risks = collect_financial_risks(documents)
