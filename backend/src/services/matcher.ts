@@ -1,15 +1,17 @@
 import stringSimilarity from 'string-similarity';
 import { getDatabase } from '../database';
+import { matchWithGemini } from './llmMatcher';
 
 export interface MatchCandidate {
   specItemId: number;
   invoiceItemId: number;
   confidence: number;
-  matchType: 'exact_article' | 'learned_rule' | 'name_similarity' | 'name_characteristics';
+  matchType: 'exact_article' | 'learned_rule' | 'name_similarity' | 'name_characteristics' | 'llm_suggestion';
   source: 'invoice' | 'price_list';
   quantityScore: -1 | 0 | 1;
   dnScore: -1 | 0 | 1;
   matchingRuleId?: number | null;
+  matchReason?: string | null;
 }
 
 interface SpecItemRow {
@@ -208,11 +210,11 @@ function getDnScore(specText: string, invText: string): -1 | 0 | 1 {
  * Core matching algorithm: match given spec items against invoice items using rules.
  * Extracted to allow both full and incremental matching to share the same logic.
  */
-function matchSpecItems(
+async function matchSpecItems(
   specItems: SpecItemRow[],
   invoiceItems: InvoiceItemRow[],
   rules: MatchingRule[],
-): MatchCandidate[] {
+): Promise<MatchCandidate[]> {
   if (specItems.length === 0 || invoiceItems.length === 0) return [];
 
   // Build synthetic full names for parameter rows when parser did not persist full_name.
@@ -245,6 +247,9 @@ function matchSpecItems(
   }));
 
   const allCandidates: MatchCandidate[] = [];
+  const l0l1MatchedSpecIds = new Set<number>();
+  const specById = new Map(specItems.map(spec => [spec.id, spec]));
+  const specMatchTextById = new Map<number, string>();
   let unmatchedLogged = 0;
 
   for (const spec of specItems) {
@@ -252,6 +257,7 @@ function matchSpecItems(
     const codeTokens = [spec.equipment_code, spec.product_code, spec.article]
       .map(v => v?.trim()).filter(Boolean).join(' ');
     const nameForMatching = codeTokens ? `${nameBase} ${codeTokens}` : nameBase;
+    specMatchTextById.set(spec.id, nameForMatching);
     const specNormName = normalizeForMatching(nameForMatching);
     const specNormFull = spec.characteristics
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
@@ -479,6 +485,10 @@ function matchSpecItems(
     }
 
     // Sort by confidence DESC, keep top K (больше вариантов без смены алгоритма матчинга)
+    if (candidates.some(candidate => candidate.matchType === 'exact_article' || candidate.matchType === 'learned_rule')) {
+      l0l1MatchedSpecIds.add(spec.id);
+    }
+
     const TOP_K = 8;
     candidates.sort((a, b) =>
       b.dnScore - a.dnScore
@@ -490,6 +500,50 @@ function matchSpecItems(
 
     if (candidates.length === 0 && unmatchedLogged < 25) {
       unmatchedLogged++;
+    }
+  }
+
+  const llmSpecItems = specItems.filter(spec => !l0l1MatchedSpecIds.has(spec.id));
+  const llmInvoiceItems = invoiceItems.filter(item => (item.source ?? 'invoice') === 'invoice');
+
+  if (llmSpecItems.length > 0 && llmInvoiceItems.length > 0) {
+    const invoiceById = new Map(llmInvoiceItems.map(item => [item.id, item]));
+    const llmSeenSpecIds = new Set<number>();
+    const llmMatches = (await matchWithGemini(llmSpecItems, llmInvoiceItems))
+      .sort((a, b) => b.confidence - a.confidence || a.invoiceItemId - b.invoiceItemId);
+
+    for (const llmMatch of llmMatches) {
+      if (llmSeenSpecIds.has(llmMatch.specItemId)) continue;
+      if (l0l1MatchedSpecIds.has(llmMatch.specItemId)) continue;
+
+      const spec = specById.get(llmMatch.specItemId);
+      const inv = invoiceById.get(llmMatch.invoiceItemId);
+      if (!spec || !inv) continue;
+
+      const cappedConfidence = Math.min(Math.max(llmMatch.confidence, 0), 0.90);
+      if (cappedConfidence <= 0) continue;
+
+      const source = inv.source ?? 'invoice';
+      const duplicateIndex = allCandidates.findIndex(candidate =>
+        candidate.specItemId === llmMatch.specItemId
+        && candidate.invoiceItemId === llmMatch.invoiceItemId
+        && candidate.source === source
+        && (candidate.matchType === 'name_similarity' || candidate.matchType === 'name_characteristics')
+      );
+      if (duplicateIndex !== -1) allCandidates.splice(duplicateIndex, 1);
+
+      allCandidates.push({
+        specItemId: llmMatch.specItemId,
+        invoiceItemId: llmMatch.invoiceItemId,
+        confidence: Math.round(cappedConfidence * 1000) / 1000,
+        matchType: 'llm_suggestion',
+        source,
+        quantityScore: getQuantityScore(spec.quantity, inv.quantity),
+        dnScore: getDnScore(specMatchTextById.get(spec.id) || spec.full_name || spec.name, inv.name),
+        matchingRuleId: null,
+        matchReason: llmMatch.reason,
+      });
+      llmSeenSpecIds.add(llmMatch.specItemId);
     }
   }
 
@@ -522,7 +576,7 @@ function loadAllItems(db: ReturnType<typeof getDatabase>, projectId: number): In
 /**
  * Run full matching for all spec items in a project.
  */
-export function runMatching(projectId: number): MatchCandidate[] {
+export async function runMatching(projectId: number): Promise<MatchCandidate[]> {
   const db = getDatabase();
   const specItems = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
   const allItems = loadAllItems(db, projectId);
@@ -534,7 +588,7 @@ export function runMatching(projectId: number): MatchCandidate[] {
  * Incremental matching: skip spec items that already have confirmed matches.
  * Only processes the remaining unconfirmed spec items.
  */
-export function runMatchingIncremental(projectId: number, skipSpecIds: number[]): MatchCandidate[] {
+export async function runMatchingIncremental(projectId: number, skipSpecIds: number[]): Promise<MatchCandidate[]> {
   const db = getDatabase();
   const allSpecs = db.prepare(SPEC_ITEMS_SQL).all(projectId) as SpecItemRow[];
   const skipSet = new Set(skipSpecIds);

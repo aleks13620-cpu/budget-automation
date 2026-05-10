@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS matched_items (
   invoice_item_id INTEGER NOT NULL,
   confidence REAL,
   match_type TEXT,
+  match_reason TEXT,
   is_confirmed INTEGER DEFAULT 0,
   is_selected INTEGER DEFAULT 0,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

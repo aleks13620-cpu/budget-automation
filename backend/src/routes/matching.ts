@@ -6,8 +6,11 @@ import { getDatabase } from '../database';
 import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
 import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constructionSynonymLearner';
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
+import { isGeminiMatchingEnabled } from '../services/llmMatcher';
+import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive } from '../services/matchingRunLock';
 
 const upload = multer({ storage: multer.memoryStorage() });
+const LLM_MATCH_TYPE = 'llm_suggestion';
 
 function saveFeedback(
   db: ReturnType<typeof getDatabase>,
@@ -67,6 +70,36 @@ function normalizeHeaderCell(value: unknown): string {
 
 function clearSelectedForSpec(db: ReturnType<typeof getDatabase>, specItemId: number) {
   db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(specItemId);
+}
+
+function sendMatchingRunning(res: Response, projectId: number) {
+  return res.status(409).json({ error: 'Matching is running for this project', projectId });
+}
+
+function ensureMatchingNotRunning(projectId: number, res: Response): boolean {
+  if (isMatchingRunActive(projectId)) {
+    sendMatchingRunning(res, projectId);
+    return false;
+  }
+  return true;
+}
+
+function findRunningProjectForMatchIds(
+  db: ReturnType<typeof getDatabase>,
+  matchIds: number[],
+): number | null {
+  const ids = Array.from(new Set(matchIds.filter(id => Number.isInteger(id) && id > 0)));
+  if (ids.length === 0) return null;
+
+  const placeholders = ids.map(() => '?').join(',');
+  const rows = db.prepare(`
+    SELECT DISTINCT si.project_id as project_id
+    FROM matched_items m
+    JOIN specification_items si ON m.specification_item_id = si.id
+    WHERE m.id IN (${placeholders})
+  `).all(...ids) as { project_id: number }[];
+
+  return rows.find(row => isMatchingRunActive(row.project_id))?.project_id ?? null;
 }
 
 function detectImportColumns(headerRow: unknown[]): {
@@ -165,9 +198,12 @@ function detectImportColumns(headerRow: unknown[]): {
 
 // POST /api/projects/:id/matching/run — run matching algorithm
 // Query param: ?mode=full (default) | incremental (preserves confirmed matches)
-router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
+router.post('/api/projects/:id/matching/run', async (req: Request, res: Response) => {
+  let lockProjectId: number | null = null;
+  let lockAcquired = false;
   try {
     const projectId = parseInt(String(req.params.id), 10);
+    lockProjectId = projectId;
     const mode = String(req.query.mode || 'full');
     const db = getDatabase();
 
@@ -176,21 +212,16 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Проект не найден' });
     }
 
+    if (!acquireMatchingRun(projectId)) {
+      return res.status(409).json({ error: 'Matching already running for this project' });
+    }
+    lockAcquired = true;
+
     let candidates;
+    let deleteUnconfirmedMatches: () => void;
 
     if (mode === 'incremental') {
       // Keep confirmed matches; delete unconfirmed only for spec items that have no confirmed match
-      db.prepare(`
-        DELETE FROM matched_items
-        WHERE is_confirmed = 0
-          AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
-          AND specification_item_id NOT IN (
-            SELECT DISTINCT specification_item_id FROM matched_items
-            WHERE is_confirmed = 1
-              AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
-          )
-      `).run(projectId, projectId);
-
       // Get spec IDs that are already confirmed — skip them
       const confirmedRows = db.prepare(`
         SELECT DISTINCT specification_item_id
@@ -200,18 +231,30 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
       `).all(projectId) as { specification_item_id: number }[];
       const skipSpecIds = confirmedRows.map(r => r.specification_item_id);
 
-      candidates = runMatchingIncremental(projectId, skipSpecIds);
+      candidates = await runMatchingIncremental(projectId, skipSpecIds);
+      deleteUnconfirmedMatches = () => {
+        db.prepare(`
+          DELETE FROM matched_items
+          WHERE is_confirmed = 0
+            AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+            AND specification_item_id NOT IN (
+              SELECT DISTINCT specification_item_id FROM matched_items
+              WHERE is_confirmed = 1
+                AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+            )
+        `).run(projectId, projectId);
+      };
     } else {
-      // Full mode: clear all unconfirmed matches and re-run
-      db.prepare(`
-        DELETE FROM matched_items
-        WHERE is_confirmed = 0
-          AND specification_item_id IN (
-            SELECT id FROM specification_items WHERE project_id = ?
-          )
-      `).run(projectId);
-
-      candidates = runMatching(projectId);
+      candidates = await runMatching(projectId);
+      deleteUnconfirmedMatches = () => {
+        db.prepare(`
+          DELETE FROM matched_items
+          WHERE is_confirmed = 0
+            AND specification_item_id IN (
+              SELECT id FROM specification_items WHERE project_id = ?
+            )
+        `).run(projectId);
+      };
     }
 
     // Select primary by tie-breakers: DN -> quantity -> confidence.
@@ -235,14 +278,24 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
 
     // Insert new candidates
     const insert = db.prepare(`
-      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source, matching_rule_id)
-      VALUES (?, ?, ?, ?, 0, ?, ?, ?)
+      INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source, matching_rule_id, match_reason)
+      VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)
     `);
+    let insertedLlmSuggestions = 0;
 
     const insertAll = db.transaction(() => {
+      deleteUnconfirmedMatches();
+      const confirmedSpecIds = new Set((db.prepare(`
+        SELECT DISTINCT specification_item_id
+        FROM matched_items
+        WHERE is_confirmed = 1
+          AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+      `).all(projectId) as { specification_item_id: number }[]).map(row => row.specification_item_id));
       for (const c of candidates) {
+        if (confirmedSpecIds.has(c.specItemId)) continue;
         const isSelected = bestCandidateBySpec.get(c.specItemId)?.invoiceItemId === c.invoiceItemId ? 1 : 0;
-        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, isSelected, c.source ?? 'invoice', c.matchingRuleId ?? null);
+        insert.run(c.specItemId, c.invoiceItemId, c.confidence, c.matchType, isSelected, c.source ?? 'invoice', c.matchingRuleId ?? null, c.matchReason ?? null);
+        if (c.matchType === LLM_MATCH_TYPE) insertedLlmSuggestions++;
       }
     });
     insertAll();
@@ -261,12 +314,23 @@ router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
     const matched = totalMatchedRows.cnt;
     const unmatched = totalSpec - matched;
 
-    res.json({ total: totalSpec, matched, unmatched, mode });
+    res.json({
+      total: totalSpec,
+      matched,
+      unmatched,
+      mode,
+      llmSuggestions: insertedLlmSuggestions,
+      llmMatchingEnabled: isGeminiMatchingEnabled() && Boolean(process.env.OPENROUTER_API_KEY),
+    });
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при запуске сопоставления',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
+  } finally {
+    if (lockAcquired && lockProjectId !== null) {
+      releaseMatchingRun(lockProjectId);
+    }
   }
 });
 
@@ -298,6 +362,8 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     const getMatches = db.prepare(`
       SELECT m.id, m.invoice_item_id, m.confidence, m.match_type,
              CASE
+               WHEN m.match_type = 'llm_suggestion'
+                    THEN COALESCE(NULLIF(m.match_reason, ''), 'Gemini suggestion')
                WHEN m.match_type = 'exact_article'
                     THEN 'Совпал артикул' || COALESCE(': ' || COALESCE(ii.article, pli.article), '')
                WHEN m.match_type = 'learned_rule' AND mr.id IS NOT NULL
@@ -415,7 +481,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const match = db.prepare(`
-      SELECT m.id, m.confidence, m.specification_item_id, m.invoice_item_id,
+      SELECT m.id, m.confidence, m.match_type, m.specification_item_id, m.invoice_item_id,
              si.name as spec_name, ii.name as invoice_name,
              i.supplier_id, si.project_id
       FROM matched_items m
@@ -426,6 +492,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     `).get(matchId) as {
       id: number;
       confidence: number | null;
+      match_type: string | null;
       specification_item_id: number;
       invoice_item_id: number;
       spec_name: string;
@@ -438,6 +505,8 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Матч не найден' });
     }
 
+    if (!ensureMatchingNotRunning(match.project_id, res)) return;
+
     db.transaction(() => {
       db.prepare(
         'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
@@ -447,30 +516,32 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
         'UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?'
       ).run(matchId);
 
-      // Create or update matching rule (with supplier_id)
-      const specPattern = normalizeForMatching(match.spec_name);
-      const invoicePattern = normalizeForMatching(match.invoice_name);
+      {
+        // Create or update matching rule (with supplier_id)
+        const specPattern = normalizeForMatching(match.spec_name);
+        const invoicePattern = normalizeForMatching(match.invoice_name);
 
-      const existingRule = db.prepare(
-        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
-      ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
+        const existingRule = db.prepare(
+          'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
 
-      if (existingRule) {
-        db.prepare(
-          'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).run(existingRule.id);
-      } else {
-        db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
-        ).run(specPattern, invoicePattern, match.supplier_id);
+        if (existingRule) {
+          db.prepare(
+            'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          ).run(existingRule.id);
+        } else {
+          db.prepare(
+            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
+          ).run(specPattern, invoicePattern, match.supplier_id);
+        }
+
+        learnConstructionSynonymsFromConfirmedMatch(
+          db,
+          specPattern,
+          invoicePattern,
+          match.confidence ?? 0,
+        );
       }
-
-      learnConstructionSynonymsFromConfirmedMatch(
-        db,
-        specPattern,
-        invoicePattern,
-        match.confidence ?? 0,
-      );
     })();
 
     saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
@@ -492,13 +563,16 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
     }
 
     const db = getDatabase();
+    const busyProjectId = findRunningProjectForMatchIds(db, matchIds);
+    if (busyProjectId !== null) return sendMatchingRunning(res, busyProjectId);
+
     let updated = 0;
     const failed: number[] = [];
 
     const runBulk = db.transaction(() => {
       for (const matchId of matchIds) {
         const match = db.prepare(`
-          SELECT m.id, m.confidence, m.specification_item_id, m.invoice_item_id,
+          SELECT m.id, m.confidence, m.match_type, m.specification_item_id, m.invoice_item_id,
                  si.name as spec_name, ii.name as invoice_name,
                  i.supplier_id, si.project_id
           FROM matched_items m
@@ -509,6 +583,7 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
         `).get(matchId) as {
           id: number;
           confidence: number | null;
+          match_type: string | null;
           specification_item_id: number;
           invoice_item_id: number;
           spec_name: string;
@@ -525,23 +600,26 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
         clearSelectedForSpec(db, match.specification_item_id);
         db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1 WHERE id = ?').run(matchId);
 
-        const specPattern = normalizeForMatching(match.spec_name);
-        const invoicePattern = normalizeForMatching(match.invoice_name);
-        const existingRule = db.prepare(
-          'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
-        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+        {
+          const specPattern = normalizeForMatching(match.spec_name);
+          const invoicePattern = normalizeForMatching(match.invoice_name);
+          const existingRule = db.prepare(
+            'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+          ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
 
-        if (existingRule) {
-          db.prepare(
-            'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-          ).run(existingRule.id);
-        } else {
-          db.prepare(
-            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
-          ).run(specPattern, invoicePattern, match.supplier_id);
+          if (existingRule) {
+            db.prepare(
+              'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+            ).run(existingRule.id);
+          } else {
+            db.prepare(
+              'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
+            ).run(specPattern, invoicePattern, match.supplier_id);
+          }
+
+          learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, match.confidence ?? 0);
         }
 
-        learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, match.confidence ?? 0);
         saveFeedback(db, 'confirm', match.project_id, match.specification_item_id, match.invoice_item_id, match.supplier_id);
         updated++;
       }
@@ -564,16 +642,18 @@ router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
     const db = getDatabase();
 
     const match = db.prepare(`
-      SELECT m.id, si.name as spec_name, ii.name as invoice_name, i.supplier_id
+      SELECT m.id, si.name as spec_name, ii.name as invoice_name, i.supplier_id, si.project_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
       JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
-      id: number; spec_name: string; invoice_name: string; supplier_id: number | null;
+      id: number; spec_name: string; invoice_name: string; supplier_id: number | null; project_id: number;
     } | undefined;
     if (!match) return res.status(404).json({ error: 'Матч не найден' });
+
+    if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
       const specPattern = normalizeForMatching(match.spec_name);
@@ -599,7 +679,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
 
     // Load match details before deleting (for negative rule creation)
     const match = db.prepare(`
-      SELECT m.id, m.is_confirmed, m.specification_item_id, m.invoice_item_id,
+      SELECT m.id, m.is_confirmed, m.match_type, m.specification_item_id, m.invoice_item_id,
              si.name as spec_name, ii.name as invoice_name, i.supplier_id, si.project_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
@@ -607,7 +687,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
       LEFT JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
-      id: number; is_confirmed: number;
+      id: number; is_confirmed: number; match_type: string | null;
       specification_item_id: number; invoice_item_id: number;
       spec_name: string; invoice_name: string | null; supplier_id: number | null; project_id: number;
     } | undefined;
@@ -616,11 +696,13 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Матч не найден' });
     }
 
+    if (!ensureMatchingNotRunning(match.project_id, res)) return;
+
     db.transaction(() => {
       db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
 
       // Create negative rule only for unconfirmed rejections (user rejects system suggestion)
-      if (!match.is_confirmed && match.invoice_name) {
+      if (!match.is_confirmed && match.match_type !== LLM_MATCH_TYPE && match.invoice_name) {
         const specPattern = normalizeForMatching(match.spec_name);
         const invoicePattern = normalizeForMatching(match.invoice_name);
         const existing = db.prepare(
@@ -658,13 +740,16 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
     }
 
     const db = getDatabase();
+    const busyProjectId = findRunningProjectForMatchIds(db, matchIds);
+    if (busyProjectId !== null) return sendMatchingRunning(res, busyProjectId);
+
     let updated = 0;
     const failed: number[] = [];
 
     const runBulk = db.transaction(() => {
       for (const matchId of matchIds) {
         const match = db.prepare(`
-          SELECT m.id, m.is_confirmed, m.specification_item_id, m.invoice_item_id,
+          SELECT m.id, m.is_confirmed, m.match_type, m.specification_item_id, m.invoice_item_id,
                  si.name as spec_name, ii.name as invoice_name, i.supplier_id, si.project_id
           FROM matched_items m
           JOIN specification_items si ON m.specification_item_id = si.id
@@ -672,7 +757,7 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
           LEFT JOIN invoices i ON ii.invoice_id = i.id
           WHERE m.id = ?
         `).get(matchId) as {
-          id: number; is_confirmed: number;
+          id: number; is_confirmed: number; match_type: string | null;
           specification_item_id: number; invoice_item_id: number;
           spec_name: string; invoice_name: string | null; supplier_id: number | null; project_id: number;
         } | undefined;
@@ -683,7 +768,7 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
         }
 
         db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
-        if (!match.is_confirmed && match.invoice_name) {
+        if (!match.is_confirmed && match.match_type !== LLM_MATCH_TYPE && match.invoice_name) {
           const specPattern = normalizeForMatching(match.spec_name);
           const invoicePattern = normalizeForMatching(match.invoice_name);
           const existing = db.prepare(
@@ -723,22 +808,24 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
     const db = getDatabase();
 
     const match = db.prepare(`
-      SELECT m.id, m.specification_item_id, m.invoice_item_id,
+      SELECT m.id, m.match_type, m.specification_item_id, m.invoice_item_id,
              si.name as spec_name, ii.name as invoice_name,
-             i.supplier_id
+             i.supplier_id, si.project_id
       FROM matched_items m
       JOIN specification_items si ON m.specification_item_id = si.id
       JOIN invoice_items ii ON m.invoice_item_id = ii.id
       JOIN invoices i ON ii.invoice_id = i.id
       WHERE m.id = ?
     `).get(matchId) as {
-      id: number; specification_item_id: number; invoice_item_id: number;
-      spec_name: string; invoice_name: string; supplier_id: number | null;
+      id: number; match_type: string | null; specification_item_id: number; invoice_item_id: number;
+      spec_name: string; invoice_name: string; supplier_id: number | null; project_id: number;
     } | undefined;
 
     if (!match) {
       return res.status(404).json({ error: 'Матч не найден' });
     }
+
+    if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
       db.prepare(
@@ -749,22 +836,24 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
         'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?'
       ).run(matchId);
 
-      // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
-      const specPattern = normalizeForMatching(match.spec_name);
-      const invoicePattern = normalizeForMatching(match.invoice_name);
+      {
+        // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
+        const specPattern = normalizeForMatching(match.spec_name);
+        const invoicePattern = normalizeForMatching(match.invoice_name);
 
-      const existingRule = db.prepare(
-        'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
-      ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
+        const existingRule = db.prepare(
+          'SELECT id, times_used FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number; times_used: number } | undefined;
 
-      if (existingRule) {
-        db.prepare(
-          'UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-        ).run(existingRule.id);
-      } else {
-        db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
-        ).run(specPattern, invoicePattern, match.supplier_id);
+        if (existingRule) {
+          db.prepare(
+            'UPDATE matching_rules SET times_used = times_used + 1, is_analog = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+          ).run(existingRule.id);
+        } else {
+          db.prepare(
+            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
+          ).run(specPattern, invoicePattern, match.supplier_id);
+        }
       }
     })();
 
@@ -786,13 +875,16 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
     }
 
     const db = getDatabase();
+    const busyProjectId = findRunningProjectForMatchIds(db, matchIds);
+    if (busyProjectId !== null) return sendMatchingRunning(res, busyProjectId);
+
     let updated = 0;
     const failed: number[] = [];
 
     const runBulk = db.transaction(() => {
       for (const matchId of matchIds) {
         const match = db.prepare(`
-          SELECT m.id, m.specification_item_id, m.invoice_item_id,
+          SELECT m.id, m.match_type, m.specification_item_id, m.invoice_item_id,
                  si.name as spec_name, ii.name as invoice_name, i.supplier_id
           FROM matched_items m
           JOIN specification_items si ON m.specification_item_id = si.id
@@ -800,7 +892,7 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
           JOIN invoices i ON ii.invoice_id = i.id
           WHERE m.id = ?
         `).get(matchId) as {
-          id: number; specification_item_id: number; invoice_item_id: number;
+          id: number; match_type: string | null; specification_item_id: number; invoice_item_id: number;
           spec_name: string; invoice_name: string; supplier_id: number | null;
         } | undefined;
 
@@ -812,18 +904,20 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
         clearSelectedForSpec(db, match.specification_item_id);
         db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?').run(matchId);
 
-        const specPattern = normalizeForMatching(match.spec_name);
-        const invoicePattern = normalizeForMatching(match.invoice_name);
-        const existingRule = db.prepare(
-          'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
-        ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
+        {
+          const specPattern = normalizeForMatching(match.spec_name);
+          const invoicePattern = normalizeForMatching(match.invoice_name);
+          const existingRule = db.prepare(
+            'SELECT id FROM matching_rules WHERE specification_pattern = ? AND invoice_pattern = ? AND (supplier_id = ? OR (supplier_id IS NULL AND ? IS NULL))'
+          ).get(specPattern, invoicePattern, match.supplier_id, match.supplier_id) as { id: number } | undefined;
 
-        if (existingRule) {
-          db.prepare('UPDATE matching_rules SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existingRule.id);
-        } else {
-          db.prepare(
-            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.75, 1, ?)'
-          ).run(specPattern, invoicePattern, match.supplier_id);
+          if (existingRule) {
+            db.prepare('UPDATE matching_rules SET times_used = times_used + 1, is_analog = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existingRule.id);
+          } else {
+            db.prepare(
+              'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
+            ).run(specPattern, invoicePattern, match.supplier_id);
+          }
         }
 
         updated++;
@@ -846,13 +940,18 @@ router.put('/api/matching/select/:id', (req: Request, res: Response) => {
     const matchId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
-    const match = db.prepare(
-      'SELECT id, specification_item_id FROM matched_items WHERE id = ?'
-    ).get(matchId) as { id: number; specification_item_id: number } | undefined;
+    const match = db.prepare(`
+      SELECT m.id, m.specification_item_id, si.project_id
+      FROM matched_items m
+      JOIN specification_items si ON m.specification_item_id = si.id
+      WHERE m.id = ?
+    `).get(matchId) as { id: number; specification_item_id: number; project_id: number } | undefined;
 
     if (!match) {
       return res.status(404).json({ error: 'Матч не найден' });
     }
+
+    if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
       db.prepare(
@@ -884,6 +983,8 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
     if (!specItemId || !invoiceItemId || isNaN(specItemId) || isNaN(invoiceItemId)) {
       return res.status(400).json({ error: 'specItemId и invoiceItemId обязательны' });
     }
+
+    if (!ensureMatchingNotRunning(projectId, res)) return;
 
     // Validate spec item belongs to project
     const specItem = db.prepare(
@@ -1247,6 +1348,8 @@ router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request,
     }
 
     // Get unconfirmed low-confidence candidates (0.25–0.4) not yet in cache
+    if (!ensureMatchingNotRunning(projectId, res)) return;
+
     const candidates = db.prepare(`
       SELECT m.id, m.specification_item_id, m.invoice_item_id, m.confidence,
              si.name as spec_name, COALESCE(ii.name, pli.name) as invoice_name

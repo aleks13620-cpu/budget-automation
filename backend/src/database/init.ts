@@ -89,6 +89,7 @@ function initializeDatabase(): void {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
       'ALTER TABLE matched_items ADD COLUMN matching_rule_id INTEGER',
+      'ALTER TABLE matched_items ADD COLUMN match_reason TEXT',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
