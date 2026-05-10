@@ -245,6 +245,7 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_name ON invoice_items(name);
 CREATE INDEX IF NOT EXISTS idx_matched_items_spec ON matched_items(specification_item_id);
 CREATE INDEX IF NOT EXISTS idx_matched_items_invoice ON matched_items(invoice_item_id);
 CREATE INDEX IF NOT EXISTS idx_matching_rules_spec ON matching_rules(specification_pattern);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_rules_unique ON matching_rules(specification_pattern, invoice_pattern, COALESCE(supplier_id, -1));
 CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
 CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);

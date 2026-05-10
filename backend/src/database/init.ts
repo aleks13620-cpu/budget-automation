@@ -90,6 +90,20 @@ function initializeDatabase(): void {
       )`,
       'ALTER TABLE matched_items ADD COLUMN matching_rule_id INTEGER',
       'ALTER TABLE matched_items ADD COLUMN match_reason TEXT',
+      // Phase 8.2: deduplicate matching_rules before adding UNIQUE constraint
+      // Keep the row with the highest times_used (tiebreaker: lowest id)
+      `DELETE FROM matching_rules WHERE id NOT IN (
+         SELECT id FROM (
+           SELECT id, ROW_NUMBER() OVER (
+             PARTITION BY specification_pattern, invoice_pattern, COALESCE(supplier_id, -1)
+             ORDER BY times_used DESC, id ASC
+           ) AS rn FROM matching_rules
+         ) WHERE rn = 1
+       )`,
+      // Phase 8.2: UNIQUE constraint on (spec_pattern, invoice_pattern, supplier_id)
+      // Expression index with COALESCE so NULL supplier_id is treated consistently
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_rules_unique
+       ON matching_rules(specification_pattern, invoice_pattern, COALESCE(supplier_id, -1))`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

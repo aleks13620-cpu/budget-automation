@@ -30,5 +30,5 @@
 | 7 | Field-level quality report без изменения парсинга | step-7b-field-quality-report | [x] | 2026-05-08 |
 | 8 | Диагностика матчинга: Dice 0.1%, тест Gemini 87.5% | — | [x] | 2026-05-09 |
 | 8.1 | Gemini Flash batch matching service + интеграция | step-8a-llm-matching-agent1-clean | [x] | 2026-05-10 |
-| 8.2 | Rule learning из LLM-матчей + fix дубликатов правил | step-8b-rule-learning | [ ] | |
+| 8.2 | Rule learning из LLM-матчей + fix дубликатов правил | step-8b-rule-learning | [x] | 2026-05-10 |
 | 8.3 | Механические фиксы Dice fallback + batch trigger | step-8c-dice-fallback | [ ] | |

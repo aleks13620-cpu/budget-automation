@@ -530,9 +530,10 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
             'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
           ).run(existingRule.id);
         } else {
+          const ruleSource = match.match_type === LLM_MATCH_TYPE ? 'llm_confirm' : 'manual';
           db.prepare(
-            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
-          ).run(specPattern, invoicePattern, match.supplier_id);
+            'INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, source) VALUES (?, ?, 0.92, 1, ?, ?)'
+          ).run(specPattern, invoicePattern, match.supplier_id, ruleSource);
         }
 
         learnConstructionSynonymsFromConfirmedMatch(
@@ -612,9 +613,10 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
               'UPDATE matching_rules SET times_used = times_used + 1, confidence = MIN(0.97, confidence + 0.02), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
             ).run(existingRule.id);
           } else {
+            const ruleSource = match.match_type === LLM_MATCH_TYPE ? 'llm_confirm' : 'manual';
             db.prepare(
-              'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.92, 1, ?)'
-            ).run(specPattern, invoicePattern, match.supplier_id);
+              'INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, source) VALUES (?, ?, 0.92, 1, ?, ?)'
+            ).run(specPattern, invoicePattern, match.supplier_id, ruleSource);
           }
 
           learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, match.confidence ?? 0);
@@ -715,7 +717,7 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
           ).run(existing.id);
         } else {
           db.prepare(
-            "INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
+            "INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
           ).run(specPattern, invoicePattern, match.supplier_id);
         }
       }
@@ -781,7 +783,7 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
             ).run(existing.id);
           } else {
             db.prepare(
-              "INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
+              "INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_negative, source) VALUES (?, ?, 0, 1, ?, 1, 'reject')"
             ).run(specPattern, invoicePattern, match.supplier_id);
           }
         }
@@ -851,7 +853,7 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
           ).run(existingRule.id);
         } else {
           db.prepare(
-            'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
+            'INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
           ).run(specPattern, invoicePattern, match.supplier_id);
         }
       }
@@ -915,7 +917,7 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
             db.prepare('UPDATE matching_rules SET times_used = times_used + 1, is_analog = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existingRule.id);
           } else {
             db.prepare(
-              'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
+              'INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id, is_analog) VALUES (?, ?, 0.75, 1, ?, 1)'
             ).run(specPattern, invoicePattern, match.supplier_id);
           }
         }
@@ -1055,7 +1057,7 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
         ).run(existingRule.id);
       } else {
         db.prepare(
-          'INSERT INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.96, 1, ?)'
+          'INSERT OR IGNORE INTO matching_rules (specification_pattern, invoice_pattern, confidence, times_used, supplier_id) VALUES (?, ?, 0.96, 1, ?)'
         ).run(specPattern, invoicePattern, invoiceItem.supplier_id);
       }
 
