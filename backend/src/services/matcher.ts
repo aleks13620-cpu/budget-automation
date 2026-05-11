@@ -511,11 +511,15 @@ async function matchSpecItems(
   const llmSpecItems = specItems.filter(spec => !l0l1MatchedSpecIds.has(spec.id));
   const llmInvoiceItems = invoiceItems.filter(item => (item.source ?? 'invoice') === 'invoice');
 
+  console.log(`[Matcher] tiers 0-3 done: ${l0l1MatchedSpecIds.size} matched by article/rules, ${llmSpecItems.length} remain for LLM, ${llmInvoiceItems.length} invoice items available`);
+
   if (llmSpecItems.length > 0 && llmInvoiceItems.length > 0) {
     const invoiceById = new Map(llmInvoiceItems.map(item => [item.id, item]));
     const llmSeenSpecIds = new Set<number>();
+    console.log(`[Matcher] calling Gemini for ${llmSpecItems.length} spec items...`);
     const llmMatches = (await matchWithGemini(llmSpecItems, llmInvoiceItems))
       .sort((a, b) => b.confidence - a.confidence || a.invoiceItemId - b.invoiceItemId);
+    console.log(`[Matcher] Gemini returned ${llmMatches.length} matches`);
 
     for (const llmMatch of llmMatches) {
       if (llmSeenSpecIds.has(llmMatch.specItemId)) continue;

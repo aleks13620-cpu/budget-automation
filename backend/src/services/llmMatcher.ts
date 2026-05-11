@@ -60,7 +60,7 @@ function getItemName(item: { name?: string | null }): string {
 function filterInvoiceItems(invoiceItems: LlmInvoiceItemInput[]): LlmInvoiceItemInput[] {
   return invoiceItems.filter(item => {
     const name = getItemName(item);
-    return name.length >= 15 && hasLetters(name);
+    return name.length >= 6 && hasLetters(name);
   });
 }
 
@@ -311,6 +311,7 @@ export async function matchWithGemini(
     if (!isGeminiMatchingEnabled() || !process.env.OPENROUTER_API_KEY) return [];
 
     const filteredInvoiceItems = filterInvoiceItems(invoiceItems);
+    console.log(`[GeminiMatcher] invoice items: ${invoiceItems.length} total, ${filteredInvoiceItems.length} after filter (${invoiceItems.length - filteredInvoiceItems.length} excluded)`);
     if (filteredInvoiceItems.length === 0) return [];
 
     const client = new OpenAI({

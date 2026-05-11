@@ -369,6 +369,10 @@ function detectImportColumns(headerRow: unknown[]): {
 // POST /api/projects/:id/matching/run — run matching algorithm
 // Query param: ?mode=full (default) | incremental (preserves confirmed matches)
 router.post('/api/projects/:id/matching/run', async (req: Request, res: Response) => {
+  // LLM matching can take 3-5 minutes for large projects
+  req.setTimeout(300_000);
+  res.setTimeout(300_000);
+
   let lockProjectId: number | null = null;
   let lockAcquired = false;
   try {
