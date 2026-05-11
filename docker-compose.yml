@@ -17,4 +17,6 @@ services:
       GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
       # Список моделей для PDF/вложений (через запятую). Пусто = GigaChat-2-Lite,GigaChat-2-Pro,GigaChat-2-Max
       GIGACHAT_MODELS_FILES: ${GIGACHAT_MODELS_FILES:-}
+      # OpenRouter — для Gemini Flash matching (фаза 8.1)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     restart: unless-stopped
