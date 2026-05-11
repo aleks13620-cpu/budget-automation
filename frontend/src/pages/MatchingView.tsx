@@ -17,6 +17,7 @@ interface MatchItem {
   amount: number | null;
   confidence: number;
   matchType: string;
+  matchReason: string;
   isConfirmed: boolean;
   isSelected: boolean;
   isAnalog: boolean;
