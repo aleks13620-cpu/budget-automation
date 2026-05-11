@@ -30,6 +30,16 @@
   - Активные планы консолидированы в `docs/plans/active/`.
   - Сопутствующие материалы (ТЗ, тестирование, анализ) перенесены в `docs/plans/references/`.
 
+## 2026-05-11 — Фаза 8.1–8.2: Gemini matching + Rule learning
+- Статус: completed
+- План: `docs/plans/active/plan_stabilization_v2_2026-05-03.md` (шаги 8.1–8.2)
+- Коммиты: `bc1f082`, `95710d0`, `f5ed628`, `dade480`, `270ebe5`, `a348a8c`
+- Итог:
+  - 8.1: Gemini Flash batch matching через OpenRouter — 87.5% accuracy на тестовых проектах.
+  - 8.2: UNIQUE index на matching_rules, upsert-хелперы, price-list schema split (matched_items + operator_feedback), unconfirm rollback, frontend type sync.
+  - 8.3 пропущена: Dice fallback даёт 0.1%, Gemini уже покрывает потребность.
+  - Ретроспектива: `retrospectives/11.05.26_фаза-8.1-8.2.md`
+
 ## 2026-05-03 — Консолидация активных планов стабилизации
 - Статус: completed
 - План: `docs/plans/archive/2026-05/README.md`
