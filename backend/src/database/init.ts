@@ -57,10 +57,15 @@ function initializeDatabase(): void {
         supplier_id INTEGER REFERENCES suppliers(id),
         spec_item_id INTEGER REFERENCES specification_items(id) ON DELETE SET NULL,
         invoice_item_id INTEGER,
+        price_list_item_id INTEGER,
+        source TEXT DEFAULT 'invoice',
         comment TEXT,
+        status TEXT DEFAULT 'new',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
       'ALTER TABLE operator_feedback ADD COLUMN supplier_id INTEGER REFERENCES suppliers(id)',
+      'ALTER TABLE operator_feedback ADD COLUMN price_list_item_id INTEGER',
+      "ALTER TABLE operator_feedback ADD COLUMN source TEXT DEFAULT 'invoice'",
       `CREATE TABLE IF NOT EXISTS gigachat_match_cache (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         spec_text TEXT NOT NULL,
@@ -89,10 +94,147 @@ function initializeDatabase(): void {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`,
       'ALTER TABLE matched_items ADD COLUMN matching_rule_id INTEGER',
+      'ALTER TABLE matched_items ADD COLUMN match_reason TEXT',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
     }
+
+    const matchedItemColumns = db.prepare('PRAGMA table_info(matched_items)').all() as Array<{ name: string; notnull: number }>;
+    const hasPriceListItemId = matchedItemColumns.some(column => column.name === 'price_list_item_id');
+    const invoiceItemColumn = matchedItemColumns.find(column => column.name === 'invoice_item_id');
+
+    if (!hasPriceListItemId || invoiceItemColumn?.notnull === 1) {
+      const foreignKeysEnabled = db.pragma('foreign_keys', { simple: true }) === 1;
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.exec('DROP TABLE IF EXISTS matched_items_migration');
+        db.exec(`
+          CREATE TABLE matched_items_migration (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            specification_item_id INTEGER NOT NULL,
+            invoice_item_id INTEGER,
+            price_list_item_id INTEGER,
+            confidence REAL,
+            match_type TEXT,
+            match_reason TEXT,
+            is_confirmed INTEGER DEFAULT 0,
+            is_selected INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'invoice',
+            is_analog INTEGER DEFAULT 0,
+            matching_rule_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (specification_item_id) REFERENCES specification_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (price_list_item_id) REFERENCES price_list_items(id) ON DELETE CASCADE,
+            FOREIGN KEY (matching_rule_id) REFERENCES matching_rules(id) ON DELETE SET NULL,
+            CHECK (
+              (COALESCE(source, 'invoice') = 'invoice' AND invoice_item_id IS NOT NULL AND price_list_item_id IS NULL)
+              OR
+              (source = 'price_list' AND price_list_item_id IS NOT NULL AND invoice_item_id IS NULL)
+            )
+          )
+        `);
+        db.exec(`
+          INSERT INTO matched_items_migration (
+            id, specification_item_id, invoice_item_id, price_list_item_id, confidence,
+            match_type, match_reason, is_confirmed, is_selected, source, is_analog,
+            matching_rule_id, created_at
+          )
+          SELECT
+            id,
+            specification_item_id,
+            CASE WHEN COALESCE(source, 'invoice') = 'price_list' THEN NULL ELSE invoice_item_id END,
+            CASE WHEN COALESCE(source, 'invoice') = 'price_list' THEN invoice_item_id ELSE NULL END,
+            confidence,
+            match_type,
+            match_reason,
+            COALESCE(is_confirmed, 0),
+            COALESCE(is_selected, 0),
+            CASE WHEN COALESCE(source, 'invoice') = 'price_list' THEN 'price_list' ELSE 'invoice' END,
+            COALESCE(is_analog, 0),
+            matching_rule_id,
+            created_at
+          FROM matched_items
+          WHERE (
+            COALESCE(source, 'invoice') = 'price_list'
+            AND EXISTS (SELECT 1 FROM price_list_items WHERE price_list_items.id = matched_items.invoice_item_id)
+          ) OR (
+            COALESCE(source, 'invoice') <> 'price_list'
+            AND EXISTS (SELECT 1 FROM invoice_items WHERE invoice_items.id = matched_items.invoice_item_id)
+          )
+        `);
+        db.exec('DROP TABLE matched_items');
+        db.exec('ALTER TABLE matched_items_migration RENAME TO matched_items');
+      } finally {
+        if (foreignKeysEnabled) db.pragma('foreign_keys = ON');
+      }
+    }
+
+    // Phase 8.2: merge duplicate matching_rules before adding UNIQUE constraint.
+    // Keep the most recent operator intent (updated_at/id), but preserve usage
+    // volume by summing times_used into the surviving row.
+    db.exec(`
+      WITH ranked AS (
+        SELECT
+          id,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY specification_pattern, invoice_pattern, COALESCE(supplier_id, -1)
+            ORDER BY datetime(COALESCE(updated_at, created_at, '1970-01-01 00:00:00')) DESC, id DESC
+          ) AS keep_id
+        FROM matching_rules
+      ),
+      duplicate_rules AS (
+        SELECT id, keep_id FROM ranked WHERE id <> keep_id
+      )
+      UPDATE matched_items
+      SET matching_rule_id = (
+        SELECT keep_id
+        FROM duplicate_rules
+        WHERE duplicate_rules.id = matched_items.matching_rule_id
+      )
+      WHERE matching_rule_id IN (SELECT id FROM duplicate_rules)
+    `);
+    db.exec(`
+      WITH ranked AS (
+        SELECT
+          id,
+          COALESCE(times_used, 0) AS times_used,
+          FIRST_VALUE(id) OVER (
+            PARTITION BY specification_pattern, invoice_pattern, COALESCE(supplier_id, -1)
+            ORDER BY datetime(COALESCE(updated_at, created_at, '1970-01-01 00:00:00')) DESC, id DESC
+          ) AS keep_id
+        FROM matching_rules
+      ),
+      merged AS (
+        SELECT keep_id, SUM(times_used) AS total_times_used
+        FROM ranked
+        GROUP BY keep_id
+        HAVING COUNT(*) > 1
+      )
+      UPDATE matching_rules
+      SET
+        times_used = (SELECT total_times_used FROM merged WHERE merged.keep_id = matching_rules.id),
+        updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (SELECT keep_id FROM merged)
+    `);
+    db.exec(`
+      WITH ranked AS (
+        SELECT
+          id,
+          ROW_NUMBER() OVER (
+            PARTITION BY specification_pattern, invoice_pattern, COALESCE(supplier_id, -1)
+            ORDER BY datetime(COALESCE(updated_at, created_at, '1970-01-01 00:00:00')) DESC, id DESC
+          ) AS rn
+        FROM matching_rules
+      )
+      DELETE FROM matching_rules
+      WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+    `);
+    db.exec(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_rules_unique
+      ON matching_rules(specification_pattern, invoice_pattern, COALESCE(supplier_id, -1))
+    `);
 
     // Create indexes after migrations (some indexes depend on migrated columns)
     db.exec(CREATE_INDEXES_SQL);

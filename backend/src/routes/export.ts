@@ -64,8 +64,9 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1 ${analogFilter}
       LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
       LEFT JOIN invoices i ON ii.invoice_id = i.id
-      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.invoice_item_id = pli.id
-      LEFT JOIN suppliers s ON i.supplier_id = s.id
+      LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.price_list_item_id = pli.id
+      LEFT JOIN price_lists pl ON pli.price_list_id = pl.id
+      LEFT JOIN suppliers s ON COALESCE(i.supplier_id, pl.supplier_id) = s.id
       WHERE si.project_id = ?
       ORDER BY si.section, si.id
     `).all(projectId) as Array<{

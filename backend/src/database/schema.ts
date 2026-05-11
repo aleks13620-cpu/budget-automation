@@ -93,14 +93,26 @@ CREATE TABLE IF NOT EXISTS matching_rules (
 CREATE TABLE IF NOT EXISTS matched_items (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   specification_item_id INTEGER NOT NULL,
-  invoice_item_id INTEGER NOT NULL,
+  invoice_item_id INTEGER,
+  price_list_item_id INTEGER,
   confidence REAL,
   match_type TEXT,
+  match_reason TEXT,
   is_confirmed INTEGER DEFAULT 0,
   is_selected INTEGER DEFAULT 0,
+  source TEXT DEFAULT 'invoice',
+  is_analog INTEGER DEFAULT 0,
+  matching_rule_id INTEGER,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (specification_item_id) REFERENCES specification_items(id) ON DELETE CASCADE,
-  FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE
+  FOREIGN KEY (invoice_item_id) REFERENCES invoice_items(id) ON DELETE CASCADE,
+  FOREIGN KEY (price_list_item_id) REFERENCES price_list_items(id) ON DELETE CASCADE,
+  FOREIGN KEY (matching_rule_id) REFERENCES matching_rules(id) ON DELETE SET NULL,
+  CHECK (
+    (COALESCE(source, 'invoice') = 'invoice' AND invoice_item_id IS NOT NULL AND price_list_item_id IS NULL)
+    OR
+    (source = 'price_list' AND price_list_item_id IS NOT NULL AND invoice_item_id IS NULL)
+  )
 );
 
 -- Прайс-листы
@@ -212,9 +224,13 @@ CREATE TABLE IF NOT EXISTS operator_feedback (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   type TEXT NOT NULL,
   project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  supplier_id INTEGER REFERENCES suppliers(id),
   spec_item_id INTEGER REFERENCES specification_items(id) ON DELETE SET NULL,
   invoice_item_id INTEGER,
+  price_list_item_id INTEGER,
+  source TEXT DEFAULT 'invoice',
   comment TEXT,
+  status TEXT DEFAULT 'new',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -243,7 +259,9 @@ CREATE INDEX IF NOT EXISTS idx_invoice_items_article ON invoice_items(article);
 CREATE INDEX IF NOT EXISTS idx_invoice_items_name ON invoice_items(name);
 CREATE INDEX IF NOT EXISTS idx_matched_items_spec ON matched_items(specification_item_id);
 CREATE INDEX IF NOT EXISTS idx_matched_items_invoice ON matched_items(invoice_item_id);
+CREATE INDEX IF NOT EXISTS idx_matched_items_price_list ON matched_items(price_list_item_id);
 CREATE INDEX IF NOT EXISTS idx_matching_rules_spec ON matching_rules(specification_pattern);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_matching_rules_unique ON matching_rules(specification_pattern, invoice_pattern, COALESCE(supplier_id, -1));
 CREATE INDEX IF NOT EXISTS idx_invoice_history_invoice ON invoice_items_history(invoice_id);
 CREATE INDEX IF NOT EXISTS idx_spec_parser_configs_spec ON specification_parser_configs(specification_id);
 CREATE INDEX IF NOT EXISTS idx_size_synonyms_synonym ON size_synonyms(synonym);

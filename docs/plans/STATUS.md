@@ -7,7 +7,7 @@
 - [Benchmark reports](../../benchmark-reports/)
 - [Бизнес KPI](../../../.business/goals/kpi.md)
 
-## Текущая фаза: Шаг 8
+## Текущая фаза: Шаг 8 — LLM-based matching
 
 | Шаг | Задача | Ветка | Статус | Дата |
 |-----|--------|-------|--------|------|
@@ -28,3 +28,7 @@
 | 6в | parser_overrides конфиг | step-6c-parser-overrides | [x] | 2026-05-06 |
 | 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [x] | 2026-05-06 |
 | 7 | Field-level quality report без изменения парсинга | step-7b-field-quality-report | [x] | 2026-05-08 |
+| 8 | Диагностика матчинга: Dice 0.1%, тест Gemini 87.5% | — | [x] | 2026-05-09 |
+| 8.1 | Gemini Flash batch matching service + интеграция | step-8a-llm-matching-agent1-clean | [x] | 2026-05-10 |
+| 8.2 | Rule learning из LLM-матчей + fix дубликатов правил | step-8b-rule-learning | [x] | 2026-05-10 |
+| 8.3 | Механические фиксы Dice fallback + batch trigger | step-8c-dice-fallback | [ ] | |

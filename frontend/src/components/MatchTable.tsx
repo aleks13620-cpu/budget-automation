@@ -17,6 +17,7 @@ interface MatchItem {
   matchReason: string;
   isConfirmed: boolean;
   isSelected: boolean;
+  isAnalog: boolean;
 }
 
 interface SpecItem {
