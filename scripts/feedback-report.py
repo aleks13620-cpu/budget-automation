@@ -81,6 +81,8 @@ def supplier_join(conn: sqlite3.Connection) -> tuple[str, str]:
     feedback_columns = table_columns(conn, "operator_feedback")
     invoice_item_columns = table_columns(conn, "invoice_items")
     invoice_columns = table_columns(conn, "invoices")
+    price_list_item_columns = table_columns(conn, "price_list_items")
+    price_list_columns = table_columns(conn, "price_lists")
     has_suppliers = table_exists(conn, "suppliers")
 
     if not has_suppliers:
@@ -93,6 +95,26 @@ def supplier_join(conn: sqlite3.Connection) -> tuple[str, str]:
         and "id" in invoice_columns
         and "supplier_id" in invoice_columns
     )
+    can_join_price_list_supplier = (
+        "price_list_item_id" in feedback_columns
+        and "source" in feedback_columns
+        and "id" in price_list_item_columns
+        and "price_list_id" in price_list_item_columns
+        and "id" in price_list_columns
+        and "supplier_id" in price_list_columns
+    )
+
+    if "supplier_id" in feedback_columns and can_join_invoice_supplier and can_join_price_list_supplier:
+        return (
+            "COALESCE(NULLIF(TRIM(s.name), ''), 'Р‘РµР· РїРѕСЃС‚Р°РІС‰РёРєР°')",
+            """
+            LEFT JOIN invoice_items ii ON COALESCE(f.source, 'invoice') = 'invoice' AND ii.id = f.invoice_item_id
+            LEFT JOIN invoices i ON i.id = ii.invoice_id
+            LEFT JOIN price_list_items pli ON f.source = 'price_list' AND pli.id = f.price_list_item_id
+            LEFT JOIN price_lists pl ON pl.id = pli.price_list_id
+            LEFT JOIN suppliers s ON s.id = COALESCE(f.supplier_id, i.supplier_id, pl.supplier_id)
+            """,
+        )
 
     if "supplier_id" in feedback_columns and can_join_invoice_supplier:
         return (

@@ -142,7 +142,8 @@ model InvoiceItem {
 model MatchedItem {
   id                  Int      @id @default(autoincrement())
   specificationItemId Int      @map("specification_item_id")
-  invoiceItemId       Int      @map("invoice_item_id")
+  invoiceItemId       Int?     @map("invoice_item_id")
+  priceListItemId     Int?     @map("price_list_item_id")
   confidence          Float?
   matchType           String?  @map("match_type")
   isConfirmed         Int?     @default(0) @map("is_confirmed")
@@ -152,7 +153,8 @@ model MatchedItem {
   createdAt           DateTime @default(now()) @map("created_at")
 
   specificationItem SpecificationItem @relation(fields: [specificationItemId], references: [id], onDelete: Cascade)
-  invoiceItem       InvoiceItem       @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+  invoiceItem       InvoiceItem?      @relation(fields: [invoiceItemId], references: [id], onDelete: Cascade)
+  priceListItem     PriceListItem?    @relation(fields: [priceListItemId], references: [id], onDelete: Cascade)
 
   @@map("matched_items")
 }
@@ -260,6 +262,7 @@ model PriceListItem {
   createdAt   DateTime @default(now()) @map("created_at")
 
   priceList PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  matches   MatchedItem[]
 
   @@map("price_list_items")
 }
@@ -287,8 +290,11 @@ model OperatorFeedback {
   id           Int      @id @default(autoincrement())
   type         String?
   projectId    Int?     @map("project_id")
+  supplierId   Int?     @map("supplier_id")
   specItemId   Int?     @map("spec_item_id")
   invoiceItemId Int?    @map("invoice_item_id")
+  priceListItemId Int?  @map("price_list_item_id")
+  source       String?  @default("invoice")
   comment      String?
   status       String?  @default("new")
   createdAt    DateTime @default(now()) @map("created_at")

@@ -12,6 +12,7 @@ export interface MatchCandidate {
   dnScore: -1 | 0 | 1;
   matchingRuleId?: number | null;
   matchReason?: string | null;
+  isAnalog?: boolean;
 }
 
 interface SpecItemRow {
@@ -50,6 +51,7 @@ interface MatchingRule {
   times_used: number;
   supplier_id: number | null;
   is_negative: number;
+  is_analog: number;
   source?: string;
 }
 
@@ -279,6 +281,7 @@ async function matchSpecItems(
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
       let bestRuleId: number | null = null;
+      let bestRuleIsAnalog = 0;
       let quantityScore: -1 | 0 | 1 = 0;
       let dnScore: -1 | 0 | 1 = 0;
       const rawNameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
@@ -414,6 +417,7 @@ async function matchSpecItems(
               bestConfidence = ruleConfidence;
               bestType = 'learned_rule';
               bestRuleId = rule.id;
+              bestRuleIsAnalog = rule.is_analog ? 1 : 0;
             }
           }
         }
@@ -480,6 +484,7 @@ async function matchSpecItems(
           quantityScore,
           dnScore,
           matchingRuleId: bestType === 'learned_rule' ? bestRuleId : null,
+          isAnalog: bestType === 'learned_rule' && bestRuleIsAnalog === 1,
         });
       }
     }
@@ -542,6 +547,7 @@ async function matchSpecItems(
         dnScore: getDnScore(specMatchTextById.get(spec.id) || spec.full_name || spec.name, inv.name),
         matchingRuleId: null,
         matchReason: llmMatch.reason,
+        isAnalog: false,
       });
       llmSeenSpecIds.add(llmMatch.specItemId);
     }
@@ -560,12 +566,12 @@ const INVOICE_ITEMS_SQL = `
 `;
 const PRICE_LIST_ITEMS_SQL = `
   SELECT pli.id, 0 as invoice_id, pli.article, pli.name, pli.unit,
-         NULL as quantity, pli.price, NULL as amount, NULL as supplier_id, 'price_list' as source
+         NULL as quantity, pli.price, NULL as amount, pl.supplier_id, 'price_list' as source
   FROM price_list_items pli
   JOIN price_lists pl ON pli.price_list_id = pl.id
   WHERE pl.project_id = ?
 `;
-const RULES_SQL = "SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id, COALESCE(is_negative,0) as is_negative, COALESCE(source,'none') as source FROM matching_rules";
+const RULES_SQL = "SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id, COALESCE(is_negative,0) as is_negative, COALESCE(is_analog,0) as is_analog, COALESCE(source,'none') as source FROM matching_rules";
 
 function loadAllItems(db: ReturnType<typeof getDatabase>, projectId: number): InvoiceItemRow[] {
   const invoiceItems = db.prepare(INVOICE_ITEMS_SQL).all(projectId) as InvoiceItemRow[];
