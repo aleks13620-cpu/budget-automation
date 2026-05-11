@@ -19,4 +19,5 @@ services:
       GIGACHAT_MODELS_FILES: ${GIGACHAT_MODELS_FILES:-}
       # OpenRouter — для Gemini Flash matching (фаза 8.1)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      ENABLE_OPENROUTER_LLM_MATCHING: ${ENABLE_OPENROUTER_LLM_MATCHING:-false}
     restart: unless-stopped
