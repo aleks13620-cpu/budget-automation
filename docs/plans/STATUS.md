@@ -6,6 +6,7 @@
 - [Журнал реализации](../../IMPLEMENTATION_LOG.md)
 - [Benchmark reports](../../benchmark-reports/)
 - [Бизнес KPI](../../../.business/goals/kpi.md)
+- [Отложенные варианты PDF spec parent/child](references/2026-05-12_pdf_spec_parent_child_followups.md)
 
 ## Текущая фаза: Шаг 8 — LLM-based matching
 
