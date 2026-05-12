@@ -105,6 +105,9 @@ interface GigaChatSpecPdfJSON {
 }
 
 const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)\b/i;
+const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
+const TO_ZHE_PATTERN = /^то\s+же/i;
+const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
 
 function isSectionHeaderRow(name: string, quantity: number | null, unit: string | null): boolean {
   const normalized = name.trim().toLowerCase();
@@ -126,6 +129,73 @@ function splitMonsterRow(name: string): string[] {
     .map(part => part.trim().replace(/^[-–—]\s*/, ''))
     .filter(part => part.length >= 3);
   return parts.length >= 2 ? parts : [normalized];
+}
+
+function isDnChild(name: string, positionNumber: string | null): boolean {
+  return !positionNumber && DN_CHILD_PATTERN.test(name.trim());
+}
+
+function isToZheChild(name: string): boolean {
+  return TO_ZHE_PATTERN.test(name.trim());
+}
+
+function isParameterizedChild(name: string): boolean {
+  const normalized = name.trim();
+  if (!normalized) return false;
+  if (PARAMETER_CHILD_PATTERN.test(normalized)) return true;
+  if (/^[A-Za-zА-Яа-я]{0,4}\d{2,4}[-xх×]\d{2,4}([-\s]\d{2,4})?$/i.test(normalized)) return true;
+  return false;
+}
+
+function linkPdfParentChildren(items: SpecificationRow[]): void {
+  let lastFullIndex: number | null = null;
+
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+
+    if (isDnChild(item.name, item.position_number)) {
+      if (lastFullIndex !== null) {
+        item._parentIndex = lastFullIndex;
+        item.full_name = `${items[lastFullIndex].name} ${item.name}`.trim();
+      } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+      continue;
+    }
+
+    if (isToZheChild(item.name)) {
+      if (lastFullIndex !== null) {
+        item._parentIndex = lastFullIndex;
+        const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+        const suffix = item.name.replace(/^то\s+же[,\s]*/i, '').trim();
+        const expandedName = suffix ? `${parentName} ${suffix}` : parentName;
+        item.name = expandedName;
+        item.full_name = expandedName;
+      } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+      lastFullIndex = i;
+      continue;
+    }
+
+    if (
+      lastFullIndex !== null &&
+      isParameterizedChild(item.name) &&
+      item.position_number !== null &&
+      items[lastFullIndex].position_number === item.position_number
+    ) {
+      item._parentIndex = lastFullIndex;
+      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+      item.full_name = `${parentName} ${item.name}`.trim();
+      continue;
+    }
+
+    lastFullIndex = i;
+    item._parentIndex = null;
+    item.full_name = null;
+  }
 }
 
 function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
@@ -160,6 +230,7 @@ function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
       });
     });
   }
+  linkPdfParentChildren(rows);
   return rows;
 }
 

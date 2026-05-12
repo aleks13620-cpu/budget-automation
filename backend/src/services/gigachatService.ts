@@ -285,6 +285,9 @@ export async function uploadFile(filePath: string, mimeType: string): Promise<st
             }
           });
         });
+        req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+          req.destroy(new Error(`GigaChat uploadFile timeout after ${REQUEST_TIMEOUT_MS / 1000}s`));
+        });
         req.on('error', reject);
         req.write(bodyBuf);
         req.end();
@@ -328,6 +331,9 @@ export async function deleteFile(fileId: string): Promise<void> {
           resolve();
         }
       });
+    });
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error(`GigaChat deleteFile timeout after ${REQUEST_TIMEOUT_MS / 1000}s`));
     });
     req.on('error', reject);
     req.end();
