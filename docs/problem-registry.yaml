@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": 2,
-    "updated_at": "2026-04-15T18:06:01.596Z"
+    "updated_at": "2026-05-12T17:23:15.907Z"
   },
   "issues": [
     {
@@ -14,7 +14,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:02.420Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.904Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "Есть дубли одних и тех же файлов с разными разделителями путей (backend/src/... и backend\\\\src\\\\...), что ломает чистоту индекса и усложняет ревью.",
@@ -39,6 +39,44 @@
       "due_date": "2026-04-20"
     },
     {
+      "id": "PRB-008",
+      "title": "PDF спеки: variant-children без position_number теряются",
+      "description": "Дочерние строки-типоразмеры (variant codes вроде `C11-300-500`, `C11-500-1200`) в PDF-спецификациях не имеют значения в колонке «Позиция» и теряются при разборе через GigaChat: `linkPdfParentChildren` в `backend/src/services/gigachatSpecFromPdf.ts` требует `position_number !== null` для parameterized-child привязки, поэтому variant-children не получают `_parentIndex` и валидный `full_name` и не доходят до спецификации как отдельные позиции с количеством. Продолжение парадигмы parent/child fix из ретро 8.3 (DN/\"То же\"/parametric children), теперь для variant-children без position_number.",
+      "type": "bug",
+      "priority": "critical",
+      "status": "open",
+      "owner": "team",
+      "links": [
+        "retrospectives/12.05.26_pdf-позиции-экспертное-заключение.md",
+        "docs/plans/references/2026-05-12_pdf_spec_parent_child_followups.md",
+        "retrospectives/12.05.26_фаза-8.3_pdf-parent-child-hotfix.md"
+      ],
+      "created_at": "2026-05-12T17:00:00.000Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
+      "resolved_at": null,
+      "resolution_note": "",
+      "user_impact": "На реальном проекте теряются ~15 позиций типоразмеров радиаторов (C 11 и C 21) → оператор вынужден добивать вручную → удлиняется время расчёта проекта и нарушается KPI ≥80% автоматического парсинга спецификации. На потоке 15-20 проектов/мес это блокирует масштабирование MVP.",
+      "scoring": {
+        "impact": 4,
+        "urgency": 4,
+        "frequency": 4,
+        "confidence": 5,
+        "effort": 2,
+        "risk": 2
+      },
+      "severity_score": 3.6,
+      "priority_score": 4.05,
+      "priority_bucket": "P0",
+      "suggested_actions": [
+        "Add VARIANT_CODE_PATTERN regex",
+        "Adjust linkPdfParentChildren condition for null position_number",
+        "Add regression fixtures and runner"
+      ],
+      "next_action": "Реализовать Вариант 1 (точечная правка linkPdfParentChildren + регрессионный набор). Контекст: docs/plans/references/2026-05-12_pdf_spec_parent_child_followups.md и retrospectives/12.05.26_pdf-позиции-экспертное-заключение.md (источник Вариантов 1/2/3). Связанный локальный Cursor-план: pdf_spec_variant-children_fix_22290548 (хранится в .cursor/plans/ на машине автора, не в репо).",
+      "blocking_dependencies": [],
+      "due_date": "2026-05-19"
+    },
+    {
       "id": "PRB-001",
       "title": "Repo contains transient/debug artifacts",
       "description": "В репозитории отслеживаются временные файлы (debug-логи, sqlite wal/shm, временные json), что шумит в git и повышает риск случайных коммитов.",
@@ -48,7 +86,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:45:52.591Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "В репозитории отслеживаются временные файлы (debug-логи, sqlite wal/shm, временные json), что шумит в git и повышает риск случайных коммитов.",
@@ -78,7 +116,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:02.969Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "Тестовые PDF/XLSX образцы лежат рядом с кодом без четкой политики хранения, что увеличивает вес репозитория и риск утечки данных.",
@@ -108,7 +146,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:15.980Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "Изменения схемы БД могут происходить без обновления описания и проверки совместимости, что повышает риск регрессий на деплое.",
@@ -138,7 +176,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:03.710Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "Часть документации перемещена, часть удалена/дублируется, из-за чего сложно понять актуальный источник правды.",
@@ -168,7 +206,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:15.270Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "Нет обязательного pre-commit процесса (lint/test/validate registry), из-за чего дефекты и несогласованные изменения попадают в ветки.",
@@ -198,7 +236,7 @@
       "owner": "team",
       "links": [],
       "created_at": "2026-04-15T17:46:16.528Z",
-      "updated_at": "2026-04-15T18:06:01.595Z",
+      "updated_at": "2026-05-12T17:23:15.905Z",
       "resolved_at": null,
       "resolution_note": "",
       "user_impact": "До внедрения реестра проблемы фиксировались несистемно, из-за чего терялись приоритеты и статус выполнения.",
