@@ -242,7 +242,6 @@ export async function uploadFile(filePath: string, mimeType: string): Promise<st
   const fileName = path.basename(filePath);
   const boundary = `----GigaChatBoundary${Date.now()}`;
 
-  // Строим multipart/form-data вручную
   const partFile = Buffer.concat([
     Buffer.from(
       `--${boundary}\r\n` +
@@ -260,35 +259,50 @@ export async function uploadFile(filePath: string, mimeType: string): Promise<st
   );
   const bodyBuf = Buffer.concat([partFile, partPurpose]);
 
-  const responseText = await new Promise<string>((resolve, reject) => {
-    const req = https.request(FILES_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization':  `Bearer ${token}`,
-        'Content-Type':   `multipart/form-data; boundary=${boundary}`,
-        'Content-Length': bodyBuf.length,
-        'Accept':         'application/json',
-      },
-      agent: tlsAgent,
-    }, res => {
-      let data = '';
-      res.on('data', chunk => (data += chunk));
-      res.on('end', () => {
-        if (res.statusCode && res.statusCode >= 400) {
-          reject(new Error(`GigaChat uploadFile HTTP ${res.statusCode}: ${data}`));
-        } else {
-          resolve(data);
-        }
-      });
-    });
-    req.on('error', reject);
-    req.write(bodyBuf);
-    req.end();
-  });
+  const MAX_RETRIES = 3;
+  const BASE_DELAY_MS = 5000;
 
-  const info: GigaChatFileInfo = JSON.parse(responseText);
-  console.log(`[GigaChat] File uploaded: id=${info.id}, name=${info.filename}, bytes=${info.bytes}`);
-  return info.id;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const responseText = await new Promise<string>((resolve, reject) => {
+        const req = https.request(FILES_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization':  `Bearer ${token}`,
+            'Content-Type':   `multipart/form-data; boundary=${boundary}`,
+            'Content-Length': bodyBuf.length,
+            'Accept':         'application/json',
+          },
+          agent: tlsAgent,
+        }, res => {
+          let data = '';
+          res.on('data', chunk => (data += chunk));
+          res.on('end', () => {
+            if (res.statusCode && res.statusCode >= 400) {
+              reject(new Error(`GigaChat uploadFile HTTP ${res.statusCode}: ${data}`));
+            } else {
+              resolve(data);
+            }
+          });
+        });
+        req.on('error', reject);
+        req.write(bodyBuf);
+        req.end();
+      });
+
+      const info: GigaChatFileInfo = JSON.parse(responseText);
+      console.log(`[GigaChat] File uploaded: id=${info.id}, name=${info.filename}, bytes=${info.bytes}`);
+      return info.id;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes('429') || attempt === MAX_RETRIES) throw err;
+      const delay = BASE_DELAY_MS * Math.pow(2, attempt);
+      console.warn(`[GigaChat] uploadFile 429 — retry ${attempt + 1}/${MAX_RETRIES} after ${delay}ms`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+
+  throw new Error('GigaChat uploadFile: unreachable');
 }
 
 /**
