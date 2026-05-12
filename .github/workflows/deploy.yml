@@ -19,8 +19,24 @@ jobs:
 
       - name: Deploy
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@5.42.103.63 "
-            cd /root/budget-automation &&
-            git pull origin main &&
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@5.42.103.63 << 'ENDSSH'
+            set -e
+            REPO_DIR=/root/budget-automation
+            REPO_URL=https://github.com/aleks13620-cpu/budget-automation.git
+
+            if [ ! -d "$REPO_DIR/.git" ]; then
+              echo "Git repo not found — cloning..."
+              rm -rf "$REPO_DIR/backend" "$REPO_DIR/frontend" "$REPO_DIR/Dockerfile"
+              git clone "$REPO_URL" /tmp/budget-repo
+              cp -r /tmp/budget-repo/.git "$REPO_DIR/.git"
+              rm -rf /tmp/budget-repo
+              cd "$REPO_DIR"
+              git checkout -- .
+            else
+              cd "$REPO_DIR"
+              git fetch origin main
+              git reset --hard origin/main
+            fi
+
             docker compose up -d --build
-          "
+          ENDSSH
