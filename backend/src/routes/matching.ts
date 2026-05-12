@@ -7,7 +7,7 @@ import { runMatching, runMatchingIncremental, normalizeForMatching } from '../se
 import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constructionSynonymLearner';
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 import { isGeminiMatchingEnabled } from '../services/llmMatcher';
-import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive } from '../services/matchingRunLock';
+import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive, setMatchingResult, getMatchingResult, clearMatchingResult } from '../services/matchingRunLock';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const LLM_MATCH_TYPE = 'llm_suggestion';
@@ -366,37 +366,15 @@ function detectImportColumns(headerRow: unknown[]): {
   return { specCol, invCol, invCols, supplierCol, normalizedHeader, expectedPatterns };
 }
 
-// POST /api/projects/:id/matching/run — run matching algorithm
-// Query param: ?mode=full (default) | incremental (preserves confirmed matches)
-router.post('/api/projects/:id/matching/run', async (req: Request, res: Response) => {
-  // LLM matching can take 3-5 minutes for large projects
-  req.setTimeout(300_000);
-  res.setTimeout(300_000);
-
-  let lockProjectId: number | null = null;
-  let lockAcquired = false;
+// Background matching worker — runs after immediate response
+async function runMatchingBackground(projectId: number, mode: string): Promise<void> {
   try {
-    const projectId = parseInt(String(req.params.id), 10);
-    lockProjectId = projectId;
-    const mode = String(req.query.mode || 'full');
     const db = getDatabase();
-
-    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
-    if (!project) {
-      return res.status(404).json({ error: 'Проект не найден' });
-    }
-
-    if (!acquireMatchingRun(projectId)) {
-      return res.status(409).json({ error: 'Matching already running for this project' });
-    }
-    lockAcquired = true;
 
     let candidates;
     let deleteUnconfirmedMatches: () => void;
 
     if (mode === 'incremental') {
-      // Keep confirmed matches; delete unconfirmed only for spec items that have no confirmed match
-      // Get spec IDs that are already confirmed — skip them
       const confirmedRows = db.prepare(`
         SELECT DISTINCT specification_item_id
         FROM matched_items
@@ -431,7 +409,6 @@ router.post('/api/projects/:id/matching/run', async (req: Request, res: Response
       };
     }
 
-    // Select primary by tie-breakers: DN -> quantity -> confidence.
     const bestCandidateBySpec = new Map<number, typeof candidates[number]>();
     for (const candidate of candidates) {
       const current = bestCandidateBySpec.get(candidate.specItemId);
@@ -450,7 +427,6 @@ router.post('/api/projects/:id/matching/run', async (req: Request, res: Response
       if (shouldReplace) bestCandidateBySpec.set(candidate.specItemId, candidate);
     }
 
-    // Insert new candidates
     const insert = db.prepare(`
       INSERT INTO matched_items (
         specification_item_id, invoice_item_id, price_list_item_id, confidence,
@@ -494,38 +470,85 @@ router.post('/api/projects/:id/matching/run', async (req: Request, res: Response
     });
     insertAll();
 
-    // Count stats
     const totalSpec = (db.prepare(
       'SELECT COUNT(*) as cnt FROM specification_items WHERE project_id = ?'
     ).get(projectId) as { cnt: number }).cnt;
 
-    // Total matched = new candidates + previously confirmed (if incremental)
     const totalMatchedRows = db.prepare(`
       SELECT COUNT(DISTINCT specification_item_id) as cnt
       FROM matched_items
       WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
     `).get(projectId) as { cnt: number };
     const matched = totalMatchedRows.cnt;
-    const unmatched = totalSpec - matched;
 
-    res.json({
+    setMatchingResult(projectId, {
       total: totalSpec,
       matched,
-      unmatched,
+      unmatched: totalSpec - matched,
       mode,
       llmSuggestions: insertedLlmSuggestions,
       llmMatchingEnabled: isGeminiMatchingEnabled() && Boolean(process.env.OPENROUTER_API_KEY),
     });
+    console.log(`[Matcher] project ${projectId} done: ${matched}/${totalSpec} matched, ${insertedLlmSuggestions} LLM suggestions`);
+  } catch (error) {
+    console.error(`[Matcher] project ${projectId} failed:`, error);
+    setMatchingResult(projectId, {
+      total: 0, matched: 0, unmatched: 0, mode,
+      llmSuggestions: 0, llmMatchingEnabled: false,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  } finally {
+    releaseMatchingRun(projectId);
+  }
+}
+
+// POST /api/projects/:id/matching/run — start matching (async, returns immediately)
+// Query param: ?mode=full (default) | incremental (preserves confirmed matches)
+router.post('/api/projects/:id/matching/run', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const mode = String(req.query.mode || 'full');
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    if (!acquireMatchingRun(projectId)) {
+      return res.status(409).json({ error: 'Matching already running for this project' });
+    }
+
+    runMatchingBackground(projectId, mode);
+
+    res.json({ status: 'started', mode, projectId });
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при запуске сопоставления',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
-  } finally {
-    if (lockAcquired && lockProjectId !== null) {
-      releaseMatchingRun(lockProjectId);
-    }
   }
+});
+
+// GET /api/projects/:id/matching/status — poll matching run status
+router.get('/api/projects/:id/matching/status', (req: Request, res: Response) => {
+  const projectId = parseInt(String(req.params.id), 10);
+  const running = isMatchingRunActive(projectId);
+  const result = getMatchingResult(projectId);
+
+  if (running) {
+    return res.json({ status: 'running', projectId });
+  }
+
+  if (result) {
+    clearMatchingResult(projectId);
+    if (result.error) {
+      return res.json({ status: 'error', error: result.error, projectId });
+    }
+    return res.json({ status: 'done', ...result });
+  }
+
+  res.json({ status: 'idle', projectId });
 });
 
 // GET /api/projects/:id/matching — get matching results

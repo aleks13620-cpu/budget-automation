@@ -178,17 +178,45 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
+  const pollMatchingStatus = async (setRunningFlag: (v: boolean) => void, label: string) => {
+    setMessage({ type: 'info' as any, text: `${label} запущено, ожидаем завершения...` });
+    const maxPolls = 120;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      try {
+        const { data: status } = await api.get(`/projects/${projectId}/matching/status`);
+        if (status.status === 'done') {
+          setMessage({
+            type: 'success',
+            text: `${label} завершено: ${status.matched} из ${status.total} позиций найдены`,
+          });
+          await loadMatching();
+          await loadSummary();
+          return;
+        }
+        if (status.status === 'error') {
+          setMessage({ type: 'error', text: status.error || 'Ошибка при сопоставлении' });
+          return;
+        }
+        if (status.status === 'idle') {
+          await loadMatching();
+          await loadSummary();
+          setMessage({ type: 'success', text: `${label} завершено` });
+          return;
+        }
+      } catch {
+        // keep polling
+      }
+    }
+    setMessage({ type: 'error', text: 'Сопоставление заняло слишком много времени' });
+  };
+
   const handleRun = async () => {
     setRunning(true);
     setMessage(null);
     try {
-      const { data } = await api.post(`/projects/${projectId}/matching/run`);
-      setMessage({
-        type: 'success',
-        text: `Сопоставление завершено: ${data.matched} из ${data.total} позиций найдены`,
-      });
-      await loadMatching();
-      await loadSummary();
+      await api.post(`/projects/${projectId}/matching/run`);
+      await pollMatchingStatus(setRunning, 'Сопоставление');
     } catch (err: any) {
       setMessage({
         type: 'error',
@@ -203,13 +231,8 @@ export function MatchingView({ projectId, onBack }: Props) {
     setRunningIncremental(true);
     setMessage(null);
     try {
-      const { data } = await api.post(`/projects/${projectId}/matching/run?mode=incremental`);
-      setMessage({
-        type: 'success',
-        text: `Обновление завершено: ${data.matched} из ${data.total} позиций найдены (подтверждённые сохранены)`,
-      });
-      await loadMatching();
-      await loadSummary();
+      await api.post(`/projects/${projectId}/matching/run?mode=incremental`);
+      await pollMatchingStatus(setRunningIncremental, 'Обновление');
     } catch (err: any) {
       setMessage({
         type: 'error',
