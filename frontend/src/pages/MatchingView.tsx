@@ -178,7 +178,7 @@ export function MatchingView({ projectId, onBack }: Props) {
     }
   };
 
-  const pollMatchingStatus = async (setRunningFlag: (v: boolean) => void, label: string) => {
+  const pollMatchingStatus = async (_setRunningFlag: (v: boolean) => void, label: string) => {
     setMessage({ type: 'info' as any, text: `${label} запущено, ожидаем завершения...` });
     const maxPolls = 120;
     for (let i = 0; i < maxPolls; i++) {
