@@ -3,7 +3,7 @@
 Эта папка — единая точка хранения всех планов и связанных материалов.
 
 ## Быстрые ссылки
-- [Активный master-plan стабилизации](active/plan_stabilization_v2_2026-05-03.md)
+- [Активный master-plan стабилизации](active/plan_prod_readiness_2026-05-13.md)
 - [Статус стабилизации](STATUS.md)
 - [Журнал реализации](../IMPLEMENTATION_LOG.md)
 - [Архив планов за 2026-05](archive/2026-05/README.md)

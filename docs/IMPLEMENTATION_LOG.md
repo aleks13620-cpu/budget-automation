@@ -30,6 +30,17 @@
   - Активные планы консолидированы в `docs/plans/active/`.
   - Сопутствующие материалы (ТЗ, тестирование, анализ) перенесены в `docs/plans/references/`.
 
+## 2026-05-13 — Архивация plan_stabilization_v2 и переход к prod readiness
+- Статус: completed
+- План: `docs/plans/archive/2026-05/plan_stabilization_v2_2026-05-03.md`
+- Коммиты: n/a
+- Итог:
+  - Все шаги 0–8.2 master-plan стабилизации закрыты.
+  - Хотфиксы 8.3 (PDF parent-child) и PRB-008 (variant-children) задеплоены.
+  - CI/CD переведён с GHCR на сборку на сервере (retry 429, без токенов).
+  - Plan_stabilization_v2 архивирован, создан новый план `plan_prod_readiness_2026-05-13.md`.
+  - Выявлены 5 carry-tasks (парсинг), 3 инфраструктурные задачи, 2 задачи техдолга.
+
 ## 2026-05-13 — PDF spec variant-children fix (PRB-008, F0–F6)
 - Статус: completed
 - План: `docs/plans/references/2026-05-13_pdf_spec_variant_children_handoff.md`

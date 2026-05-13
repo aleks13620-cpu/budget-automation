@@ -8,7 +8,7 @@
 - [KPI и цели](goals/kpi.md)
 - [Обзор продукта](products/overview.md)
 - [Портрет клиента](audience/avatar.md)
-- [Активный master-plan стабилизации](../docs/plans/active/plan_stabilization_v2_2026-05-03.md)
+- [Активный план: prod readiness](../docs/plans/active/plan_prod_readiness_2026-05-13.md)
 - [Статус стабилизации](../docs/plans/STATUS.md)
 
 ## Структура

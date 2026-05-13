@@ -1,36 +1,35 @@
-# Статус стабилизации v2
+# Статус проекта
 
 ## Связанные материалы
-- [Активный master-plan](plan_stabilization_v2_2026-05-03.md)
-- [Правила работы с планами](../README.md)
-- [Журнал реализации](../../IMPLEMENTATION_LOG.md)
-- [Benchmark reports](../../benchmark-reports/)
-- [Бизнес KPI](../../../.business/goals/kpi.md)
-- [Отложенные варианты PDF spec parent/child](references/2026-05-12_pdf_spec_parent_child_followups.md)
+- [Активный план](active/plan_prod_readiness_2026-05-13.md)
+- [Правила работы с планами](README.md)
+- [Журнал реализации](../IMPLEMENTATION_LOG.md)
+- [Benchmark reports](../benchmark-reports/)
+- [Бизнес KPI](../../.business/goals/kpi.md)
+- [Problem Registry](../problem-registry.yaml)
+- [Handoff PRB-008](references/2026-05-13_pdf_spec_variant_children_handoff_status.md)
+- [Предыдущий план (архив)](archive/2026-05/plan_stabilization_v2_2026-05-03.md)
 
-## Текущая фаза: Шаг 8 — LLM-based matching
+## Текущая фаза: Стабилизация прода и carry-tasks
 
-| Шаг | Задача | Ветка | Статус | Дата |
-|-----|--------|-------|--------|------|
-| 0 | Верификация 12 JSON (Иван/Сергей) | — | [ ] | |
-| 0а | Разделить benchmark на train/holdout | step-0a-train-holdout | [x] | 2026-05-05 |
-| 1 | Baseline парсинга | — | [x] | 2026-05-05 |
-| 1а | Smoke-test + version pinning | step-1a-smoke-test | [x] | 2026-05-05 |
-| 1б | Миграция operator_feedback | step-1b-migration | [x] | 2026-05-05 |
-| 2 | Исправление провалов парсинга | step-2-fix-prices | [x] | 2026-05-05 |
-| 2а | Quality monitor скрипт | step-2a-quality-monitor | [x] | 2026-05-05 |
-| 3а | Feature flag USE_LEGACY_PARSER | step-3a-feature-flag | [x] | 2026-05-05 |
-| 3 | Рефакторинг invoiceRouter | step-3-refactor-parser | [x] | 2026-05-05 |
-| 4 | Baseline матчинга | — | [x] | 2026-05-05 |
-| 5а | Conflict detection в matching_rules | step-5a-conflict-detection | [x] | 2026-05-05 |
-| 5б | "Почему совпало" в UI | step-5b-match-reason | [x] | 2026-05-05 |
-| 6а | feedback-report.py | step-6a-feedback-report | [x] | 2026-05-05 |
-| 6б | export-benchmark.sh | step-6b-export-benchmark | [x] | 2026-05-06 |
-| 6в | parser_overrides конфиг | step-6c-parser-overrides | [x] | 2026-05-06 |
-| 6г | Исполнение parser_overrides: цены из GigaChat, текст из Gemini/основного результата | step-6d-execute-parser-overrides | [x] | 2026-05-06 |
-| 7 | Field-level quality report без изменения парсинга | step-7b-field-quality-report | [x] | 2026-05-08 |
-| 8 | Диагностика матчинга: Dice 0.1%, тест Gemini 87.5% | — | [x] | 2026-05-09 |
-| 8.1 | Gemini Flash batch matching service + интеграция | step-8a-llm-matching-agent1-clean | [x] | 2026-05-10 |
-| 8.2 | Rule learning из LLM-матчей + fix дубликатов правил | step-8b-rule-learning | [x] | 2026-05-11 |
-| 8.3 | ~~Механические фиксы Dice fallback~~ — skipped (Dice 0.1%, Gemini 87.5%) | — | [~] | 2026-05-11 |
-| PRB-008 | PDF spec variant-children fix (F0–F6) | main | [x] | 2026-05-13 |
+### Завершённые шаги (plan_stabilization_v2)
+
+| Шаг | Задача | Статус | Дата |
+|-----|--------|--------|------|
+| 0–3 | Baseline, парсинг, рефакторинг | [x] | 2026-05-05 |
+| 4–6 | Baseline матчинга, conflict detection, feedback, parser_overrides | [x] | 2026-05-06 |
+| 7 | Field-level quality report | [x] | 2026-05-08 |
+| 8.1 | Gemini Flash batch matching | [x] | 2026-05-10 |
+| 8.2 | Rule learning + price-list schema | [x] | 2026-05-11 |
+| 8.3 | PDF parent-child hotfix + GigaChat timeouts | [x] | 2026-05-12 |
+| PRB-008 | PDF spec variant-children fix (F0–F6) | [x] | 2026-05-13 |
+| CI/CD | Переход с GHCR на сборку на сервере + retry uploadFile 429 | [x] | 2026-05-12 |
+
+### Активный план (plan_prod_readiness_2026-05-13)
+
+| Шаг | Задача | Приоритет | Статус |
+|-----|--------|-----------|--------|
+| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] |
+| B | Carry-tasks: 5 багов парсинга | P1 | [ ] |
+| C | Инфраструктура: HTTPS, .dockerignore, deploy safety | P2 | [ ] |
+| D | Техдолг: PRB-001, PRB-002 | P3 | [ ] |
