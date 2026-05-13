@@ -1,0 +1,62 @@
+[
+  {
+    "position_number": null,
+    "name": "C22-300-500",
+    "characteristics": null,
+    "equipment_code": null,
+    "article": null,
+    "product_code": null,
+    "marking": null,
+    "type_size": null,
+    "manufacturer": null,
+    "unit": "шт",
+    "quantity": 1,
+    "full_name": null,
+    "_parentIndex": null
+  },
+  {
+    "position_number": "1",
+    "name": "Радиатор алюминиевый",
+    "characteristics": "ТУ 4935-001",
+    "equipment_code": null,
+    "article": null,
+    "product_code": null,
+    "marking": null,
+    "type_size": null,
+    "manufacturer": null,
+    "unit": "шт",
+    "quantity": 3,
+    "full_name": null,
+    "_parentIndex": null
+  },
+  {
+    "position_number": null,
+    "name": "C22-350-500",
+    "characteristics": null,
+    "equipment_code": null,
+    "article": null,
+    "product_code": null,
+    "marking": null,
+    "type_size": null,
+    "manufacturer": null,
+    "unit": null,
+    "quantity": null,
+    "full_name": "Радиатор алюминиевый C22-350-500",
+    "_parentIndex": 1
+  },
+  {
+    "position_number": null,
+    "name": "C22-350-600",
+    "characteristics": null,
+    "equipment_code": null,
+    "article": null,
+    "product_code": null,
+    "marking": null,
+    "type_size": null,
+    "manufacturer": null,
+    "unit": null,
+    "quantity": null,
+    "full_name": "Радиатор алюминиевый C22-350-600",
+    "_parentIndex": 1
+  }
+]
