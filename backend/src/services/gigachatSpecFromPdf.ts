@@ -108,6 +108,7 @@ const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|вод
 const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
 const TO_ZHE_PATTERN = /^то\s+же/i;
 const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
+const VARIANT_CODE_PATTERN = /^[A-Za-zА-Яа-я]{1,3}\s?\d{1,4}([-_]\d{2,4}){1,3}$/;
 
 function isSectionHeaderRow(name: string, quantity: number | null, unit: string | null): boolean {
   const normalized = name.trim().toLowerCase();
@@ -186,6 +187,17 @@ function linkPdfParentChildren(items: SpecificationRow[]): void {
       isParameterizedChild(item.name) &&
       item.position_number !== null &&
       items[lastFullIndex].position_number === item.position_number
+    ) {
+      item._parentIndex = lastFullIndex;
+      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+      item.full_name = `${parentName} ${item.name}`.trim();
+      continue;
+    }
+
+    if (
+      lastFullIndex !== null &&
+      item.position_number === null &&
+      VARIANT_CODE_PATTERN.test(item.name)
     ) {
       item._parentIndex = lastFullIndex;
       const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
