@@ -30,6 +30,20 @@
   - Активные планы консолидированы в `docs/plans/active/`.
   - Сопутствующие материалы (ТЗ, тестирование, анализ) перенесены в `docs/plans/references/`.
 
+## 2026-05-13 — PDF spec variant-children fix (PRB-008, F0–F6)
+- Статус: completed
+- План: `docs/plans/references/2026-05-13_pdf_spec_variant_children_handoff.md`
+- Коммиты: `8e120a9`, `c098120`, `0daf3e1`, `b74c2ad`, `d26a022`, `ab1c141`
+- Итог:
+  - F0: followups references для вариантов 2 и 3 решения.
+  - F1: PRB-008 зарегистрирован в problem-registry, двусторонние ссылки ретро↔registry.
+  - F2: 5 синтетических PDF-фикстур + expected.json + генератор `_gen.mjs` (pdfkit).
+  - F3: Red-first regression runner (`scripts/test-spec-parent-child.mjs`), 5 gigachat-response моков. На текущем коде 3/5 PASS.
+  - F4: `VARIANT_CODE_PATTERN` + ветка в `linkPdfParentChildren` для variant-детей без position_number. 12 строк diff, 5/5 PASS.
+  - F5: Baseline метрики в `docs/benchmark-baseline.md`: `variant_children_linked_ratio ≥ 0.95` (факт 1.00), позиций извлечено ≥ 90% (факт 100%).
+  - F6: Деплой на прод, верификация dist/health, resolve PRB-008, ретроспектива.
+  - Ретроспектива: `retrospectives/13.05.26_pdf-spec-variant-children.md`
+
 ## 2026-05-11 — Фаза 8.1–8.2: Gemini matching + Rule learning
 - Статус: completed
 - План: `docs/plans/active/plan_stabilization_v2_2026-05-03.md` (шаги 8.1–8.2)

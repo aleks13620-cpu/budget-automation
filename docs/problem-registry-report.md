@@ -1,27 +1,26 @@
 # Problem Registry Report
 
-Updated: 2026-05-12T17:30:15.353Z
+Updated: 2026-05-13T08:07:56.328Z
 
 ## Top priorities to solve now
 - PRB-002 [P0/critical] score=4.14 Duplicate path variants tracked in Git -> user impact: Есть дубли одних и тех же файлов с разными разделителями путей (backend/src/... и backend\\src\\...), что ломает чистоту индекса и усложняет ревью.
   next: Deduplicate duplicated path entries and normalize separators
-- PRB-008 [P0/critical] score=4.05 PDF спеки: variant-children без position_number теряются -> user impact: На реальном проекте теряются ~15 позиций типоразмеров радиаторов (C 11 и C 21) → оператор вынужден добивать вручную → удлиняется время расчёта проекта и нарушается KPI ≥80% автоматического парсинга спецификации. На потоке 15-20 проектов/мес это блокирует масштабирование MVP.
-  next: Реализовать Вариант 1 (точечная правка linkPdfParentChildren + регрессионный набор). Контекст: docs/plans/references/2026-05-12_pdf_spec_parent_child_followups.md и retrospectives/12.05.26_pdf-позиции-экспертное-заключение.md (источник Вариантов 1/2/3). Связанный локальный Cursor-план: pdf_spec_variant-children_fix_22290548 (хранится в .cursor/plans/ на машине автора, не в репо).
 - PRB-001 [P0/critical] score=3.65 Repo contains transient/debug artifacts -> user impact: В репозитории отслеживаются временные файлы (debug-логи, sqlite wal/shm, временные json), что шумит в git и повышает риск случайных коммитов.
   next: Extend .gitignore for transient files and clean tracked artifacts
 - PRB-003 [P1/high] score=3.34 Test invoices and binary samples are mixed with production tree -> user impact: Тестовые PDF/XLSX образцы лежат рядом с кодом без четкой политики хранения, что увеличивает вес репозитория и риск утечки данных.
   next: Move binary test files to dedicated test-data policy folder
 - PRB-006 [P1/high] score=3.34 Database schema knowledge is not part of delivery checklist -> user impact: Изменения схемы БД могут происходить без обновления описания и проверки совместимости, что повышает риск регрессий на деплое.
   next: Formalize DB checklist and require db snapshot update
+- PRB-004 [P2/medium] score=2.1 Documentation migration is incomplete and fragmented -> user impact: Часть документации перемещена, часть удалена/дублируется, из-за чего сложно понять актуальный источник правды.
 
 ## Aging issues (14+ days open)
-- PRB-002 open for 26 days (Duplicate path variants tracked in Git)
-- PRB-001 open for 26 days (Repo contains transient/debug artifacts)
-- PRB-003 open for 26 days (Test invoices and binary samples are mixed with production tree)
-- PRB-006 open for 26 days (Database schema knowledge is not part of delivery checklist)
-- PRB-004 open for 26 days (Documentation migration is incomplete and fragmented)
-- PRB-005 open for 26 days (No enforced pre-commit quality gate)
-- PRB-007 open for 26 days (Issue backlog process was previously informal)
+- PRB-002 open for 27 days (Duplicate path variants tracked in Git)
+- PRB-001 open for 27 days (Repo contains transient/debug artifacts)
+- PRB-003 open for 27 days (Test invoices and binary samples are mixed with production tree)
+- PRB-006 open for 27 days (Database schema knowledge is not part of delivery checklist)
+- PRB-004 open for 27 days (Documentation migration is incomplete and fragmented)
+- PRB-005 open for 27 days (No enforced pre-commit quality gate)
+- PRB-007 open for 27 days (Issue backlog process was previously informal)
 
 ## Overdue issues
 - PRB-002 due 2026-04-20 (Duplicate path variants tracked in Git)
@@ -29,13 +28,10 @@ Updated: 2026-05-12T17:30:15.353Z
 - PRB-003 due 2026-04-25 (Test invoices and binary samples are mixed with production tree)
 - PRB-006 due 2026-04-27 (Database schema knowledge is not part of delivery checklist)
 
-## open (8)
+## open (7)
 - PRB-002 [P0/critical] score=4.14 Duplicate path variants tracked in Git
   user impact: Есть дубли одних и тех же файлов с разными разделителями путей (backend/src/... и backend\\src\\...), что ломает чистоту индекса и усложняет ревью.
   due: 2026-04-20
-- PRB-008 [P0/critical] score=4.05 PDF спеки: variant-children без position_number теряются
-  user impact: На реальном проекте теряются ~15 позиций типоразмеров радиаторов (C 11 и C 21) → оператор вынужден добивать вручную → удлиняется время расчёта проекта и нарушается KPI ≥80% автоматического парсинга спецификации. На потоке 15-20 проектов/мес это блокирует масштабирование MVP.
-  due: 2026-05-19
 - PRB-001 [P0/critical] score=3.65 Repo contains transient/debug artifacts
   user impact: В репозитории отслеживаются временные файлы (debug-логи, sqlite wal/shm, временные json), что шумит в git и повышает риск случайных коммитов.
   due: 2026-04-22
@@ -58,6 +54,8 @@ Updated: 2026-05-12T17:30:15.353Z
 ## blocked (0)
 - none
 
-## resolved (0)
-- none
+## resolved (1)
+- PRB-008 [P0/critical] score=4.05 PDF спеки: variant-children без position_number теряются
+  user impact: На реальном проекте теряются ~15 позиций типоразмеров радиаторов (C 11 и C 21) → оператор вынужден добивать вручную → удлиняется время расчёта проекта и нарушается KPI ≥80% автоматического парсинга спецификации. На потоке 15-20 проектов/мес это блокирует масштабирование MVP.
+  due: 2026-05-19
 

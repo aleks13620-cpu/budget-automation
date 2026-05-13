@@ -1,7 +1,7 @@
 {
   "meta": {
     "version": 2,
-    "updated_at": "2026-05-12T17:23:15.907Z"
+    "updated_at": "2026-05-13T08:05:59.396Z"
   },
   "issues": [
     {
@@ -44,7 +44,7 @@
       "description": "Дочерние строки-типоразмеры (variant codes вроде `C11-300-500`, `C11-500-1200`) в PDF-спецификациях не имеют значения в колонке «Позиция» и теряются при разборе через GigaChat: `linkPdfParentChildren` в `backend/src/services/gigachatSpecFromPdf.ts` требует `position_number !== null` для parameterized-child привязки, поэтому variant-children не получают `_parentIndex` и валидный `full_name` и не доходят до спецификации как отдельные позиции с количеством. Продолжение парадигмы parent/child fix из ретро 8.3 (DN/\"То же\"/parametric children), теперь для variant-children без position_number.",
       "type": "bug",
       "priority": "critical",
-      "status": "open",
+      "status": "resolved",
       "owner": "team",
       "links": [
         "retrospectives/12.05.26_pdf-позиции-экспертное-заключение.md",
@@ -52,8 +52,8 @@
         "retrospectives/12.05.26_фаза-8.3_pdf-parent-child-hotfix.md"
       ],
       "created_at": "2026-05-12T17:00:00.000Z",
-      "updated_at": "2026-05-12T17:23:15.905Z",
-      "resolved_at": null,
+      "updated_at": "2026-05-13T08:05:59.396Z",
+      "resolved_at": "2026-05-13T08:05:59.395Z",
       "resolution_note": "",
       "user_impact": "На реальном проекте теряются ~15 позиций типоразмеров радиаторов (C 11 и C 21) → оператор вынужден добивать вручную → удлиняется время расчёта проекта и нарушается KPI ≥80% автоматического парсинга спецификации. На потоке 15-20 проектов/мес это блокирует масштабирование MVP.",
       "scoring": {

@@ -33,3 +33,4 @@
 | 8.1 | Gemini Flash batch matching service + интеграция | step-8a-llm-matching-agent1-clean | [x] | 2026-05-10 |
 | 8.2 | Rule learning из LLM-матчей + fix дубликатов правил | step-8b-rule-learning | [x] | 2026-05-11 |
 | 8.3 | ~~Механические фиксы Dice fallback~~ — skipped (Dice 0.1%, Gemini 87.5%) | — | [~] | 2026-05-11 |
+| PRB-008 | PDF spec variant-children fix (F0–F6) | main | [x] | 2026-05-13 |
