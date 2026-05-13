@@ -114,6 +114,7 @@ function isSectionHeaderRow(name: string, quantity: number | null, unit: string 
   if (!normalized) return false;
   if (quantity != null) return false;
   if (unit && unit.trim().length > 0) return false;
+  if (TO_ZHE_PATTERN.test(name.trim())) return false;
   if (/^(i|ii|iii|iv|v|vi|vii|viii|ix|x)\.?\s+/i.test(normalized)) return true;
   if (SECTION_HEADER_PATTERN.test(normalized)) return true;
   return /^[а-яa-z\s/-]{3,40}$/.test(normalized) && normalized.split(/\s+/).length <= 3;
@@ -198,7 +199,7 @@ function linkPdfParentChildren(items: SpecificationRow[]): void {
   }
 }
 
-function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
+export function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
   const items = data.items ?? [];
   const rows: SpecificationRow[] = [];
   for (const it of items) {

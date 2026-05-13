@@ -21,7 +21,8 @@
     "problem-registry:report": "node ../scripts/problem-registry.mjs report",
     "problem-registry:db:snapshot": "node ../scripts/problem-registry.mjs db:snapshot",
     "plans:check": "node ../scripts/plan-guard.mjs check",
-    "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict"
+    "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict",
+    "test:spec-pdf": "node ../scripts/test-spec-parent-child.mjs"
   },
   "keywords": [],
   "author": "",

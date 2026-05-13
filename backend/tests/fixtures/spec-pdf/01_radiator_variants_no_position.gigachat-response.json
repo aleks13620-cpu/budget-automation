@@ -1,0 +1,193 @@
+{
+  "section": null,
+  "items_count_check": "17 позиций в таблице, 17 в массиве — ОК",
+  "items": [
+    {
+      "position": 1,
+      "name": "Стальной панельный радиатор Royal Thermo Compact С 11",
+      "characteristics": "ГОСТ 31311-2005",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 13,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-300-500",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-300-600",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-300-700",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-300-800",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-300-900",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-400-500",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-400-600",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-400-700",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-400-800",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-400-900",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-500-500",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-500-600",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C11-500-1200",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": 2,
+      "name": "Стальной панельный радиатор Royal Thermo Compact С 21",
+      "characteristics": "ГОСТ 31311-2005",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 2,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C21-500-800",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C21-500-1200",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    }
+  ]
+}

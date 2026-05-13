@@ -1,0 +1,50 @@
+{
+  "section": null,
+  "items_count_check": "4 позиций в таблице, 4 в массиве — ОК",
+  "items": [
+    {
+      "position": null,
+      "name": "C22-300-500",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 1,
+      "note": null
+    },
+    {
+      "position": 1,
+      "name": "Радиатор алюминиевый",
+      "characteristics": "ТУ 4935-001",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 3,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C22-350-500",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "C22-350-600",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    }
+  ]
+}

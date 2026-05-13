@@ -1,0 +1,83 @@
+{
+  "section": null,
+  "items_count_check": "7 позиций в таблице, 7 в массиве — ОК",
+  "items": [
+    {
+      "position": 1,
+      "name": "Воздуховод оцинкованный 200x200",
+      "characteristics": "ТУ 4862-001",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "м",
+      "quantity": 25,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "То же, 300x200",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "То же, 400x200",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "То же",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": 2,
+      "name": "Решетка вентиляционная РВ-1",
+      "characteristics": "ТУ 4862-002",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 5,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "То же, РВ-2",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "То же",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    }
+  ]
+}

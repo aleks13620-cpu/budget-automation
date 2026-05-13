@@ -1,0 +1,94 @@
+{
+  "section": null,
+  "items_count_check": "8 позиций в таблице, 8 в массиве — ОК",
+  "items": [
+    {
+      "position": 1,
+      "name": "Труба стальная электросварная",
+      "characteristics": "ГОСТ 10704-91",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "м",
+      "quantity": 100,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "DN 50",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "DN 80",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "DN 100",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "Ду 150",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": 2,
+      "name": "Отвод стальной",
+      "characteristics": "ГОСТ 17375-2001",
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": "шт",
+      "quantity": 10,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "DN 50",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    },
+    {
+      "position": null,
+      "name": "DN 80",
+      "characteristics": null,
+      "manufacturer": null,
+      "marking": null,
+      "type_size": null,
+      "unit": null,
+      "quantity": null,
+      "note": null
+    }
+  ]
+}
