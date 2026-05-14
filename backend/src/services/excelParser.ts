@@ -254,7 +254,7 @@ function splitMonsterRow(name: string): string[] {
 }
 
 /** DN child row pattern: empty position_number AND name is a short DN/diameter designator */
-const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)?\s*\d{2,}(\s|$|[xX×\/\-])/i;
+const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)\s*\d{2,}(\s|$|[xX×\/\-])/i;
 
 /**
  * "То же" child pattern — строка ссылается на предыдущую позицию ("то же, но другой размер").
@@ -269,6 +269,7 @@ const TO_ZHE_PATTERN = /^то\s+же/i;
  */
 const CONTINUATION_KEYWORD_PATTERN = /^(толщиной|толщ\.|сечение|сеч\.|длиной|дл\.|шириной|высотой|диаметром|ø|h=|l=|w=|b=|с\s+нанесением|с\s+покрытием|класса\s+герметичности)/i;
 const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
+const VARIANT_CODE_PATTERN = /^[A-Za-zА-Яа-я]{1,3}\s?\d{1,4}([-_]\d{2,4}){1,3}$/;
 
 function isDnChild(item: SpecificationRow): boolean {
   return !item.position_number && DN_CHILD_PATTERN.test(item.name.trim());
@@ -285,6 +286,7 @@ function isContinuationByKeyword(item: SpecificationRow): boolean {
 function isParameterizedChild(item: SpecificationRow): boolean {
   const name = item.name.trim();
   if (!name) return false;
+  if (name.length > 25) return false;
   // Parameter rows are typically short size/designation values and should
   // inherit parent context for matching while staying separate line items.
   if (PARAMETER_CHILD_PATTERN.test(name)) return true;
@@ -412,6 +414,16 @@ function linkDnChildren(items: SpecificationRow[]): void {
       const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
       item.full_name = `${parentName} ${item.name}`.trim();
       parameterChildrenExpanded++;
+    } else if (
+      lastFullIndex !== null &&
+      item.position_number === null &&
+      VARIANT_CODE_PATTERN.test(item.name)
+    ) {
+      // Variant code child (e.g. "C11-300-500"):
+      // link to parent and build full_name with parent context.
+      item._parentIndex = lastFullIndex;
+      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+      item.full_name = `${parentName} ${item.name}`.trim();
     } else {
       // Обычная позиция — становится новым родителем
       lastFullIndex = i;

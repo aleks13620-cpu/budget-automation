@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"position": 1, "name": "Клапан обратный", "unit": "шт", "quantity": 2},
+    {"position": null, "name": "500-10", "unit": null, "quantity": null},
+    {"position": 2, "name": "Насос циркуляционный", "unit": "шт", "quantity": 1}
+  ]
+}

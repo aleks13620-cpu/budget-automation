@@ -1,0 +1,7 @@
+{
+  "items": [
+    {"position": 1, "name": "Теплоизоляция Energoflex", "unit": "м", "quantity": 50},
+    {"position": 2, "name": "Воздуховод оцинкованный 200x200", "unit": "м", "quantity": 10},
+    {"position": 3, "name": "Труба PPR PN20 25x4.2", "unit": "м", "quantity": 30}
+  ]
+}

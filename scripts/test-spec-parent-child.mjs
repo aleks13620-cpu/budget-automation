@@ -43,6 +43,8 @@ const CASES = [
   '03_to_zhe_children',
   '04_mixed',
   '05_negative_no_parent_variant',
+  '06_dn_false_positive',
+  '07_parameterized_false_positive',
 ];
 
 // ---------------------------------------------------------------------------
