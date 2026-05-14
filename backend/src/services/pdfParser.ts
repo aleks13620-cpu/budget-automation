@@ -1,6 +1,11 @@
 import fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import * as path from 'path';
 import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
 import { USE_LEGACY_PARSER } from '../config';
+
+const execFileAsync = promisify(execFile);
 
 // pdf-parse v2 CJS import
 const { PDFParse } = require('pdf-parse');
@@ -806,23 +811,85 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
 
 /**
  * Main entry: reads PDF file, extracts rows, and parses.
+ * Uses pdfplumber for primary extraction (non-scan PDFs), falls back to pdf-parse.
  */
 export async function parsePdfFileWithExtraction(
   filePath: string,
   savedMapping?: SavedMapping,
   extracted?: { rows: string[][]; fullText: string },
 ): Promise<PdfParseWithExtractionResult> {
-  if (USE_LEGACY_PARSER) {
-    // Legacy path (same logic for now)
-    const { rows, fullText } = extracted ?? await extractRawRows(filePath);
-    return {
-      parseResult: parsePdfFromExtracted(rows, fullText, savedMapping),
-      rows,
-      fullText,
-    };
+  // Try pdfplumber when no pre-extracted data or custom mapping is provided
+  if (!extracted && !savedMapping && !USE_LEGACY_PARSER) {
+    try {
+      const scriptPath = path.resolve(__dirname, '../../../scripts/extract_invoice_table.py');
+      const { stdout } = await execFileAsync('python3', ['-X', 'utf8', scriptPath, filePath], {
+        timeout: 60000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const pdfplumberResult = JSON.parse(stdout) as {
+        items: Array<{
+          num?: string | null;
+          article?: string | null;
+          name?: string;
+          unit?: string | null;
+          quantity?: number | null;
+          price?: number | null;
+          amount?: number | null;
+          row_index?: number;
+        }>;
+        metadata: {
+          invoiceNumber?: string | null;
+          invoiceDate?: string | null;
+          supplierName?: string | null;
+          totalAmount?: number | null;
+        };
+        stats?: Record<string, number>;
+      };
+
+      if (pdfplumberResult.items && pdfplumberResult.items.length > 0) {
+        const invoiceRows: InvoiceRow[] = pdfplumberResult.items.map((item, idx) => ({
+          article: item.article || null,
+          name: (item.name ?? '').trim(),
+          unit: item.unit || null,
+          quantity: item.quantity != null && !isNaN(Number(item.quantity)) ? Number(item.quantity) : null,
+          quantity_packages: null,
+          price: item.price != null && !isNaN(Number(item.price)) ? Number(item.price) : null,
+          amount: item.amount != null && !isNaN(Number(item.amount)) ? Number(item.amount) : null,
+          row_index: item.row_index ?? idx,
+        }));
+
+        const meta = pdfplumberResult.metadata ?? {};
+        const totalFromItems = invoiceRows.reduce((s, r) => s + (r.amount ?? 0), 0);
+
+        const parseResult: InvoiceParseResult = {
+          items: invoiceRows,
+          errors: [],
+          totalRows: invoiceRows.length,
+          skippedRows: pdfplumberResult.stats?.summary_rows_skipped ?? 0,
+          invoiceNumber: meta.invoiceNumber ?? null,
+          invoiceDate: meta.invoiceDate ?? null,
+          supplierName: meta.supplierName ?? null,
+          totalAmount: meta.totalAmount ?? (totalFromItems > 0 ? totalFromItems : null),
+          vatAmount: null,
+          discountDetected: null,
+        };
+
+        const rows = invoiceRows.map(r => [
+          r.article ?? '', r.name, r.unit ?? '',
+          String(r.quantity ?? ''), String(r.price ?? ''), String(r.amount ?? ''),
+        ]);
+
+        // Construct fullText from items so categorizeParsingResult doesn't classify as C
+        const fullText = invoiceRows.map(r => r.name).join('\n');
+
+        console.log(`[parsePdfFileWithExtraction] pdfplumber: ${invoiceRows.length} items extracted`);
+        return { parseResult, rows, fullText };
+      }
+    } catch (error: any) {
+      console.warn('[parsePdfFileWithExtraction] pdfplumber failed, falling back:', error.message);
+    }
   }
 
-  // New path (same logic for now - will diverge in step 3)
   const { rows, fullText } = extracted ?? await extractRawRows(filePath);
   return {
     parseResult: parsePdfFromExtracted(rows, fullText, savedMapping),
