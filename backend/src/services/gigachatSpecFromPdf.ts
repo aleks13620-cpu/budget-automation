@@ -339,6 +339,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           name?: string;
           characteristics?: string | null;
           equipment_code?: string | null;
+          marking?: string | null;
           manufacturer?: string | null;
           unit?: string | null;
           quantity?: string | number | null;
@@ -365,7 +366,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
             equipment_code: item.equipment_code?.trim() || null,
             article: null,
             product_code: null,
-            marking: null,
+            marking: item.marking?.trim() || null,
             type_size: null,
             manufacturer: item.manufacturer?.trim() || null,
             unit,
@@ -378,7 +379,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
       linkPdfParentChildren(pdfplumberRows);
       console.log(`[parseSpecFromPdf] pdfplumber: extracted ${pdfplumberRows.length} items`);
       if (pdfplumberRows.length > 0) {
-        const specParseQuality = { warnings: [] as string[], suggestElevatedReview: false };
+        const specParseQuality = evaluateSpecPdfParseQuality(pdfplumberResult.items as any, pdfplumberRows);
         const okRes: ParseResult = {
           items: pdfplumberRows,
           errors: [],
