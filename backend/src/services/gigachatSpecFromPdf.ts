@@ -13,6 +13,11 @@ import { extractJSON, sanitizeJSON, readPdfText } from './gigachatParser';
 import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigachatFileCache';
 import type { ParseResult, SpecificationRow } from '../types/specification';
 import { evaluateSpecPdfParseQuality } from './gigachatSpecParseQuality';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import * as path from 'path';
+
+const execFileAsync = promisify(execFile);
 
 const PDF_TEXT_HINT_MAX = 40000;
 /** Меньше символов — считаем сканом (как в плане для счетов). */
@@ -318,6 +323,80 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   }
   const isScan = pdfText.length <= SCAN_TEXT_THRESHOLD;
   const userContent = buildUserContent(isScan, pdfText);
+
+  // --- pdfplumber-first approach (for non-scan PDFs) ---
+  if (!isScan) {
+    try {
+      console.log('[parseSpecFromPdf] pdfplumber: trying local extraction...');
+      const scriptPath = path.resolve(__dirname, '../../../scripts/extract_pdf_table.py');
+      const { stdout } = await execFileAsync('python3', ['-X', 'utf8', scriptPath, filePath], {
+        timeout: 60000,
+        maxBuffer: 10 * 1024 * 1024,
+      });
+      const pdfplumberResult = JSON.parse(stdout) as {
+        items: Array<{
+          position?: string | null;
+          name?: string;
+          characteristics?: string | null;
+          equipment_code?: string | null;
+          manufacturer?: string | null;
+          unit?: string | null;
+          quantity?: string | number | null;
+          mass_per_unit?: string | number | null;
+          total_mass?: string | number | null;
+          note?: string | null;
+        }>;
+      };
+      const pdfplumberRows: SpecificationRow[] = [];
+      for (const item of pdfplumberResult.items) {
+        const name = (item.name ?? '').trim();
+        if (!name) continue;
+        const position_number = item.position != null ? String(item.position).trim() || null : null;
+        const quantity = item.quantity != null ? (isNaN(Number(item.quantity)) ? null : Number(item.quantity)) : null;
+        const unit = item.unit?.trim() || null;
+        if (isSectionHeaderRow(name, quantity, unit)) continue;
+
+        const splitNames = splitMonsterRow(name);
+        splitNames.forEach((splitName, idx) => {
+          pdfplumberRows.push({
+            position_number: idx === 0 ? position_number : null,
+            name: splitName,
+            characteristics: item.characteristics?.trim() || null,
+            equipment_code: item.equipment_code?.trim() || null,
+            article: null,
+            product_code: null,
+            marking: null,
+            type_size: null,
+            manufacturer: item.manufacturer?.trim() || null,
+            unit,
+            quantity: idx === 0 ? quantity : null,
+            full_name: null,
+            _parentIndex: null,
+          });
+        });
+      }
+      linkPdfParentChildren(pdfplumberRows);
+      console.log(`[parseSpecFromPdf] pdfplumber: extracted ${pdfplumberRows.length} items`);
+      if (pdfplumberRows.length > 0) {
+        const specParseQuality = { warnings: [] as string[], suggestElevatedReview: false };
+        const okRes: ParseResult = {
+          items: pdfplumberRows,
+          errors: [],
+          totalRows: pdfplumberRows.length,
+          skippedRows: 0,
+          specParseQuality,
+        };
+        try {
+          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
+        } catch (e) {
+          console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+        }
+        return okRes;
+      }
+    } catch (error: any) {
+      console.warn('[parseSpecFromPdf] pdfplumber failed, falling back to GigaChat:', error.message);
+    }
+  }
 
   try {
     for (const model of models) {

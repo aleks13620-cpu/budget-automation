@@ -18,6 +18,10 @@ RUN npm run build
 FROM node:20-alpine
 WORKDIR /app
 
+# Python for pdfplumber PDF extraction
+RUN apk add --no-cache python3 py3-pip && \
+    pip3 install --no-cache-dir --break-system-packages pdfplumber pymupdf
+
 # Copy compiled backend
 COPY --from=backend-build /build/backend/dist ./backend/dist
 COPY --from=backend-build /build/backend/package*.json ./backend/
@@ -27,6 +31,9 @@ RUN cd backend && npm ci --omit=dev
 
 # Copy built frontend assets
 COPY --from=frontend-build /build/frontend/dist ./frontend/dist
+
+# Copy PDF extraction scripts
+COPY scripts/ ./scripts/
 
 # Create persistent directories (will be overridden by volumes)
 RUN mkdir -p database data/uploads
