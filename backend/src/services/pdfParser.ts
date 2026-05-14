@@ -49,6 +49,15 @@ export function parsePrice(value: string | null | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
+function scoreVatDiscount(cellText: string): number {
+  const lower = cellText.toLowerCase();
+  let score = 0;
+  if (lower.includes('без ндс')) score -= 20;
+  else if (/с ндс|с учетом ндс|с учётом ндс/.test(lower)) score += 20;
+  if (/скидк/.test(lower)) score += 30;
+  return score;
+}
+
 // Returns true if the row looks like a requisite/metadata row (INN, BIK, address, etc.)
 // Used by detectColumns() to skip such rows as potential header candidates.
 function isRequisiteLikeRow(row: string[]): boolean {
@@ -104,6 +113,49 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
 
     // Require at least "name" and one more column
     if (mapping.name !== null && matchCount >= 2) {
+      // Second pass: prefer price/amount columns that include VAT or discount
+      const reservedCols = new Set<number>();
+      for (const key of Object.keys(mapping) as (keyof ColumnMapping)[]) {
+        if (key !== 'price' && key !== 'amount' && mapping[key] !== null) {
+          reservedCols.add(mapping[key]!);
+        }
+      }
+      let bestAmountScore = mapping.amount !== null ? scoreVatDiscount(normalizeText(row[mapping.amount])) : -100;
+      let bestPriceScore = mapping.price !== null ? scoreVatDiscount(normalizeText(row[mapping.price])) : -100;
+
+      for (let col = 0; col < row.length; col++) {
+        if (reservedCols.has(col)) continue;
+        const cellText = normalizeText(row[col]);
+        if (!cellText) continue;
+
+        for (const keyword of COLUMN_KEYWORDS.amount) {
+          if (cellText.includes(keyword.toLowerCase())) {
+            const score = scoreVatDiscount(cellText);
+            if (score > bestAmountScore) {
+              mapping.amount = col;
+              bestAmountScore = score;
+            }
+            break;
+          }
+        }
+
+        for (const keyword of COLUMN_KEYWORDS.price) {
+          if (cellText.includes(keyword.toLowerCase())) {
+            const score = scoreVatDiscount(cellText);
+            if (score > bestPriceScore) {
+              mapping.price = col;
+              bestPriceScore = score;
+            }
+            break;
+          }
+        }
+      }
+
+      if (mapping.price !== null && mapping.amount !== null && mapping.price === mapping.amount) {
+        if (bestPriceScore >= bestAmountScore) mapping.amount = null;
+        else mapping.price = null;
+      }
+
       return { mapping, headerRowIndex: i };
     }
   }
@@ -195,8 +247,17 @@ export function parseTableData(rows: string[][], mapping: ColumnMapping, startRo
     }
 
     const quantityPackages = mapping.quantity_packages !== null ? parsePrice(row[mapping.quantity_packages]) : null;
-    const price = mapping.price !== null ? parsePrice(row[mapping.price]) : null;
+    let price = mapping.price !== null ? parsePrice(row[mapping.price]) : null;
     const amount = mapping.amount !== null ? parsePrice(row[mapping.amount]) : null;
+
+    if (amount != null && amount > 0 && quantity != null && quantity > 0) {
+      const derivedPrice = Math.round((amount / quantity) * 100) / 100;
+      if (price == null) {
+        price = derivedPrice;
+      } else if (Math.abs(price * quantity - amount) > amount * 0.01) {
+        price = derivedPrice;
+      }
+    }
 
     items.push({
       article,
