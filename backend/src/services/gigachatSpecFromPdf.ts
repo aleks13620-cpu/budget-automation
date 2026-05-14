@@ -23,6 +23,9 @@ const PDF_TEXT_HINT_MAX = 40000;
 /** Меньше символов — считаем сканом (как в плане для счетов). */
 const SCAN_TEXT_THRESHOLD = 200;
 
+/** Bump when parser logic changes to auto-bypass stale cache. */
+const SPEC_PDF_PARSER_VERSION = 2;
+
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
 // ---------------------------------------------------------------------------
@@ -300,7 +303,7 @@ export const PDF_SPEC_EMPTY_RAW_DATA: string[][] = [
  */
 export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
   try {
-    const cached = getGigaChatFileCache(sha256File(filePath), 'spec_pdf');
+    const cached = getGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`);
     if (cached) {
       console.log('[parseSpecFromPdf] spec_pdf cache hit');
       return JSON.parse(cached) as ParseResult;
@@ -388,7 +391,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           specParseQuality,
         };
         try {
-          setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
+          setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(okRes));
         } catch (e) {
           console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
         }
@@ -441,7 +444,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
               specParseQuality,
             };
             try {
-              setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(emptyRes));
+              setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(emptyRes));
             } catch (e) {
               console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
             }
@@ -456,7 +459,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
             specParseQuality,
           };
           try {
-            setGigaChatFileCache(sha256File(filePath), 'spec_pdf', JSON.stringify(okRes));
+            setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(okRes));
           } catch (e) {
             console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
           }

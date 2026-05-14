@@ -3,7 +3,7 @@ import fs from 'fs';
 import { getDatabase } from '../database';
 
 type GigaChatInvoiceCacheBasePurpose = 'invoice_pdf' | 'invoice_excel';
-export type GigaChatFileCachePurpose = GigaChatInvoiceCacheBasePurpose | `${GigaChatInvoiceCacheBasePurpose}:ctx:${string}` | 'spec_pdf';
+export type GigaChatFileCachePurpose = GigaChatInvoiceCacheBasePurpose | `${GigaChatInvoiceCacheBasePurpose}:ctx:${string}` | 'spec_pdf' | `spec_pdf:v${number}`;
 
 export function sha256File(filePath: string): string {
   const h = crypto.createHash('sha256');
