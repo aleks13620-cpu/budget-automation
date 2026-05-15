@@ -8,6 +8,7 @@
 - [Бизнес KPI](../../.business/goals/kpi.md)
 - [Problem Registry](../problem-registry.yaml)
 - [Handoff PRB-008](references/2026-05-13_pdf_spec_variant_children_handoff_status.md)
+- [Handoff Step 3 Matching](references/2026-05-15_handoff_step3_matching.md)
 - [Предыдущий план (архив)](archive/2026-05/plan_stabilization_v2_2026-05-03.md)
 
 ## Текущая фаза: Стабилизация прода и carry-tasks
@@ -36,12 +37,13 @@
 | 1.3 | Кэш версионирование | auto-invalidate on deploy | [x] 2026-05-14 |
 | 2 | Точечные баги (B.1-B.3,B.5) | test:spec-pdf 7/7 | [x] 2026-05-14 |
 | 2.5 | pdfplumber для счетов (invoice PDF) | 3/3 PDF, 534 позиций | [x] 2026-05-14 |
-| 3 | Проверка матчинга | ≥70% | [ ] |
+| 2.5+ | parent-child full_name рефакторинг | continuation merging, filterContinuations, двухпроходный matcher | [x] 2026-05-15 |
+| 3 | Проверка матчинга | ≥70% | [ ] ← ТЕКУЩИЙ |
 | 4 | Верификация прода | health OK | [ ] |
 | 5 | Инфраструктура | HTTPS, Docker, .env | [ ] |
 | 6 | Техдолг | git чистый | [ ] |
 
-**Handoff:** `docs/plans/references/2026-05-14_handoff_step1_pdfplumber.md`
+**Handoff:** `docs/plans/references/2026-05-15_handoff_step3_matching.md`
 
 ### Активный план (plan_prod_readiness_2026-05-13)
 

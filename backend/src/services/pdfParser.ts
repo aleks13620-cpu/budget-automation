@@ -6,6 +6,7 @@ import { InvoiceRow, InvoiceParseResult } from '../types/invoice';
 import { USE_LEGACY_PARSER } from '../config';
 
 const execFileAsync = promisify(execFile);
+const PYTHON_CMD = process.platform === 'win32' ? 'python' : 'python3';
 
 // pdf-parse v2 CJS import
 const { PDFParse } = require('pdf-parse');
@@ -883,7 +884,7 @@ export async function parsePdfFileWithExtraction(
   if (!extracted && !savedMapping && !USE_LEGACY_PARSER) {
     try {
       const scriptPath = path.resolve(__dirname, '../../../scripts/extract_invoice_table.py');
-      const { stdout } = await execFileAsync('python3', ['-X', 'utf8', scriptPath, filePath], {
+      const { stdout } = await execFileAsync(PYTHON_CMD, ['-X', 'utf8', scriptPath, filePath], {
         timeout: 60000,
         maxBuffer: 10 * 1024 * 1024,
       });

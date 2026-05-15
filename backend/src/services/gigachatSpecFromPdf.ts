@@ -18,13 +18,14 @@ import { promisify } from 'util';
 import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
+const PYTHON_CMD = process.platform === 'win32' ? 'python' : 'python3';
 
 const PDF_TEXT_HINT_MAX = 40000;
 /** Меньше символов — считаем сканом (как в плане для счетов). */
 const SCAN_TEXT_THRESHOLD = 200;
 
 /** Bump when parser logic changes to auto-bypass stale cache. */
-const SPEC_PDF_PARSER_VERSION = 2;
+const SPEC_PDF_PARSER_VERSION = 3;
 
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
@@ -123,7 +124,7 @@ interface GigaChatSpecPdfJSON {
 }
 
 const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)\b/i;
-const DN_CHILD_PATTERN = /^(DN|Ду|d=|D=|du)\s*\d{2,}(\s|$|[xX×\/\-])/i;
+const DN_CHILD_PATTERN = /^(DN|Ду|Дн|d=|D=|du)\s*\d{2,}(\s|$|[xXхХ×\/\-,])/i;
 const TO_ZHE_PATTERN = /^то\s+же/i;
 const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
 const VARIANT_CODE_PATTERN = /^[A-Za-zА-Яа-я]{1,3}\s?\d{1,4}([-_]\d{2,4}){1,3}$/;
@@ -168,66 +169,124 @@ function isParameterizedChild(name: string): boolean {
   return false;
 }
 
-function linkPdfParentChildren(items: SpecificationRow[]): void {
-  let lastFullIndex: number | null = null;
+function isChildPattern(name: string): boolean {
+  const trimmed = name.trim();
+  if (DN_CHILD_PATTERN.test(trimmed)) return true;
+  if (isParameterizedChild(trimmed)) return true;
+  if (VARIANT_CODE_PATTERN.test(trimmed)) return true;
+  return false;
+}
+
+function linkPdfParentChildren(items: SpecificationRow[]): Set<number> {
+  let lastParentIndex: number | null = null;
+  let accumulatedName: string = '';
+  const continuationIndices = new Set<number>();
 
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
 
-    if (isDnChild(item.name, item.position_number)) {
-      if (lastFullIndex !== null) {
-        item._parentIndex = lastFullIndex;
-        item.full_name = `${items[lastFullIndex].name} ${item.name}`.trim();
-      } else {
-        item._parentIndex = null;
-        item.full_name = null;
-      }
+    // New parent: has position_number
+    if (item.position_number !== null) {
+      lastParentIndex = i;
+      accumulatedName = item.name;
+      item._parentIndex = null;
+      item.full_name = null;
       continue;
     }
 
+    // "То же" child
     if (isToZheChild(item.name)) {
-      if (lastFullIndex !== null) {
-        item._parentIndex = lastFullIndex;
-        const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
+      if (lastParentIndex !== null) {
+        item._parentIndex = lastParentIndex;
         const suffix = item.name.replace(/^то\s+же[,\s]*/i, '').trim();
-        const expandedName = suffix ? `${parentName} ${suffix}` : parentName;
+        const expandedName = suffix ? `${accumulatedName} ${suffix}` : accumulatedName;
         item.name = expandedName;
         item.full_name = expandedName;
       } else {
         item._parentIndex = null;
         item.full_name = null;
       }
-      lastFullIndex = i;
+      lastParentIndex = i;
+      accumulatedName = item.full_name || item.name;
       continue;
     }
 
+    // Continuation: no position, no quantity, not a child pattern
     if (
-      lastFullIndex !== null &&
+      lastParentIndex !== null &&
+      item.quantity == null &&
+      !isChildPattern(item.name)
+    ) {
+      accumulatedName = `${accumulatedName} ${item.name}`.trim();
+      items[lastParentIndex].full_name = accumulatedName;
+      item._parentIndex = lastParentIndex;
+      item.full_name = null;
+      continuationIndices.add(i);
+      continue;
+    }
+
+    // DN child
+    if (isDnChild(item.name, item.position_number)) {
+      if (lastParentIndex !== null) {
+        item._parentIndex = lastParentIndex;
+        item.full_name = `${accumulatedName} ${item.name}`.trim();
+      } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+      continue;
+    }
+
+    // Parameterized child with matching position
+    if (
+      lastParentIndex !== null &&
       isParameterizedChild(item.name) &&
       item.position_number !== null &&
-      items[lastFullIndex].position_number === item.position_number
+      items[lastParentIndex].position_number === item.position_number
     ) {
-      item._parentIndex = lastFullIndex;
-      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
-      item.full_name = `${parentName} ${item.name}`.trim();
+      item._parentIndex = lastParentIndex;
+      item.full_name = `${accumulatedName} ${item.name}`.trim();
       continue;
     }
 
+    // Variant code child
     if (
-      lastFullIndex !== null &&
+      lastParentIndex !== null &&
       item.position_number === null &&
       VARIANT_CODE_PATTERN.test(item.name)
     ) {
-      item._parentIndex = lastFullIndex;
-      const parentName = items[lastFullIndex].full_name || items[lastFullIndex].name;
-      item.full_name = `${parentName} ${item.name}`.trim();
+      item._parentIndex = lastParentIndex;
+      item.full_name = `${accumulatedName} ${item.name}`.trim();
       continue;
     }
 
-    lastFullIndex = i;
+    // Standalone item (new parent without position)
+    lastParentIndex = i;
+    accumulatedName = item.name;
     item._parentIndex = null;
     item.full_name = null;
   }
+
+  return continuationIndices;
+}
+
+function filterContinuations(items: SpecificationRow[], continuations: Set<number>): SpecificationRow[] {
+  if (continuations.size === 0) return items;
+  const indexMap = new Map<number, number>();
+  let newIdx = 0;
+  for (let i = 0; i < items.length; i++) {
+    if (!continuations.has(i)) indexMap.set(i, newIdx++);
+  }
+  const result: SpecificationRow[] = [];
+  for (let i = 0; i < items.length; i++) {
+    if (continuations.has(i)) continue;
+    const item = items[i];
+    if (item._parentIndex !== null) {
+      item._parentIndex = indexMap.get(item._parentIndex) ?? null;
+    }
+    result.push(item);
+  }
+  return result;
 }
 
 export function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[] {
@@ -262,8 +321,8 @@ export function mapPdfItemsToRows(data: GigaChatSpecPdfJSON): SpecificationRow[]
       });
     });
   }
-  linkPdfParentChildren(rows);
-  return rows;
+  const continuations = linkPdfParentChildren(rows);
+  return filterContinuations(rows, continuations);
 }
 
 function buildUserContent(isScan: boolean, pdfText: string): string {
@@ -333,7 +392,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
     try {
       console.log('[parseSpecFromPdf] pdfplumber: trying local extraction...');
       const scriptPath = path.resolve(__dirname, '../../../scripts/extract_pdf_table.py');
-      const { stdout } = await execFileAsync('python3', ['-X', 'utf8', scriptPath, filePath], {
+      const { stdout } = await execFileAsync(PYTHON_CMD, ['-X', 'utf8', scriptPath, filePath], {
         timeout: 60000,
         maxBuffer: 10 * 1024 * 1024,
       });
@@ -380,14 +439,15 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           });
         });
       }
-      linkPdfParentChildren(pdfplumberRows);
-      console.log(`[parseSpecFromPdf] pdfplumber: extracted ${pdfplumberRows.length} items`);
-      if (pdfplumberRows.length > 0) {
-        const specParseQuality = evaluateSpecPdfParseQuality(pdfplumberResult.items as any, pdfplumberRows);
+      const pdfContinuations = linkPdfParentChildren(pdfplumberRows);
+      const pdfplumberFiltered = filterContinuations(pdfplumberRows, pdfContinuations);
+      console.log(`[parseSpecFromPdf] pdfplumber: extracted ${pdfplumberFiltered.length} items (${pdfContinuations.size} continuations merged)`);
+      if (pdfplumberFiltered.length > 0) {
+        const specParseQuality = evaluateSpecPdfParseQuality(pdfplumberResult.items as any, pdfplumberFiltered);
         const okRes: ParseResult = {
-          items: pdfplumberRows,
+          items: pdfplumberFiltered,
           errors: [],
-          totalRows: pdfplumberRows.length,
+          totalRows: pdfplumberFiltered.length,
           skippedRows: 0,
           specParseQuality,
         };

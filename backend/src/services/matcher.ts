@@ -261,10 +261,16 @@ async function matchSpecItems(
     const nameForMatching = codeTokens ? `${nameBase} ${codeTokens}` : nameBase;
     specMatchTextById.set(spec.id, nameForMatching);
     const specNormName = normalizeForMatching(nameForMatching);
+    const specNormShort = (spec.full_name && spec.full_name !== spec.name)
+      ? normalizeForMatching(spec.name)
+      : null;
     const specNormFull = spec.characteristics
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
       : specNormName;
     const specCode = spec.equipment_code?.trim() || null;
+    const specNameAsCode = (!specCode && /^[A-Za-zА-Яа-я]{0,4}\d{1,4}[-_]\d{2,4}/.test(spec.name.trim()))
+      ? spec.name.trim()
+      : null;
     const specPositionNumber = spec.position_number?.trim() || null;
     const positionToken = specPositionNumber && /[a-zA-Zа-яА-Я]/.test(specPositionNumber)
       ? normalizeForMatching(specPositionNumber)
@@ -332,8 +338,9 @@ async function matchSpecItems(
 
       // 1c. Equipment code (e.g. "C22-400-600", "MVT") substring in invoice name/article.
       // Also try space-collapsed form to handle "C22" vs "C 22" variants.
-      if (bestConfidence < 0.95 && specCode && specCode.length >= 3) {
-        const normCode = normalizeForMatching(specCode);
+      const codeToCheck = specCode || specNameAsCode;
+      if (bestConfidence < 0.95 && codeToCheck && codeToCheck.length >= 3) {
+        const normCode = normalizeForMatching(codeToCheck);
         const compactCode = normCode.replace(/\s+/g, '');
         if (compactCode.length >= 3) {
           const invNameCompact = inv.normalizedName.replace(/\s+/g, '');
@@ -424,18 +431,20 @@ async function matchSpecItems(
       }
 
       // 3. Name similarity (Dice coefficient)
-      // Lower threshold when spec has equipment_code (double signal: name + code)
-      const simThreshold = specCode ? 0.45 : 0.6;
+      // Lower threshold when spec has equipment_code or variant code name (double signal)
+      const simThreshold = (specCode || specNameAsCode) ? 0.45 : 0.6;
       if (bestConfidence < 0.95) {
-        const nameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
+        let nameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
+        if (specNormShort) {
+          const shortSim = stringSimilarity.compareTwoStrings(specNormShort, inv.normalizedName);
+          if (shortSim > nameSim) nameSim = shortSim;
+        }
         if (nameSim >= simThreshold) {
           let confidence = nameSim * 0.9;
-          // Bonus if units match
           if (spec.unit && inv.unit && spec.unit.toLowerCase().trim() === inv.unit.toLowerCase().trim()) {
             confidence += 0.05;
           }
-          confidence = Math.min(confidence, 0.94); // Cap below exact article
-          // Entity word check: penalize if entity words differ significantly
+          confidence = Math.min(confidence, 0.94);
           const specEntity = extractEntityWords(specNormName);
           const invEntity = extractEntityWords(inv.normalizedName);
           if (specEntity.length > 3 && invEntity.length > 3) {
