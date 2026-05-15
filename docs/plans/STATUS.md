@@ -10,6 +10,7 @@
 - [Handoff PRB-008](references/2026-05-13_pdf_spec_variant_children_handoff_status.md)
 - [Handoff Step 3 Matching](references/2026-05-15_handoff_step3_matching.md)
 - [Runbook Step A](references/2026-05-15_step_a_runbook.md) — текущий блокер прода
+- [Handoff continuation bug 2026-05-16](references/2026-05-16_handoff_continuation_bug.md) — **точка остановки + готовый фикс**
 - [Предыдущий план (архив)](archive/2026-05/plan_stabilization_v2_2026-05-03.md)
 
 ## Текущая фаза: Стабилизация прода и carry-tasks
@@ -52,7 +53,7 @@
 
 | Шаг | Задача | Приоритет | Статус |
 |-----|--------|-----------|--------|
-| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] ← **ТЕКУЩИЙ** (runbook готов) |
+| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] частично: A.1 PASS на 5-ПР_21 локально, на 3 других PDF баг continuation → handoff 2026-05-16 |
 | B | Carry-tasks: 5 багов парсинга | P1 | [ ] → Шаг 2 оркестратора |
 | C | Инфраструктура: HTTPS, .dockerignore, deploy safety | P2 | [ ] → Шаг 5 оркестратора |
 | D | Техдолг: PRB-001, PRB-002 | P3 | [ ] → Шаг 6 оркестратора |
