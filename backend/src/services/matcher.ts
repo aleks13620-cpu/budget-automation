@@ -425,6 +425,7 @@ async function matchSpecItems(
               bestType = 'learned_rule';
               bestRuleId = rule.id;
               bestRuleIsAnalog = rule.is_analog ? 1 : 0;
+              if (bestConfidence >= 0.95) break;
             }
           }
         }

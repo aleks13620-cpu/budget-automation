@@ -1,0 +1,65 @@
+{
+  "label": "before",
+  "timestamp": "2026-05-15T11:59:59.369Z",
+  "llm_enabled": false,
+  "git_head": "0aca7a6",
+  "projects": [
+    {
+      "project_id": 18,
+      "project_name": "тест проект",
+      "spec_count": 140,
+      "spec_with_fullname": 52,
+      "invoice_count": 28,
+      "pair_count": 3920,
+      "elapsed_ms": 2314,
+      "pairs_per_sec": 1694,
+      "candidates_total": 4,
+      "best_per_spec": 4,
+      "conf_60": 4,
+      "conf_60_pct": 2.9,
+      "conf_80": 4,
+      "conf_80_pct": 2.9,
+      "by_tier": {
+        "exact_article": 4
+      }
+    },
+    {
+      "project_id": 20,
+      "project_name": "debug-compact-mapping",
+      "spec_count": 252,
+      "spec_with_fullname": 11,
+      "invoice_count": 6,
+      "pair_count": 1512,
+      "elapsed_ms": 1228,
+      "pairs_per_sec": 1231,
+      "candidates_total": 0,
+      "best_per_spec": 0,
+      "conf_60": 0,
+      "conf_60_pct": 0,
+      "conf_80": 0,
+      "conf_80_pct": 0,
+      "by_tier": {}
+    },
+    {
+      "project_id": 28,
+      "project_name": "E2E Matching Test OV v3",
+      "spec_count": 736,
+      "spec_with_fullname": 85,
+      "invoice_count": 218,
+      "pair_count": 160448,
+      "elapsed_ms": 110331,
+      "pairs_per_sec": 1454,
+      "candidates_total": 871,
+      "best_per_spec": 179,
+      "conf_60": 175,
+      "conf_60_pct": 23.8,
+      "conf_80": 152,
+      "conf_80_pct": 20.7,
+      "by_tier": {
+        "exact_article": 34,
+        "name_similarity": 66,
+        "name_characteristics": 79
+      }
+    }
+  ]
+}

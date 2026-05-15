@@ -38,7 +38,9 @@
 | 2 | Точечные баги (B.1-B.3,B.5) | test:spec-pdf 7/7 | [x] 2026-05-14 |
 | 2.5 | pdfplumber для счетов (invoice PDF) | 3/3 PDF, 534 позиций | [x] 2026-05-14 |
 | 2.5+ | parent-child full_name рефакторинг | continuation merging, filterContinuations, двухпроходный matcher | [x] 2026-05-15 |
-| 3 | Проверка матчинга | ≥70% | [ ] ← ТЕКУЩИЙ |
+| 3.0 | Bench infra + BEFORE замер | matching-before-...json: проект 28 = 110s, 23.8% | [x] 2026-05-15 |
+| 3.1 | Микро-3B: early exit + negative rule на LLM | matching-after-micro3B: −23% времени, качество не упало | [x] 2026-05-15 |
+| 3 | Проверка матчинга | ≥70% | [ ] переход на Step A (прод) |
 | 4 | Верификация прода | health OK | [ ] |
 | 5 | Инфраструктура | HTTPS, Docker, .env | [ ] |
 | 6 | Техдолг | git чистый | [ ] |

@@ -843,8 +843,9 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
     db.transaction(() => {
       db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
 
-      // Create negative rule only for unconfirmed rejections (user rejects system suggestion)
-      if (!match.is_confirmed && match.match_type !== LLM_MATCH_TYPE && match.invoice_name) {
+      // Create negative rule for any operator rejection of an unconfirmed match,
+      // including LLM suggestions — operator's decision is authoritative.
+      if (!match.is_confirmed && match.invoice_name) {
         const specPattern = normalizeForMatching(match.spec_name);
         const invoicePattern = normalizeForMatching(match.invoice_name);
         upsertNegativeMatchingRule(db, specPattern, invoicePattern, match.supplier_id);
@@ -886,7 +887,8 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
         }
 
         db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
-        if (!match.is_confirmed && match.match_type !== LLM_MATCH_TYPE && match.invoice_name) {
+        // Operator rejection learns negative rule for any unconfirmed match (incl. LLM).
+        if (!match.is_confirmed && match.invoice_name) {
           const specPattern = normalizeForMatching(match.spec_name);
           const invoicePattern = normalizeForMatching(match.invoice_name);
           upsertNegativeMatchingRule(db, specPattern, invoicePattern, match.supplier_id);
