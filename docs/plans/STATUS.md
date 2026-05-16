@@ -10,7 +10,8 @@
 - [Handoff PRB-008](references/2026-05-13_pdf_spec_variant_children_handoff_status.md)
 - [Handoff Step 3 Matching](references/2026-05-15_handoff_step3_matching.md)
 - [Runbook Step A](references/2026-05-15_step_a_runbook.md) — текущий блокер прода
-- [Handoff continuation bug 2026-05-16](references/2026-05-16_handoff_continuation_bug.md) — **точка остановки + готовый фикс**
+- [Handoff continuation bug 2026-05-16](references/2026-05-16_handoff_continuation_bug.md)
+- [Handoff post-deploy 2026-05-16](references/2026-05-16_handoff_post_deploy.md) — **актуальная точка старта**
 - [Предыдущий план (архив)](archive/2026-05/plan_stabilization_v2_2026-05-03.md)
 
 ## Текущая фаза: Стабилизация прода и carry-tasks
@@ -53,7 +54,7 @@
 
 | Шаг | Задача | Приоритет | Статус |
 |-----|--------|-----------|--------|
-| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] частично: A.1 PASS на 5-ПР_21 + ОВ-30.135 + 26 25-ТД-ОВ локально (multi-signal fix), Том 6 — GigaChat 402 |
+| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] частично: A.1 ✅ (5-ПР_21+ОВ-30.135+26 25+a7e3aae в проде); A.2/A.3 — нужны руки на UI |
 | A.x | Multi-signal continuation fix (PARSER_VERSION 3→4) | bonus | [x] 2026-05-16: 3/3 local PASS, regression 7/7, рефлексия 16.05.26 |
 | B | Carry-tasks: 5 багов парсинга | P1 | [x] 2026-05-16: B.1-B.3, B.5 (14.05) + B.4 (16.05, commit) |
 | C | Инфраструктура: HTTPS, .dockerignore, deploy safety | P2 | [ ] → Шаг 5 оркестратора |
