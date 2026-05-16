@@ -356,10 +356,13 @@ export function isGigaChatConfigured(): boolean {
  * - GIGACHAT_MODELS_FILES — основной список
  * - GIGACHAT_MODEL_INVOICE — алиас для обратной совместимости
  *
- * По умолчанию: GigaChat-2-Lite → GigaChat-2-Pro → GigaChat-2-Max.
- * Сначала дешёвая модель (Lite), затем эскалация на более сильные при низком качестве разбора.
+ * По умолчанию: GigaChat → GigaChat-Pro → GigaChat-Max.
+ * Сначала дешёвая модель (базовая Lite-уровня), затем эскалация на более сильные.
+ * Старые имена GigaChat-2-* удалены из дефолтов: после обновления API часть из них
+ * возвращает 404 "No such model" (зафиксировано на проде 2026-05-16, Том 6).
+ * Если ваш ключ поддерживает только legacy-имена — задайте их через env.
  */
-const DEFAULT_FILE_JSON_MODELS = ['GigaChat-2-Lite', 'GigaChat-2-Pro', 'GigaChat-2-Max'];
+const DEFAULT_FILE_JSON_MODELS = ['GigaChat', 'GigaChat-Pro', 'GigaChat-Max'];
 
 export function getGigaChatFileJsonModelCandidates(): string[] {
   const raw =
