@@ -25,7 +25,7 @@ const PDF_TEXT_HINT_MAX = 40000;
 const SCAN_TEXT_THRESHOLD = 200;
 
 /** Bump when parser logic changes to auto-bypass stale cache. */
-const SPEC_PDF_PARSER_VERSION = 3;
+const SPEC_PDF_PARSER_VERSION = 4;
 
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
@@ -211,10 +211,14 @@ function linkPdfParentChildren(items: SpecificationRow[]): Set<number> {
       continue;
     }
 
-    // Continuation: no position, no quantity, not a child pattern
+    // Continuation: no metadata signaling an independent item, not a child pattern.
+    // unit/manufacturer being non-null means it's a real spec line (qty may be missing
+    // because pdfplumber didn't extract it) — don't merge into the previous parent.
     if (
       lastParentIndex !== null &&
       item.quantity == null &&
+      item.unit == null &&
+      item.manufacturer == null &&
       !isChildPattern(item.name)
     ) {
       accumulatedName = `${accumulatedName} ${item.name}`.trim();

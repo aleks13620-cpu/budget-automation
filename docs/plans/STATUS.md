@@ -53,7 +53,8 @@
 
 | Шаг | Задача | Приоритет | Статус |
 |-----|--------|-----------|--------|
-| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] частично: A.1 PASS на 5-ПР_21 локально, на 3 других PDF баг continuation → handoff 2026-05-16 |
+| A | Верификация прода (PRB-008, isScan, retry 429) | P0 | [ ] частично: A.1 PASS на 5-ПР_21 + ОВ-30.135 + 26 25-ТД-ОВ локально (multi-signal fix), Том 6 — GigaChat 402 |
+| A.x | Multi-signal continuation fix (PARSER_VERSION 3→4) | bonus | [x] 2026-05-16: 3/3 local PASS, regression 7/7, рефлексия 16.05.26 |
 | B | Carry-tasks: 5 багов парсинга | P1 | [ ] → Шаг 2 оркестратора |
 | C | Инфраструктура: HTTPS, .dockerignore, deploy safety | P2 | [ ] → Шаг 5 оркестратора |
 | D | Техдолг: PRB-001, PRB-002 | P3 | [ ] → Шаг 6 оркестратора |
