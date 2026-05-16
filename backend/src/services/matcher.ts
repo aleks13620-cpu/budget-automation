@@ -268,9 +268,15 @@ async function matchSpecItems(
       ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
       : specNormName;
     const specCode = spec.equipment_code?.trim() || null;
-    const specNameAsCode = (!specCode && /^[A-Za-zА-Яа-я]{0,4}\d{1,4}[-_]\d{2,4}/.test(spec.name.trim()))
-      ? spec.name.trim()
+    // Extract a product-code-like PREFIX from spec.name (e.g. "C11-300-500", "VC22-50-80")
+    // when equipment_code is missing. Must start with 1-4 letters then digits+dashes
+    // (require at least 1 letter so we don't catch pure-numeric sizes like "15-40").
+    // Capture only the matched prefix, not the whole name — otherwise descriptive
+    // suffix bleeds into compactCode substring search and gives 0.92 false positives.
+    const specNameAsCodeMatch = !specCode
+      ? spec.name.trim().match(/^([A-Za-zА-Яа-я]{1,4}\s?\d{1,4}(?:[-_]\d{2,4}){1,3})/)
       : null;
+    const specNameAsCode = specNameAsCodeMatch ? specNameAsCodeMatch[1] : null;
     const specPositionNumber = spec.position_number?.trim() || null;
     const positionToken = specPositionNumber && /[a-zA-Zа-яА-Я]/.test(specPositionNumber)
       ? normalizeForMatching(specPositionNumber)

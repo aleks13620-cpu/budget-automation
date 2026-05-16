@@ -845,7 +845,10 @@ router.delete('/api/matching/:id', (req: Request, res: Response) => {
 
       // Create negative rule for any operator rejection of an unconfirmed match,
       // including LLM suggestions — operator's decision is authoritative.
-      if (!match.is_confirmed && match.invoice_name) {
+      // Guard: require supplier_id to avoid creating a GLOBAL negative rule that
+      // blocks the pair across all suppliers (would accumulate blackholes in
+      // matching after a few pilots).
+      if (!match.is_confirmed && match.invoice_name && match.supplier_id != null) {
         const specPattern = normalizeForMatching(match.spec_name);
         const invoicePattern = normalizeForMatching(match.invoice_name);
         upsertNegativeMatchingRule(db, specPattern, invoicePattern, match.supplier_id);
@@ -888,7 +891,8 @@ router.post('/api/matching/bulk/reject', (req: Request, res: Response) => {
 
         db.prepare('DELETE FROM matched_items WHERE id = ?').run(matchId);
         // Operator rejection learns negative rule for any unconfirmed match (incl. LLM).
-        if (!match.is_confirmed && match.invoice_name) {
+        // Guard: require supplier_id (see single-reject endpoint comment).
+        if (!match.is_confirmed && match.invoice_name && match.supplier_id != null) {
           const specPattern = normalizeForMatching(match.spec_name);
           const invoicePattern = normalizeForMatching(match.invoice_name);
           upsertNegativeMatchingRule(db, specPattern, invoicePattern, match.supplier_id);
