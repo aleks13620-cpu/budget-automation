@@ -194,20 +194,25 @@ function linkPdfParentChildren(items: SpecificationRow[]): Set<number> {
       continue;
     }
 
-    // "То же" child
+    // "То же" — sibling that references the same root parent with an optional
+    // size/type modifier. Each "То же" expands ROOT name + own suffix; it does
+    // NOT inherit modifiers from previous "То же" siblings (no cascading) and
+    // does NOT become the parent for subsequent children.
     if (isToZheChild(item.name)) {
       if (lastParentIndex !== null) {
         item._parentIndex = lastParentIndex;
         const suffix = item.name.replace(/^то\s+же[,\s]*/i, '').trim();
-        const expandedName = suffix ? `${accumulatedName} ${suffix}` : accumulatedName;
+        const rootName = items[lastParentIndex].full_name || items[lastParentIndex].name;
+        const expandedName = suffix ? `${rootName} ${suffix}` : rootName;
         item.name = expandedName;
         item.full_name = expandedName;
       } else {
         item._parentIndex = null;
         item.full_name = null;
       }
-      lastParentIndex = i;
-      accumulatedName = item.full_name || item.name;
+      // Intentionally do NOT update lastParentIndex / accumulatedName —
+      // next sibling "То же" and any subsequent variant/DN child must still
+      // bind to the root parent (B.4 fix, 2026-05-16).
       continue;
     }
 

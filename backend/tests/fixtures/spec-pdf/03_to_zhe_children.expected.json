@@ -31,7 +31,7 @@
   },
   {
     "position_number": null,
-    "name": "Воздуховод оцинкованный 200x200 300x200 400x200",
+    "name": "Воздуховод оцинкованный 200x200 400x200",
     "characteristics": null,
     "equipment_code": null,
     "article": null,
@@ -41,12 +41,12 @@
     "manufacturer": null,
     "unit": null,
     "quantity": null,
-    "full_name": "Воздуховод оцинкованный 200x200 300x200 400x200",
-    "_parentIndex": 1
+    "full_name": "Воздуховод оцинкованный 200x200 400x200",
+    "_parentIndex": 0
   },
   {
     "position_number": null,
-    "name": "Воздуховод оцинкованный 200x200 300x200 400x200",
+    "name": "Воздуховод оцинкованный 200x200",
     "characteristics": null,
     "equipment_code": null,
     "article": null,
@@ -56,8 +56,8 @@
     "manufacturer": null,
     "unit": null,
     "quantity": null,
-    "full_name": "Воздуховод оцинкованный 200x200 300x200 400x200",
-    "_parentIndex": 2
+    "full_name": "Воздуховод оцинкованный 200x200",
+    "_parentIndex": 0
   },
   {
     "position_number": "2",
@@ -91,7 +91,7 @@
   },
   {
     "position_number": null,
-    "name": "Решетка вентиляционная РВ-1 РВ-2",
+    "name": "Решетка вентиляционная РВ-1",
     "characteristics": null,
     "equipment_code": null,
     "article": null,
@@ -101,7 +101,7 @@
     "manufacturer": null,
     "unit": null,
     "quantity": null,
-    "full_name": "Решетка вентиляционная РВ-1 РВ-2",
-    "_parentIndex": 5
+    "full_name": "Решетка вентиляционная РВ-1",
+    "_parentIndex": 4
   }
 ]
