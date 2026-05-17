@@ -1,6 +1,7 @@
 import stringSimilarity from 'string-similarity';
 import { getDatabase } from '../database';
 import { matchWithGemini } from './llmMatcher';
+import { applyDomainAliases } from './matcherAliases';
 
 export interface MatchCandidate {
   specItemId: number;
@@ -137,8 +138,8 @@ function normalizeEngineeringTokens(text: string): string {
   result = result.replace(/\bd\s*=\s*(\d{1,4})\b/gi, ' dn $1 ');
   result = result.replace(/\bd\s*(\d{1,4})\b/gi, ' dn $1 ');
 
-  // Normalize size separators 500x300, 500×300, 500 X 300.
-  result = result.replace(/(\d)\s*[xх×]\s*(\d)/gi, '$1x$2');
+  // Normalize size separators 500x300, 500×300, 500 X 300, 500*300.
+  result = result.replace(/(\d)\s*[xх×*]\s*(\d)/gi, '$1x$2');
 
   // Normalize decimal comma in sizes/prices to dot.
   result = result.replace(/(\d),(\d)/g, '$1.$2');
@@ -152,7 +153,7 @@ function normalizeEngineeringTokens(text: string): string {
  * - remove punctuation, extra spaces
  * - remove stop words
  */
-export function normalizeForMatching(text: string): string {
+export function normalizeForMatching(text: string, section?: string | null): string {
   let s = removeGostBrackets(text);
   s = normalizeUnitSynonyms(s);
   s = normalizeEngineeringTokens(s);
@@ -165,7 +166,9 @@ export function normalizeForMatching(text: string): string {
   s = s.replace(/\s+/g, ' ').trim();
   // Remove stop words
   const words = s.split(' ').filter(w => w.length > 0 && !STOP_WORDS.has(w));
-  return words.join(' ');
+  const result = words.join(' ');
+  // Append domain-specific canonical tokens (append-not-replace).
+  return applyDomainAliases(result, section);
 }
 
 function extractEntityWords(text: string): string {
@@ -234,18 +237,20 @@ async function matchSpecItems(
     }
   }
 
-  // Pre-normalize invoice items
+  // Pre-normalize invoice items. Invoice rows have no section context, so we
+  // pass `null` — aliases that require a section will not fire here.
   const normalizedInvoice = invoiceItems.map(item => ({
     ...item,
-    normalizedName: normalizeForMatching(item.name),
+    normalizedName: normalizeForMatching(item.name, null),
   }));
 
-  // Pre-normalize rules; extract raw tokens for substring fallback
+  // Pre-normalize rules; extract raw tokens for substring fallback.
+  // Rules are section-agnostic — section is `null`.
   const normalizedRules = rules.map(rule => ({
     ...rule,
-    normalizedSpec: normalizeForMatching(rule.specification_pattern),
-    normalizedInvoice: normalizeForMatching(rule.invoice_pattern),
-    invTokens: normalizeForMatching(rule.invoice_pattern).split(' ').filter(t => t.length >= 3),
+    normalizedSpec: normalizeForMatching(rule.specification_pattern, null),
+    normalizedInvoice: normalizeForMatching(rule.invoice_pattern, null),
+    invTokens: normalizeForMatching(rule.invoice_pattern, null).split(' ').filter(t => t.length >= 3),
   }));
 
   const allCandidates: MatchCandidate[] = [];
@@ -260,12 +265,12 @@ async function matchSpecItems(
       .map(v => v?.trim()).filter(Boolean).join(' ');
     const nameForMatching = codeTokens ? `${nameBase} ${codeTokens}` : nameBase;
     specMatchTextById.set(spec.id, nameForMatching);
-    const specNormName = normalizeForMatching(nameForMatching);
+    const specNormName = normalizeForMatching(nameForMatching, spec.section);
     const specNormShort = (spec.full_name && spec.full_name !== spec.name)
-      ? normalizeForMatching(spec.name)
+      ? normalizeForMatching(spec.name, spec.section)
       : null;
     const specNormFull = spec.characteristics
-      ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics)
+      ? normalizeForMatching(nameForMatching + ' ' + spec.characteristics, spec.section)
       : specNormName;
     const specCode = spec.equipment_code?.trim() || null;
     // Extract a product-code-like PREFIX from spec.name (e.g. "C11-300-500", "VC22-50-80")
