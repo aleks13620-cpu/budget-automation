@@ -10,11 +10,13 @@
  * the threshold without polluting unrelated rows.
  *
  * Optional gates:
- *   - requiresSection: only apply if spec.section starts with this prefix
- *     (case-insensitive). When the section is unknown (e.g. invoice-side
- *     normalization, where section is `null`) the gate is treated as a miss
- *     and the alias is skipped — invoice-side aliasing should not assume a
- *     section we cannot verify.
+ *   - requiresSection: only enforced when caller passes a section (spec-side).
+ *     For invoice-side and rule-side calls (where section is `null`), the gate
+ *     is bypassed — invoice items have no section metadata, but if the synonym
+ *     surface form is present in the text, the canonical alias still needs to
+ *     fire so that BOTH spec and invoice converge on the same canonical token.
+ *     Without this, append-not-replace can never raise similarity (one side
+ *     gets the canonical token, the other does not — no shared signal).
  *   - requiresCooccur: at least one of these tokens must already appear in the
  *     text. Prevents false-positive aliasing on unrelated lines that happen to
  *     contain a fragment of the synonym.
@@ -107,9 +109,10 @@ export function applyDomainAliases(text: string, section?: string | null): strin
   const tokensToAppend: string[] = [];
 
   for (const group of DOMAIN_ALIASES) {
-    // Section gate: when a section is required but missing/mismatched, skip.
-    if (group.requiresSection) {
-      if (!section) continue;
+    // Section gate: only enforced when caller supplies a section (spec-side).
+    // For null/undefined (invoice and rule sides) the gate is bypassed so both
+    // sides can converge on the same canonical token via synonym presence alone.
+    if (group.requiresSection && section) {
       if (!section.toLowerCase().startsWith(group.requiresSection.toLowerCase())) continue;
     }
 
