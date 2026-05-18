@@ -160,18 +160,15 @@ export function normalizeForMatching(text: string, section?: string | null): str
   s = normalizeSizeTerms(s);
   s = normalizeConstructionTerms(s);
   s = s.toLowerCase().trim();
-  // Apply domain aliases BEFORE punctuation strip and stop-word removal so
-  // synonyms can match against natural text (some synonyms contain stop words
-  // like "из"; some co-occurrence patterns rely on punctuation like "b=" or
-  // "т/м" that get stripped a few lines below).
-  s = applyDomainAliases(s, section);
   // Remove punctuation except letters, digits, spaces
   s = s.replace(/[^\p{L}\p{N}\s]/gu, ' ');
   // Collapse whitespace
   s = s.replace(/\s+/g, ' ').trim();
   // Remove stop words
   const words = s.split(' ').filter(w => w.length > 0 && !STOP_WORDS.has(w));
-  return words.join(' ');
+  const result = words.join(' ');
+  // Append domain-specific canonical tokens (append-not-replace).
+  return applyDomainAliases(result, section);
 }
 
 function extractEntityWords(text: string): string {
