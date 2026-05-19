@@ -64,11 +64,15 @@ const STOP_WORDS = new Set([
 
 let _synonymCache: Map<string,string> | null = null;
 let _constructionSynonymCache: Map<string,string> | null = null;
+let _sizeRegexCache: Array<[RegExp, string]> | null = null;
+let _constructionRegexCache: Array<[RegExp, string]> | null = null;
 
 /** Сброс кешей синонимов после записи в БД (learned). */
 export function invalidateMatcherSynonymCaches(): void {
   _synonymCache = null;
   _constructionSynonymCache = null;
+  _sizeRegexCache = null;
+  _constructionRegexCache = null;
 }
 
 function getSynonymMap(): Map<string,string> {
@@ -89,22 +93,42 @@ function getConstructionSynonymMap(): Map<string,string> {
   return _constructionSynonymCache;
 }
 
-function normalizeSizeTerms(text: string): string {
+function getSizeRegexes(): Array<[RegExp, string]> {
+  if (_sizeRegexCache) return _sizeRegexCache;
   const map = getSynonymMap();
-  let result = text;
+  const cache: Array<[RegExp, string]> = [];
   for (const [syn, can] of map) {
     const re = new RegExp(`\\b${syn.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    cache.push([re, can]);
+  }
+  _sizeRegexCache = cache;
+  return cache;
+}
+
+function getConstructionRegexes(): Array<[RegExp, string]> {
+  if (_constructionRegexCache) return _constructionRegexCache;
+  const map = getConstructionSynonymMap();
+  const entries = [...map.entries()].sort((x, y) => y[0].length - x[0].length);
+  const cache: Array<[RegExp, string]> = [];
+  for (const [abbr, full] of entries) {
+    const re = new RegExp(`\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+    cache.push([re, full]);
+  }
+  _constructionRegexCache = cache;
+  return cache;
+}
+
+function normalizeSizeTerms(text: string): string {
+  let result = text;
+  for (const [re, can] of getSizeRegexes()) {
     result = result.replace(re, can);
   }
   return result;
 }
 
 function normalizeConstructionTerms(text: string): string {
-  const map = getConstructionSynonymMap();
-  const entries = [...map.entries()].sort((x, y) => y[0].length - x[0].length);
   let result = text;
-  for (const [abbr, full] of entries) {
-    const re = new RegExp(`\\b${abbr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'gi');
+  for (const [re, full] of getConstructionRegexes()) {
     result = result.replace(re, full);
   }
   return result;
@@ -208,6 +232,12 @@ function getDnScore(specText: string, invText: string): -1 | 0 | 1 {
   return specDn === invDn ? 1 : -1;
 }
 
+function getDnScoreFromValues(specDn: number | null, invDn: number | null): -1 | 0 | 1 {
+  if (specDn == null) return 0;
+  if (invDn == null) return -1;
+  return specDn === invDn ? 1 : -1;
+}
+
 /**
  * Core matching algorithm: match given spec items against invoice items using rules.
  * Extracted to allow both full and incremental matching to share the same logic.
@@ -234,19 +264,41 @@ async function matchSpecItems(
     }
   }
 
-  // Pre-normalize invoice items
-  const normalizedInvoice = invoiceItems.map(item => ({
-    ...item,
-    normalizedName: normalizeForMatching(item.name),
-  }));
+  // Pre-normalize invoice items + cache extractDnValue and entity (were recomputed 717× per invoice).
+  const normalizedInvoice = invoiceItems.map(item => {
+    const normalizedName = normalizeForMatching(item.name);
+    return {
+      ...item,
+      normalizedName,
+      dnValue: extractDnValue(item.name),
+      entity: extractEntityWords(normalizedName),
+      normalizedArticle: item.article ? normalizeForMatching(item.article) : '',
+    };
+  });
 
   // Pre-normalize rules; extract raw tokens for substring fallback
-  const normalizedRules = rules.map(rule => ({
-    ...rule,
-    normalizedSpec: normalizeForMatching(rule.specification_pattern),
-    normalizedInvoice: normalizeForMatching(rule.invoice_pattern),
-    invTokens: normalizeForMatching(rule.invoice_pattern).split(' ').filter(t => t.length >= 3),
-  }));
+  const normalizedRules = rules.map(rule => {
+    const normalizedInvoicePattern = normalizeForMatching(rule.invoice_pattern);
+    return {
+      ...rule,
+      normalizedSpec: normalizeForMatching(rule.specification_pattern),
+      normalizedInvoice: normalizedInvoicePattern,
+      invTokens: normalizedInvoicePattern.split(' ').filter(t => t.length >= 3),
+    };
+  });
+  const rulesCount = normalizedRules.length;
+
+  // Precompute inv×rule similarities ONCE per (invoice, rule) pair — was recomputed
+  // 717× per pair inside the spec loop. Cuts ~35M stringSimilarity calls to ~25k.
+  const invRuleSims: Float64Array[] = new Array(normalizedInvoice.length);
+  for (let i = 0; i < normalizedInvoice.length; i++) {
+    const sims = new Float64Array(rulesCount);
+    const invNorm = normalizedInvoice[i].normalizedName;
+    for (let r = 0; r < rulesCount; r++) {
+      sims[r] = stringSimilarity.compareTwoStrings(invNorm, normalizedRules[r].normalizedInvoice);
+    }
+    invRuleSims[i] = sims;
+  }
 
   const allCandidates: MatchCandidate[] = [];
   const l0l1MatchedSpecIds = new Set<number>();
@@ -254,7 +306,12 @@ async function matchSpecItems(
   const specMatchTextById = new Map<number, string>();
   let unmatchedLogged = 0;
 
-  for (const spec of specItems) {
+  for (let specIdx = 0; specIdx < specItems.length; specIdx++) {
+    // Yield event loop every 50 specs so /api/health and other requests stay responsive.
+    if (specIdx > 0 && specIdx % 50 === 0) {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    }
+    const spec = specItems[specIdx];
     const nameBase = spec.full_name || synthesizedNameById.get(spec.id) || spec.name;
     const codeTokens = [spec.equipment_code, spec.product_code, spec.article]
       .map(v => v?.trim()).filter(Boolean).join(' ');
@@ -282,6 +339,18 @@ async function matchSpecItems(
       ? normalizeForMatching(specPositionNumber)
       : '';
 
+    // Precompute spec-level values (were recomputed N=218 times across inv loop iterations).
+    const specRuleSims = new Float64Array(rulesCount);
+    for (let r = 0; r < rulesCount; r++) {
+      specRuleSims[r] = stringSimilarity.compareTwoStrings(specNormName, normalizedRules[r].normalizedSpec);
+    }
+    const specDnValue = extractDnValue(nameForMatching);
+    const specEntity = extractEntityWords(specNormName);
+    const codeToCheckLocal = specCode || specNameAsCode;
+    const codeToCheckCompact = codeToCheckLocal && codeToCheckLocal.length >= 3
+      ? normalizeForMatching(codeToCheckLocal).replace(/\s+/g, '')
+      : '';
+
     const candidates: MatchCandidate[] = [];
     let negativeBlockedCount = 0;
     let bestRawNameSim = 0;
@@ -289,7 +358,9 @@ async function matchSpecItems(
     let bestRawInvName = '';
     const isCompactSpec = /\bcompact\b/i.test(nameForMatching);
 
-    for (const inv of normalizedInvoice) {
+    for (let invIdx = 0; invIdx < normalizedInvoice.length; invIdx++) {
+      const inv = normalizedInvoice[invIdx];
+      const invSims = invRuleSims[invIdx];
       let bestConfidence = 0;
       let bestType: MatchCandidate['matchType'] = 'name_similarity';
       let bestRuleId: number | null = null;
@@ -301,8 +372,9 @@ async function matchSpecItems(
         bestRawNameSim = rawNameSim;
         bestRawInvName = inv.name;
       }
+      let rawFullSim = 0;
       if (spec.characteristics) {
-        const rawFullSim = stringSimilarity.compareTwoStrings(specNormFull, inv.normalizedName);
+        rawFullSim = stringSimilarity.compareTwoStrings(specNormFull, inv.normalizedName);
         if (rawFullSim > bestRawFullSim) bestRawFullSim = rawFullSim;
       }
 
@@ -334,7 +406,7 @@ async function matchSpecItems(
         bestConfidence < 0.95 &&
         positionToken.length >= 3 &&
         (
-          (inv.article && normalizeForMatching(inv.article).includes(positionToken)) ||
+          (inv.normalizedArticle && inv.normalizedArticle.includes(positionToken)) ||
           inv.normalizedName.includes(positionToken)
         )
       ) {
@@ -344,31 +416,25 @@ async function matchSpecItems(
 
       // 1c. Equipment code (e.g. "C22-400-600", "MVT") substring in invoice name/article.
       // Also try space-collapsed form to handle "C22" vs "C 22" variants.
-      const codeToCheck = specCode || specNameAsCode;
-      if (bestConfidence < 0.95 && codeToCheck && codeToCheck.length >= 3) {
-        const normCode = normalizeForMatching(codeToCheck);
-        const compactCode = normCode.replace(/\s+/g, '');
-        if (compactCode.length >= 3) {
-          const invNameCompact = inv.normalizedName.replace(/\s+/g, '');
-          const invArtCompact = inv.article ? normalizeForMatching(inv.article).replace(/\s+/g, '') : '';
-          const inArt = invArtCompact.includes(compactCode);
-          const inName = invNameCompact.includes(compactCode);
-          if (inArt || inName) {
-            bestConfidence = Math.max(bestConfidence, 0.92);
-            bestType = 'exact_article';
-          }
+      if (bestConfidence < 0.95 && codeToCheckCompact.length >= 3) {
+        const invNameCompact = inv.normalizedName.replace(/\s+/g, '');
+        const invArtCompact = inv.normalizedArticle.replace(/\s+/g, '');
+        const inArt = invArtCompact.includes(codeToCheckCompact);
+        const inName = invNameCompact.includes(codeToCheckCompact);
+        if (inArt || inName) {
+          bestConfidence = Math.max(bestConfidence, 0.92);
+          bestType = 'exact_article';
         }
       }
 
       // 2. Learned rule match (supplier-scoped: same supplier first, then global, skip other suppliers)
       // First check negative rules — block this pair entirely
       let isNegativeBlocked = false;
-      for (const rule of normalizedRules) {
+      for (let r = 0; r < rulesCount; r++) {
+        const rule = normalizedRules[r];
         if (!rule.is_negative) continue;
         if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) continue;
-        const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
-        const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
-        if (specMatch >= 0.65 && invMatch >= 0.65) { isNegativeBlocked = true; break; }
+        if (specRuleSims[r] >= 0.65 && invSims[r] >= 0.65) { isNegativeBlocked = true; break; }
       }
       if (isNegativeBlocked) {
         negativeBlockedCount++;
@@ -376,13 +442,14 @@ async function matchSpecItems(
       }
 
       if (bestConfidence < 0.95) {
-        for (const rule of normalizedRules) {
+        for (let r = 0; r < rulesCount; r++) {
+          const rule = normalizedRules[r];
           if (rule.is_negative) continue;
           if (rule.supplier_id !== null && inv.supplier_id !== null && rule.supplier_id !== inv.supplier_id) {
             continue;
           }
-          const specMatch = stringSimilarity.compareTwoStrings(specNormName, rule.normalizedSpec);
-          const invMatch = stringSimilarity.compareTwoStrings(inv.normalizedName, rule.normalizedInvoice);
+          const specMatch = specRuleSims[r];
+          const invMatch = invSims[r];
 
           let matched = specMatch >= 0.65 && invMatch >= 0.65;
           let isFallback = false;
@@ -441,7 +508,7 @@ async function matchSpecItems(
       // Lower threshold when spec has equipment_code or variant code name (double signal)
       const simThreshold = (specCode || specNameAsCode) ? 0.45 : 0.6;
       if (bestConfidence < 0.95) {
-        let nameSim = stringSimilarity.compareTwoStrings(specNormName, inv.normalizedName);
+        let nameSim = rawNameSim;
         if (specNormShort) {
           const shortSim = stringSimilarity.compareTwoStrings(specNormShort, inv.normalizedName);
           if (shortSim > nameSim) nameSim = shortSim;
@@ -452,10 +519,8 @@ async function matchSpecItems(
             confidence += 0.05;
           }
           confidence = Math.min(confidence, 0.94);
-          const specEntity = extractEntityWords(specNormName);
-          const invEntity = extractEntityWords(inv.normalizedName);
-          if (specEntity.length > 3 && invEntity.length > 3) {
-            const entitySim = stringSimilarity.compareTwoStrings(specEntity, invEntity);
+          if (specEntity.length > 3 && inv.entity.length > 3) {
+            const entitySim = stringSimilarity.compareTwoStrings(specEntity, inv.entity);
             if (entitySim < 0.4) confidence *= 0.5;
           }
           if (confidence > bestConfidence) {
@@ -467,7 +532,7 @@ async function matchSpecItems(
 
       // 4. Name + characteristics vs invoice name
       if (bestConfidence < 0.95 && spec.characteristics) {
-        const fullSim = stringSimilarity.compareTwoStrings(specNormFull, inv.normalizedName);
+        const fullSim = rawFullSim;
         if (fullSim >= 0.5) {
           let confidence = fullSim * 0.8;
           if (spec.unit && inv.unit && spec.unit.toLowerCase().trim() === inv.unit.toLowerCase().trim()) {
@@ -482,7 +547,7 @@ async function matchSpecItems(
       }
 
       quantityScore = getQuantityScore(spec.quantity, inv.quantity);
-      dnScore = getDnScore(nameForMatching, inv.name);
+      dnScore = getDnScoreFromValues(specDnValue, inv.dnValue);
 
       if (quantityScore === 1) bestConfidence += 0.07;
       if (quantityScore === -1) bestConfidence -= 0.12;
