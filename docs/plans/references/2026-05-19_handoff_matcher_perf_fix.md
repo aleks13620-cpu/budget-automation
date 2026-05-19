@@ -4,11 +4,18 @@
 
 Найден и устранён **латентный архитектурный дефект** матчера: O(N³) синхронный цикл `spec × invoice × rules` блокировал event loop на минуты при 114 правилах в `matching_rules`. Применён **memoization-only фикс** (без изменения алгоритма) на ветке `claude/matcher-perf-fix` (commit `a8dfac8` поверх `acf21a1`). Pre-deploy 5-move review = PASS. Деплой на прод выполнен. Матчер теперь возвращает `/matching/run` за **3 секунды** (async), event loop **не блокируется** во время работы.
 
-**Финальные цифры:** _[заполнить из verify-stdout]_
-- Время полного матчинга project 4 (717 specs): _[FILL]_ сек
-- % unique specs с матчем: _[FILL]_% (baseline 46.2%)
-- % с is_selected: _[FILL]_%
-- match_type распределение: _[FILL]_
+**Финальные цифры (verify 2026-05-19 08:39 UTC):**
+- Время полного матчинга project 4 (717 specs): **~119 сек** (curl `started` в 08:37:48 → `done` в ~08:39:47). Из них tier 0-3 ~15 сек, остальное — LLM tier (Gemini batch call для 678 specs).
+- API status finale: `{"status":"done","total":717,"matched":331,"unmatched":386,"mode":"full","llmSuggestions":283,"llmMatchingEnabled":true}`
+- **% автомачтинга: 331/717 = 46.2%** (паритет с baseline до alias-экспериментов)
+- 283 LLM suggestions от Gemini (дополнительные кандидаты с low confidence — отдельный pool)
+- match_type распределение (unique specs):
+  - llm_suggestion: 283
+  - name_similarity: 156
+  - name_characteristics: 85
+  - exact_article: 38
+  - learned_rule: 1
+- Event loop responsive: status-polling возвращал `running` каждые 5 сек без timeout'ов — это **главная архитектурная победа**, раньше event loop замораживался при /matching/run.
 
 ## Что пошло не так в начале сессии
 
@@ -71,12 +78,13 @@ DB:        /app/database/budget_automation.db (114 rules in matching_rules)
 
 ## Что доступно для демо заказчику
 
-- ✅ Полный матчинг project 4 (717 specs) работает за _[FILL]_ сек
+- ✅ Полный матчинг project 4 (717 specs) **за ~2 минуты**, async (UI не блокируется)
 - ✅ Парсер PDF (v4) с parent-child merge
 - ✅ Импорт исторических правил через `POST /api/projects/:id/import-matches`
 - ✅ Training mode реализован (`matching_rules` глобальная, 114 правил активны)
 - ✅ UI кнопки 📊 Обучение и ⚠ Замечания
-- ✅ % автомачтинга на project 4: _[FILL]_
+- ✅ **% автомачтинга на project 4: 46.2% (331/717), полностью паритет с baseline**
+- ✅ LLM tier (Gemini): 283 дополнительных suggestions, работает
 
 ## Merge на main
 
