@@ -40,6 +40,16 @@ interface ImportMatchesResult {
     emptyRequiredFields?: number;
     emptyAfterNormalization?: number;
   };
+  // Training-mode visualisation block (backend training mode, added 2026-05-20).
+  // Optional so legacy backends keep working without the block.
+  training?: {
+    autoRematch: 'ran' | 'skipped_busy' | 'failed';
+    learnedSynonyms: number;
+    totalSpec: number;
+    matchedBefore: number;
+    matchedAfter: number;
+    delta: number;
+  };
 }
 
 const VAT_OPTIONS = [0, 5, 7, 10, 20, 22];
@@ -330,12 +340,18 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
         totalRows: data.totalRows ?? data.total ?? 0,
         processedRows: data.processedRows ?? data.totalRows ?? data.total ?? 0,
         reasons: data.reasons || undefined,
+        training: data.training || undefined,
       });
       setMessage({
         type: 'success',
         text: `Импортировано ${data.imported ?? 0} правил сопоставления из ${data.totalRows ?? data.total ?? 0} строк`,
       });
       if (importMatchesRef.current) importMatchesRef.current.value = '';
+      // Backend now auto-runs rematch as part of training mode — refresh the
+      // page's view so matchedCount/specifications/etc. reflect the new state.
+      if (data.training?.autoRematch === 'ran') {
+        await loadData();
+      }
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при импорте' });
     } finally {
@@ -969,6 +985,41 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
             )}
           </div>
         )}
+        {importMatchesResult?.training && (() => {
+          const t = importMatchesResult.training!;
+          const pctBefore = t.totalSpec > 0 ? Math.round((t.matchedBefore / t.totalSpec) * 100) : 0;
+          const pctAfter = t.totalSpec > 0 ? Math.round((t.matchedAfter / t.totalSpec) * 100) : 0;
+          const deltaColor = t.delta > 0 ? '#16a34a' : t.delta < 0 ? '#dc2626' : '#6b7280';
+          const rematchLabel = t.autoRematch === 'ran'
+            ? 'Авто-рематч: выполнен'
+            : t.autoRematch === 'skipped_busy'
+              ? 'Авто-рематч: пропущен (матчинг уже шёл) — запустите вручную'
+              : 'Авто-рематч: ошибка — запустите вручную';
+          const rematchBg = t.autoRematch === 'ran' ? '#dcfce7' : t.autoRematch === 'skipped_busy' ? '#fef3c7' : '#fee2e2';
+          return (
+            <div style={{ marginTop: '0.75rem', padding: '0.75rem', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px' }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.5rem' }}>Результат обучения</div>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', fontSize: '0.9rem' }}>
+                <div>
+                  <span style={{ color: '#6b7280' }}>Покрытие спеки:&nbsp;</span>
+                  <b>{t.matchedBefore} / {t.totalSpec}</b> ({pctBefore}%)
+                  <span style={{ margin: '0 0.5rem', color: '#9ca3af' }}>→</span>
+                  <b style={{ color: deltaColor }}>{t.matchedAfter} / {t.totalSpec}</b> ({pctAfter}%)
+                  <span style={{ marginLeft: '0.4rem', color: deltaColor, fontWeight: 600 }}>
+                    {t.delta > 0 ? `+${t.delta}` : t.delta}
+                  </span>
+                </div>
+                <div>
+                  <span style={{ color: '#6b7280' }}>Синонимов выучено:&nbsp;</span>
+                  <b>+{t.learnedSynonyms}</b>
+                </div>
+              </div>
+              <div style={{ marginTop: '0.5rem', padding: '0.3rem 0.5rem', background: rematchBg, borderRadius: '4px', fontSize: '0.8rem' }}>
+                {rematchLabel}
+              </div>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Matching section */}

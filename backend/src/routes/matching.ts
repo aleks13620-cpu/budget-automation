@@ -1548,7 +1548,16 @@ router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => 
 
 // POST /api/projects/:id/import-matches — bulk import matching rules from Excel
 // Excel columns (detected by keywords): spec_name, invoice_name, supplier (optional)
-router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Request, res: Response) => {
+//
+// Training mode (added 2026-05-20):
+//  1) For every imported (spec, invoice) pair we also call
+//     learnConstructionSynonymsFromConfirmedMatch — the same learner used on
+//     operator-confirmed matches. This populates construction_synonyms so the
+//     matcher can generalize beyond literal pattern matches.
+//  2) After the import transaction we auto-trigger a full rematch
+//     (runMatchingBackground) so new rules/synonyms take effect immediately.
+//  3) Response includes a `training` block with before/after match counts.
+router.post('/api/projects/:id/import-matches', upload.single('file'), async (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
@@ -1557,6 +1566,21 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
 
     const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
     if (!project) return res.status(404).json({ error: 'Проект не найден' });
+
+    // Training mode: snapshot counters BEFORE the import + rematch.
+    const countMatched = db.prepare(`
+      SELECT COUNT(DISTINCT specification_item_id) AS cnt
+      FROM matched_items
+      WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
+    `);
+    const countLearnedSyn = db.prepare(
+      "SELECT COUNT(*) AS cnt FROM construction_synonyms WHERE source = 'learned'"
+    );
+    const totalSpec = (db.prepare(
+      'SELECT COUNT(*) AS cnt FROM specification_items WHERE project_id = ?'
+    ).get(projectId) as { cnt: number }).cnt;
+    const matchedBefore = (countMatched.get(projectId) as { cnt: number }).cnt;
+    const learnedSynonymsBefore = (countLearnedSyn.get() as { cnt: number }).cnt;
 
     const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
@@ -1663,6 +1687,12 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
             upsert.run(specPattern, invPattern, supplierId);
             newRules++;
           }
+
+          // Training mode: extract construction synonyms from this confirmed pair.
+          // The XLS is an operator-curated ground truth, so we treat each row the
+          // same way we treat an operator-confirmed match in the UI. confidence=0.95
+          // (same as the rule we just inserted) clears the learner's 0.85 threshold.
+          learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invPattern, 0.95);
         }
 
         if (!rowHadPair) {
@@ -1674,6 +1704,27 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
     importAll();
 
     const imported = newRules + updatedRules;
+    const learnedSynonymsAfter = (countLearnedSyn.get() as { cnt: number }).cnt;
+    const learnedSynonyms = learnedSynonymsAfter - learnedSynonymsBefore;
+
+    // Training mode: auto-trigger a full rematch so the freshly imported rules and
+    // learned synonyms take effect immediately. If a matching run is already in
+    // progress we skip (caller can rematch manually afterwards) to keep the
+    // existing matching lock contract intact.
+    let autoRematch: 'ran' | 'skipped_busy' | 'failed' = 'skipped_busy';
+    if (acquireMatchingRun(projectId)) {
+      try {
+        await runMatchingBackground(projectId, 'full');
+        autoRematch = 'ran';
+      } catch (rematchErr) {
+        autoRematch = 'failed';
+        console.error('[import-matches] auto-rematch failed:', rematchErr);
+      }
+      // runMatchingBackground releases the matching lock in its own finally.
+    }
+
+    const matchedAfter = (countMatched.get(projectId) as { cnt: number }).cnt;
+
     res.json({
       imported,
       newRules,
@@ -1686,6 +1737,17 @@ router.post('/api/projects/:id/import-matches', upload.single('file'), (req: Req
       processedPairs,
       invoiceColumnsUsed: effectiveInvCols.length,
       reasons: skipReasons,
+      // Training-mode visualisation block. Frontend renders before/after coverage
+      // and learned-synonyms count from these fields. Additive — older clients
+      // that don't read `training` keep working.
+      training: {
+        autoRematch,
+        learnedSynonyms,
+        totalSpec,
+        matchedBefore,
+        matchedAfter,
+        delta: matchedAfter - matchedBefore,
+      },
     });
   } catch (error) {
     res.status(500).json({
