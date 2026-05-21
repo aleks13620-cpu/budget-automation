@@ -947,6 +947,8 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
       }
     })();
 
+    // Track operator's analog confirmation for analytics/audit (was missing).
+    saveFeedback(db, 'confirm_analog', match.project_id, match.specification_item_id, match.target_item_id, match.supplier_id, match.source);
     res.json({ confirmed: true, type: 'analog' });
   } catch (error) {
     res.status(500).json({
@@ -989,6 +991,7 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
           upsertAnalogMatchingRule(db, specPattern, invoicePattern, match.supplier_id);
         }
 
+        saveFeedback(db, 'confirm_analog', match.project_id, match.specification_item_id, match.target_item_id, match.supplier_id, match.source);
         updated++;
       }
     });
@@ -1093,6 +1096,9 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
         const specPattern = normalizeForMatching(specItem.name);
         const invoicePattern = normalizeForMatching(invoiceItem.name);
         upsertPositiveMatchingRule(db, specPattern, invoicePattern, invoiceItem.supplier_id, 0.96, 'manual');
+        // Manual match is the strongest operator signal — feed it to the synonym
+        // learner so future projects auto-match similarly worded items.
+        learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, 0.96);
       })();
       return res.json({ matchId: existingMatch.id, confirmed: true, reused: true });
     }
@@ -1118,6 +1124,9 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
       const invoicePattern = normalizeForMatching(invoiceItem.name);
 
       upsertPositiveMatchingRule(db, specPattern, invoicePattern, invoiceItem.supplier_id, 0.96, 'manual');
+      // Manual match is the strongest operator signal — feed it to the synonym
+      // learner so future projects auto-match similarly worded items.
+      learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, 0.96);
 
       return Number(insertResult.lastInsertRowid);
     })();
