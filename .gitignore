@@ -40,7 +40,8 @@ data/uploads/*
 # Temporary files
 *.tmp
 *.temp
-.claude/
+.claude/*
+!.claude/skills/
 **/__pycache__/
 scripts/~$*.xlsx
 
