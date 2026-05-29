@@ -522,7 +522,7 @@ export function MatchingView({ projectId, onBack }: Props) {
       ) : filteredItems.length === 0 ? (
         <p className="muted">По выбранному фильтру позиций не найдено.</p>
       ) : (
-        <MatchTable groupedItems={groupedItems} onRefresh={handleRefresh} onManualMatch={setManualMatchSpec} />
+        <MatchTable groupedItems={groupedItems} onRefresh={handleRefresh} onManualMatch={setManualMatchSpec} projectId={projectId} />
       )}
 
       {/* Unmatched invoice items section */}

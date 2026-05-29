@@ -46,6 +46,7 @@ interface Props {
   groupedItems: SectionGroup[];
   onRefresh: () => void;
   onManualMatch?: (specItem: SpecItem) => void;
+  projectId?: number;
 }
 
 const MATCH_TYPE_LABELS: Record<string, string> = {
@@ -55,12 +56,55 @@ const MATCH_TYPE_LABELS: Record<string, string> = {
   name_characteristics: 'Название+хар.',
 };
 
-export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
+// Quick-tags for one-click operator feedback (carry-task #17).
+// Each tag is sent to POST /api/projects/:id/feedback/tag.
+const QUICK_TAGS: Array<{ id: string; icon: string; label: string }> = [
+  { id: 'price_wrong', icon: '💰', label: 'Цена не та' },
+  { id: 'wrong_marking', icon: '🔖', label: 'Не та маркировка' },
+  { id: 'needs_alternatives', icon: '🔀', label: 'Нужны альтернативы' },
+  { id: 'duplicate', icon: '📑', label: 'Дубль' },
+  { id: 'not_purchased', icon: '🚫', label: 'Не покупали' },
+  { id: 'analog_brand', icon: '≈', label: 'Аналог другого бренда' },
+  { id: 'parser_missed', icon: '🐛', label: 'Парсер пропустил' },
+];
+
+const ALT_CONFIDENCE_THRESHOLD = 0.5;
+const ALT_MAX = 2; // show 2 alternatives below the best (top-3 total visible)
+
+export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState<number | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<number>>(new Set());
+  // Local visual state: which (specItemId, tagId) pairs have been clicked.
+  // Reset on page reload — backend persists the actual feedback row.
+  const [appliedTags, setAppliedTags] = useState<Set<string>>(new Set());
+  const [tagLoading, setTagLoading] = useState<string | null>(null);
+
+  const handleTag = async (specItemId: number, invoiceItemId: number | null, supplierId: number | null, tag: string) => {
+    if (projectId == null) return;
+    const key = `${specItemId}_${tag}`;
+    setTagLoading(key);
+    setActionError(null);
+    try {
+      await api.post(`/projects/${projectId}/feedback/tag`, {
+        spec_item_id: specItemId,
+        invoice_item_id: invoiceItemId,
+        supplier_id: supplierId,
+        tag,
+      });
+      setAppliedTags(prev => {
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+    } catch {
+      setActionError('Ошибка при сохранении тега');
+    } finally {
+      setTagLoading(null);
+    }
+  };
 
   const handleAction = async (matchId: number, action: () => Promise<void>) => {
     setLoading(matchId);
@@ -295,6 +339,77 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch }: Props) {
                       )}
                     </div>
                   </div>
+
+                  {/* #14 Top-N alternatives strip (top-2 below the best, shown by default if 2+ viable cands exist) */}
+                  {(() => {
+                    if (!best) return null;
+                    const others = row.matches
+                      .filter(m => m.id !== best.id && m.confidence >= ALT_CONFIDENCE_THRESHOLD)
+                      .slice(0, ALT_MAX);
+                    if (others.length === 0) return null;
+                    return (
+                      <div style={{ borderTop: '1px dashed #d1d5db', background: '#fafbfc', padding: '0.4rem 0.75rem 0.4rem 2.75rem' }}>
+                        <div style={{ fontSize: '0.7rem', color: '#6b7280', marginBottom: '0.3rem' }}>Альтернативы:</div>
+                        {others.map(alt => (
+                          <div key={alt.id} style={{ display: 'flex', alignItems: 'center', padding: '0.2rem 0', fontSize: '0.85rem', gap: '0.5rem' }}>
+                            <span style={{ flex: '0 0 25%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alt.invoiceName}</span>
+                            <span style={{ flex: '0 0 20%', color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{alt.supplierName || '—'}</span>
+                            <span style={{ flex: '0 0 70px', color: '#6b7280' }}>
+                              {(alt.effectivePrice ?? alt.price) != null ? (alt.effectivePrice ?? alt.price)!.toLocaleString('ru-RU') : '—'}
+                            </span>
+                            <span style={{ flex: '0 0 60px', fontSize: '0.75rem' }}>
+                              <span className="confidence-badge">{Math.round(alt.confidence * 100)}%</span>
+                            </span>
+                            <div style={{ display: 'flex', gap: '0.2rem' }}>
+                              {!alt.isConfirmed && (
+                                <>
+                                  <button className="btn btn-primary btn-sm" onClick={() => handleConfirm(alt.id)} disabled={loading === alt.id} title="Выбрать эту альтернативу">✓</button>
+                                  <button className="btn btn-secondary btn-sm" onClick={() => handleConfirmAnalog(alt.id)} disabled={loading === alt.id} title="Аналог">≈</button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {/* #17 Quick-tags strip (one-click operator feedback) */}
+                  {projectId != null && (
+                    <div style={{ borderTop: '1px solid #f1f5f9', background: '#fbfdff', padding: '0.35rem 0.75rem 0.35rem 2.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>Замечание (1 клик):</span>
+                      {QUICK_TAGS.map(t => {
+                        const tagKey = `${row.specItem.id}_${t.id}`;
+                        const isApplied = appliedTags.has(tagKey);
+                        const isLoading = tagLoading === tagKey;
+                        return (
+                          <button
+                            key={t.id}
+                            className="btn btn-sm"
+                            style={{
+                              padding: '0.15rem 0.5rem',
+                              fontSize: '0.75rem',
+                              background: isApplied ? '#dcfce7' : '#fff',
+                              border: `1px solid ${isApplied ? '#16a34a' : '#cbd5e1'}`,
+                              color: isApplied ? '#166534' : '#475569',
+                              opacity: isLoading ? 0.5 : 1,
+                              cursor: isLoading ? 'wait' : 'pointer',
+                            }}
+                            onClick={() => handleTag(
+                              row.specItem.id,
+                              best?.invoiceItemId ?? null,
+                              null,
+                              t.id,
+                            )}
+                            disabled={isLoading || isApplied}
+                            title={t.label}
+                          >
+                            {t.icon} {t.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
 
                   {/* Expanded candidates */}
                   {isExpanded && (

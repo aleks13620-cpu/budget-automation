@@ -1788,6 +1788,35 @@ router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
   }
 });
 
+// POST /api/projects/:id/feedback/tag — submit one-click quick-tag
+// (carry-task #17). Stores as operator_feedback row with type='tag_<name>'
+// so existing /feedback/all (filter type='error_report') is not polluted.
+// Allowed tags are validated server-side to prevent arbitrary type names.
+const ALLOWED_TAGS = new Set([
+  'price_wrong', 'wrong_marking', 'needs_alternatives', 'duplicate',
+  'not_purchased', 'analog_brand', 'parser_missed',
+]);
+router.post('/api/projects/:id/feedback/tag', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const { spec_item_id, invoice_item_id, supplier_id, tag } = req.body;
+    if (!tag || typeof tag !== 'string' || !ALLOWED_TAGS.has(tag)) {
+      res.status(400).json({ error: 'Неизвестный или отсутствующий тег' });
+      return;
+    }
+    const db = getDatabase();
+    const parsedSupplierId = supplier_id ? Number(supplier_id) : null;
+    const supplierId = parsedSupplierId !== null && Number.isFinite(parsedSupplierId) && parsedSupplierId > 0 ? parsedSupplierId : null;
+    db.prepare(`
+      INSERT INTO operator_feedback (type, project_id, supplier_id, spec_item_id, invoice_item_id, comment)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(`tag_${tag}`, projectId, supplierId, spec_item_id || null, invoice_item_id || null, tag);
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при сохранении тега', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 // PATCH /api/feedback/:id/resolve — mark error_report as resolved
 router.patch('/api/feedback/:id/resolve', (req: Request, res: Response) => {
   try {
