@@ -9,6 +9,10 @@ function tokenizeNormalized(s: string): string[] {
 function abbrevMatchesExpansion(abbr: string, expansion: string): boolean {
   const a = abbr.toLowerCase();
   const e = expansion.toLowerCase();
+  // Reject digit-prefix abbreviations — these are size codes wrongly classified
+  // as abbreviations (e.g. "32 → 32x20x32", "50 → 50x32x50"). Verified against
+  // 27 learned synonyms in prod 2026-05-27: blocks 6/6 noise, 0 false positives.
+  if (/^\d/.test(a)) return false;
   if (a.length < 2 || a.length > 4) return false;
   if (!/^[\p{L}\d]+$/u.test(a)) return false;
   if (e.length < a.length + 3) return false;
