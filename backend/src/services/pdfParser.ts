@@ -68,6 +68,25 @@ function scoreVatDiscount(cellText: string): number {
   return score;
 }
 
+// Classify the VAT-state that a column HEADER implies for the values in that column:
+//   true  → values already INCLUDE VAT (gross): "с НДС", "с учётом НДС", "включая НДС"
+//   false → values EXCLUDE VAT (net):           "без НДС"
+//   null  → neutral/unknown: plain "Сумма"/"Цена", or a bare "НДС" (tax-amount) column.
+// This is the missing link between the column scorer (which may pick a "с НДС" column) and
+// computeUnitPriceWithVat (which keys VAT solely off the supplier flag). Feature #1 feeds this
+// into normalizeParsedRowsForSupplierVat so VAT is applied exactly once.
+// MIRROR of _classify_column_vat in scripts/extract_invoice_table.py — same with/without-VAT
+// regexes as scoreVatDiscount, so column selection and vat-classification stay consistent.
+export function classifyColumnVat(cellText: string | null | undefined): boolean | null {
+  if (!cellText) return null;
+  const lower = cellText.toLowerCase();
+  const withVat = /с\s+ндс|с\s+учетом\s+ндс|с\s+учётом\s+ндс|включая\s+ндс/.test(lower);
+  const withoutVat = /без\s+ндс/.test(lower);
+  if (withoutVat) return false;
+  if (withVat) return true;
+  return null;
+}
+
 // Returns true if the row looks like a requisite/metadata row (INN, BIK, address, etc.)
 // Used by detectColumns() to skip such rows as potential header candidates.
 function isRequisiteLikeRow(row: string[]): boolean {
@@ -82,7 +101,7 @@ function isRequisiteLikeRow(row: string[]): boolean {
   return false;
 }
 
-export function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number } | null {
+export function detectColumns(rows: string[][]): { mapping: ColumnMapping; headerRowIndex: number; amountVatIncluded: boolean | null; priceVatIncluded: boolean | null } | null {
   const searchLimit = Math.min(rows.length, 30);
 
   for (let i = 0; i < searchLimit; i++) {
@@ -166,7 +185,12 @@ export function detectColumns(rows: string[][]): { mapping: ColumnMapping; heade
         else mapping.price = null;
       }
 
-      return { mapping, headerRowIndex: i };
+      // Feature #1: capture the VAT-state of the CHOSEN amount/price columns from their headers,
+      // so the router can reconcile parsed values against the supplier flag (VAT exactly once).
+      const amountVatIncluded = mapping.amount !== null ? classifyColumnVat(normalizeText(row[mapping.amount])) : null;
+      const priceVatIncluded = mapping.price !== null ? classifyColumnVat(normalizeText(row[mapping.price])) : null;
+
+      return { mapping, headerRowIndex: i, amountVatIncluded, priceVatIncluded };
     }
   }
 
@@ -819,6 +843,10 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
   // Use saved mapping or auto-detect
   let mapping: ColumnMapping;
   let headerRowIndex: number;
+  // Feature #1: VAT-state of the chosen amount/price columns. Auto-detect classifies the header;
+  // a saved (operator-confirmed) mapping carries no header text → left neutral (null).
+  let amountVatIncluded: boolean | null = null;
+  let priceVatIncluded: boolean | null = null;
 
   if (savedMapping) {
     mapping = {
@@ -849,6 +877,8 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
     }
     mapping = detected.mapping;
     headerRowIndex = detected.headerRowIndex;
+    amountVatIncluded = detected.amountVatIncluded;
+    priceVatIncluded = detected.priceVatIncluded;
   }
 
   const result = parseTableData(rows, mapping, headerRowIndex + 1);
@@ -877,6 +907,8 @@ export function parsePdfFromExtracted(rows: string[][], fullText: string, savedM
     totalAmount,
     vatAmount: null,
     discountDetected,
+    amountVatIncluded,
+    priceVatIncluded,
   };
 }
 
@@ -913,6 +945,9 @@ export async function parsePdfFileWithExtraction(
           invoiceDate?: string | null;
           supplierName?: string | null;
           totalAmount?: number | null;
+          // Feature #1: VAT-state of the chosen amount/price column (mirror of classifyColumnVat).
+          amountVatIncluded?: boolean | null;
+          priceVatIncluded?: boolean | null;
         };
         stats?: Record<string, number>;
       };
@@ -943,6 +978,8 @@ export async function parsePdfFileWithExtraction(
           totalAmount: meta.totalAmount ?? (totalFromItems > 0 ? totalFromItems : null),
           vatAmount: null,
           discountDetected: null,
+          amountVatIncluded: meta.amountVatIncluded ?? null,
+          priceVatIncluded: meta.priceVatIncluded ?? null,
         };
 
         const rows = invoiceRows.map(r => [

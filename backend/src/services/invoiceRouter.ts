@@ -312,6 +312,61 @@ export function normalizeGigaChatRowsForSupplierVat(
   };
 }
 
+export interface ParsedVatNormalizationResult {
+  items: InvoiceRow[];
+  needsAmountReview: boolean;
+  reasonParts: string[];
+}
+
+/**
+ * Feature #1 — «НДС ровно один раз» для ДЕФОЛТНОГО парсера (pdfplumber/pdf-parse scorer path).
+ *
+ * Скорер колонок предпочитает колонку «с НДС», поэтому распарсенные amount/price МОГУТ уже
+ * содержать НДС. computeUnitPriceWithVat же домножает на (1+ставка) исходя ТОЛЬКО из флага
+ * поставщика prices_include_vat — если факт колонки и флаг расходятся, НДС задваивается или
+ * теряется. Здесь мы сверяем vat-состояние ВЫБРАННОЙ колонки (classifyColumnVat) с флагом и,
+ * при расхождении, приводим значение к состоянию, которого ждёт флаг (через convertVatSemantics,
+ * тот же механизм, что и для GigaChat-пути). После этого computeUnitPriceWithVat применяет НДС
+ * ровно один раз. Без хардкода поставщиков; нейтральная колонка (null) или согласованный флаг —
+ * это no-op (значения не меняются), поэтому регрессии на «чистых» счетах нет.
+ */
+export function normalizeParsedRowsForSupplierVat(
+  items: InvoiceRow[],
+  amountVatIncluded: boolean | null | undefined,
+  priceVatIncluded: boolean | null | undefined,
+  supplierPricesIncludeVat?: number | null,
+  supplierVatRate?: number | null,
+): ParsedVatNormalizationResult {
+  const amountMismatch = hasVatSemanticsMismatch(amountVatIncluded, supplierPricesIncludeVat);
+  const priceMismatch = hasVatSemanticsMismatch(priceVatIncluded, supplierPricesIncludeVat);
+  const reasonParts: string[] = [];
+
+  if (amountMismatch) {
+    reasonParts.push(`amount column vat_included=${amountVatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+  }
+  if (priceMismatch) {
+    reasonParts.push(`price column vat_included=${priceVatIncluded} conflicts with supplier prices_include_vat=${supplierPricesIncludeVat}`);
+  }
+
+  // Расхождение есть, но домножить/поделить нечем (нет ставки) — пометить на review, значения не трогать.
+  if ((amountMismatch || priceMismatch) && (supplierVatRate == null || supplierVatRate <= 0)) {
+    reasonParts.push('vat semantics mismatch has no usable vat_rate');
+    return { items: items.map(item => ({ ...item })), needsAmountReview: true, reasonParts };
+  }
+
+  const normalizedItems = items.map(item => ({
+    ...item,
+    price: item.price == null
+      ? null
+      : convertVatSemantics(item.price, priceVatIncluded, supplierVatRate, supplierPricesIncludeVat),
+    amount: item.amount == null
+      ? null
+      : convertVatSemantics(item.amount, amountVatIncluded, supplierVatRate, supplierPricesIncludeVat),
+  }));
+
+  return { items: normalizedItems, needsAmountReview: amountMismatch || priceMismatch, reasonParts };
+}
+
 function buildGigaFinancialOverride(
   baseItem: InvoiceRow,
   gigaItem: InvoiceRow,
@@ -739,6 +794,19 @@ export async function routeInvoiceFile(
       }
     }
 
+    // Feature #1: reconcile the scorer-chosen column's VAT-state with the supplier flag BEFORE
+    // computeUnitPriceWithVat ever runs downstream, so VAT lands exactly once. No-op when the
+    // column is neutral or already agrees with the flag. Runs before the GigaChat price-override
+    // (which replaces matched rows with its own already-reconciled values — no double-apply).
+    const parsedVatNorm = normalizeParsedRowsForSupplierVat(
+      pdfResult.items,
+      pdfResult.amountVatIncluded,
+      pdfResult.priceVatIncluded,
+      supplierPricesIncludeVat,
+      supplierVatRate,
+    );
+    pdfResult.items = parsedVatNorm.items;
+
     const priceOverride = await applyParserPriceOverrides(
       filePath,
       pdfResult,
@@ -756,8 +824,8 @@ export async function routeInvoiceFile(
       metadata: priceOverride.metadata,
       confidence: hasItems ? 80 : 20,
       gigachatParseQuality: priceOverride.gigachatParseQuality,
-      amountReviewRequired: priceOverride.needsAmountReview,
-      parsingReasonAdditions: priceOverride.reasonParts,
+      amountReviewRequired: priceOverride.needsAmountReview || parsedVatNorm.needsAmountReview,
+      parsingReasonAdditions: [...parsedVatNorm.reasonParts, ...(priceOverride.reasonParts ?? [])],
     };
   }
 

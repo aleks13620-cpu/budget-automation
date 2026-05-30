@@ -9,7 +9,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from extract_invoice_table import detect_column_mapping, parse_number
+from extract_invoice_table import detect_column_mapping, parse_number, _classify_column_vat
 
 failures = 0
 
@@ -72,6 +72,22 @@ print('Case F: Всего column (CARRY-1 — всего keyword)')
 m_f = detect_column_mapping(['№', 'Наименование', 'Количество', 'Цена', 'Всего'])
 print(f'    mapping: {m_f}')
 check('F: amount = col 4 (Всего)', m_f.get('amount') == 4, f'got {m_f}')
+
+# ── Case G: _classify_column_vat — vatness выбранной колонки (Фича #1) ──
+# Зеркало classifyColumnVat в backend/src/services/pdfParser.ts. true=брутто(с НДС),
+# false=нетто(без НДС), None=нейтрально (в т.ч. голая «Сумма НДС» — налоговая колонка).
+print('Case G: _classify_column_vat (Feature #1 — VAT exactly once)')
+check('G: "Сумма с НДС" -> gross/True', _classify_column_vat('Сумма с НДС') is True,
+      f'got {_classify_column_vat("Сумма с НДС")!r}')
+check('G: "Цена без НДС" -> net/False', _classify_column_vat('Цена без НДС') is False,
+      f'got {_classify_column_vat("Цена без НДС")!r}')
+check('G: "Сумма" -> neutral/None', _classify_column_vat('Сумма') is None,
+      f'got {_classify_column_vat("Сумма")!r}')
+check('G: "Сумма НДС" (налоговая) -> neutral/None', _classify_column_vat('Сумма НДС') is None,
+      f'got {_classify_column_vat("Сумма НДС")!r}')
+check('G: "Всего с учётом НДС" -> gross/True', _classify_column_vat('Всего с учётом НДС') is True,
+      f'got {_classify_column_vat("Всего с учётом НДС")!r}')
+check('G: пусто -> None', _classify_column_vat('') is None, f'got {_classify_column_vat("")!r}')
 
 print('')
 if failures:

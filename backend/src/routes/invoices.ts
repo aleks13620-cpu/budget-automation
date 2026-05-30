@@ -7,7 +7,7 @@ import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename, parseJsonSafe, UPLOAD_DIR } from '../utils/fileUtils';
 import { parsePdfFile, parsePdfFileWithExtraction, extractRawRows, detectColumns, SavedMapping, categorizeParsingResult, splitTextWithSeparator, parseTableData, SeparatorMethod, extractMetadata, detectDiscount } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData, excelToLegacy } from '../services/excelInvoiceParser';
-import { applyParserPriceOverrides, loadSupplierParserOverrides, loadSupplierPricesIncludeVat, loadSupplierVatSettings, logSupplierParserOverrides, normalizeGigaChatRowsForSupplierVat, routeInvoiceFile } from '../services/invoiceRouter';
+import { applyParserPriceOverrides, loadSupplierParserOverrides, loadSupplierPricesIncludeVat, loadSupplierVatSettings, logSupplierParserOverrides, normalizeGigaChatRowsForSupplierVat, normalizeParsedRowsForSupplierVat, routeInvoiceFile } from '../services/invoiceRouter';
 import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
@@ -287,10 +287,14 @@ function invoiceItemsSnapshotJson(invoiceId: number, db: ReturnType<typeof getDa
 }
 
 // Helper: process a single invoice file (parse, detect supplier, insert into DB)
-async function processInvoiceFile(
+// `options.extractedOverride` is a test/DI seam: when set, the PDF first-pass parse uses the
+// provided pre-extracted rows/text instead of re-reading the file — lets integration tests drive
+// the real upload pipeline deterministically without depending on PDF font/extraction quirks.
+export async function processInvoiceFile(
   file: { originalname: string; path: string },
   projectId: number,
   db: ReturnType<typeof getDatabase>,
+  options?: { extractedOverride?: { rows: string[][]; fullText: string } },
 ): Promise<{
   invoiceId: number;
   supplierName: string | null;
@@ -368,7 +372,7 @@ async function processInvoiceFile(
   let initialResult;
   let lastExcelResult: ExcelParseResult | null = null;
   if (ext === '.pdf') {
-    const pdfParsed = await parsePdfFileWithExtraction(file.path);
+    const pdfParsed = await parsePdfFileWithExtraction(file.path, undefined, options?.extractedOverride);
     pdfRawRows = pdfParsed.rows;
     pdfFullText = pdfParsed.fullText;
     initialResult = pdfParsed.parseResult;
@@ -475,6 +479,22 @@ async function processInvoiceFile(
   let priceOverrideReasonParts: string[] = [];
 
   applySupplierHeuristics(supplierName, parseResult.items);
+
+  // Feature #1 (НДС ровно один раз): сверяем vat-состояние ВЫБРАННОЙ колонки (classifyColumnVat,
+  // прокинуто в parseResult.amount/priceVatIncluded) с флагом поставщика и приводим значения к
+  // состоянию, которого ждёт computeUnitPriceWithVat — НДС применяется ровно один раз. Делаем
+  // здесь, на upload-пути (он минует routeInvoiceFile), для классического парсера ДО GigaChat-
+  // override/fallback (у тех своя нормализация). No-op для нейтральной колонки/согласованного флага.
+  const classicVatNorm = normalizeParsedRowsForSupplierVat(
+    parseResult.items,
+    parseResult.amountVatIncluded,
+    parseResult.priceVatIncluded,
+    supplierVatSettings.pricesIncludeVat,
+    parsedVatRate,
+  );
+  parseResult = { ...parseResult, items: classicVatNorm.items };
+  if (classicVatNorm.needsAmountReview) priceOverrideNeedsAmountReview = true;
+  if (classicVatNorm.reasonParts.length) priceOverrideReasonParts.push(...classicVatNorm.reasonParts);
 
   if (parserOverrides?.prices_source === 'gigachat' && parseResult.items.length > 0) {
     const supplierCtx = buildSupplierContext(supplierName, savedMapping);

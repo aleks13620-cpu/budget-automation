@@ -20,6 +20,11 @@ export interface InvoiceParseResult {
   totalAmount: number | null;
   vatAmount: number | null;
   discountDetected: number | null;
+  // Feature #1 (НДС ровно один раз): VAT-state of the CHOSEN amount/price column, derived from
+  // the header via classifyColumnVat. true=gross(с НДС), false=net(без НДС), null=neutral/unknown.
+  // Consumed by normalizeParsedRowsForSupplierVat to apply VAT exactly once vs the supplier flag.
+  amountVatIncluded?: boolean | null;
+  priceVatIncluded?: boolean | null;
 }
 
 // ---------------------------------------------------------------------------

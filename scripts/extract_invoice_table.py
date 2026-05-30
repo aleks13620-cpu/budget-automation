@@ -133,6 +133,27 @@ def _score_amount_column(text):
     return score
 
 
+def _classify_column_vat(text):
+    """Classify the VAT-state a column HEADER implies for the values in that column:
+      True  -> values already INCLUDE VAT (gross): 'с НДС', 'с учётом НДС', 'включая НДС'
+      False -> values EXCLUDE VAT (net):           'без НДС'
+      None  -> neutral/unknown: plain 'Сумма'/'Цена', or a bare 'НДС' (tax-amount) column.
+    Feeds Feature #1 (НДС ровно один раз): the router reconciles this against the supplier
+    prices_include_vat flag so VAT is applied exactly once.
+    MIRROR of classifyColumnVat in backend/src/services/pdfParser.ts — same with/without-VAT
+    regexes as _score_amount_column, so column selection and vat-classification stay consistent."""
+    if not text:
+        return None
+    t = text.lower()
+    with_vat = re.search(r'с\s+ндс|с\s+учетом\s+ндс|с\s+учётом\s+ндс|включая\s+ндс', t) is not None
+    without_vat = re.search(r'без\s+ндс', t) is not None
+    if without_vat:
+        return False
+    if with_vat:
+        return True
+    return None
+
+
 def detect_column_mapping(header_cells):
     mapping = {}
     amount_candidates = []  # (col_idx, score) for every column that looks like a total
@@ -511,6 +532,11 @@ def extract_invoice_items(pdf_path):
 
     all_items = []
     global_row_idx = 0
+    # Feature #1: VAT-state of the chosen amount/price column, captured from the FIRST
+    # header-based mapping (document-level signal). None = neutral/unknown → no reconciliation.
+    amount_vat_included = None
+    price_vat_included = None
+    vat_state_captured = False
 
     with pdfplumber.open(pdf_path) as pdf:
         stats = {
@@ -567,6 +593,15 @@ def extract_invoice_items(pdf_path):
                         inferred = infer_mapping_from_data(data_sample)
                         page_mapping = merge_mappings(header_mapping, inferred)
                         prev_mapping = page_mapping
+                        if not vat_state_captured:
+                            header_lc = [clean_cell(c).lower() for c in row]
+                            a_idx = page_mapping.get('amount')
+                            p_idx = page_mapping.get('price')
+                            if a_idx is not None and a_idx < len(header_lc):
+                                amount_vat_included = _classify_column_vat(header_lc[a_idx])
+                            if p_idx is not None and p_idx < len(header_lc):
+                                price_vat_included = _classify_column_vat(header_lc[p_idx])
+                            vat_state_captured = True
                         if page_idx < 5:
                             print(f'[info] p{page_idx+1}: header mapping={page_mapping}',
                                   file=sys.stderr)
@@ -626,6 +661,11 @@ def extract_invoice_items(pdf_path):
                     data_rows_buf.clear()
 
     meta = extract_metadata(pdf_path)
+
+    # Feature #1: surface the chosen amount/price column VAT-state for the router to reconcile
+    # against the supplier prices_include_vat flag (НДС ровно один раз).
+    meta['amountVatIncluded'] = amount_vat_included
+    meta['priceVatIncluded'] = price_vat_included
 
     # If no totalAmount in metadata, compute from items
     if meta['totalAmount'] is None and all_items:
