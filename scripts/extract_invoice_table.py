@@ -112,22 +112,52 @@ def scan_pages_fast(pdf_path):
 
 # ── Phase 2: Column mapping ──
 
+def _score_amount_column(text):
+    """Score how strongly a header cell denotes the line-total ('amount') column.
+    A bare "НДС" token ("Сумма НДС", "НДС, руб") marks the VAT-amount column, not the
+    total → negative. \\b is unreliable for Cyrillic, so the token is bounded by
+    non-Cyrillic-letter chars or string edges. Higher score = better amount candidate.
+    Keep in sync with scoreVatDiscount in backend/src/services/pdfParser.ts."""
+    bare_vat = re.search(r'(?:^|[^а-яё])ндс(?:$|[^а-яё])', text) is not None
+    with_vat = re.search(r'с\s+ндс|с\s+учетом\s+ндс|с\s+учётом\s+ндс|включая\s+ндс', text) is not None
+    without_vat = re.search(r'без\s+ндс', text) is not None
+    score = 0
+    if bare_vat and not with_vat and not without_vat:
+        score -= 50
+    if without_vat:
+        score -= 20
+    elif with_vat:
+        score += 20
+    if re.search(r'скидк', text):
+        score += 30
+    return score
+
+
 def detect_column_mapping(header_cells):
     mapping = {}
+    amount_candidates = []  # (col_idx, score) for every column that looks like a total
     for col_idx, cell in enumerate(header_cells):
         text = clean_cell(cell).lower()
         if not text:
             continue
+        if any(kw.lower() in text for kw in HEADER_KEYWORDS['amount']):
+            amount_candidates.append((col_idx, _score_amount_column(text)))
+        # Greedy first-match for every non-amount field (unchanged behaviour)
         for field, keywords in HEADER_KEYWORDS.items():
-            if field in mapping:
+            if field == 'amount' or field in mapping:
                 continue
             for kw in keywords:
                 if kw.lower() in text:
                     mapping[field] = col_idx
                     break
-    # Disambiguate 'amount' from column keywords that also match summary rows
-    # If both 'amount' column header and cell text contain "итого"/"всего",
-    # check if it's truly a column header vs a summary label
+    # Best amount column = highest _score_amount_column; ties → leftmost, preserving the
+    # original greedy first-match when scores are equal. Lets "Сумма" win over "Сумма НДС".
+    if amount_candidates:
+        amount_candidates.sort(key=lambda c: (-c[1], c[0]))
+        for col_idx, _score in amount_candidates:
+            if col_idx not in mapping.values():
+                mapping['amount'] = col_idx
+                break
     used_cols = set()
     final = {}
     for field, col in mapping.items():

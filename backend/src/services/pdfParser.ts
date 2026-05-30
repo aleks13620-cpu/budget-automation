@@ -50,11 +50,20 @@ export function parsePrice(value: string | null | undefined): number | null {
   return isNaN(num) ? null : num;
 }
 
+// Keep in sync with _score_amount_column in scripts/extract_invoice_table.py — both the
+// pdfplumber (Python) and pdf-parse (TS) paths must rank amount columns identically.
 function scoreVatDiscount(cellText: string): number {
   const lower = cellText.toLowerCase();
   let score = 0;
-  if (lower.includes('без ндс')) score -= 20;
-  else if (/с ндс|с учетом ндс|с учётом ндс/.test(lower)) score += 20;
+  // A bare "НДС" token ("Сумма НДС", "НДС, руб") marks the VAT-amount column, not the
+  // line total — strongly disprefer it as `amount`. \b is unreliable for Cyrillic in JS
+  // regex, so the token is bounded by non-Cyrillic-letter chars or string edges.
+  const bareVat = /(?:^|[^а-яё])ндс(?:$|[^а-яё])/.test(lower);
+  const withVat = /с\s+ндс|с\s+учетом\s+ндс|с\s+учётом\s+ндс|включая\s+ндс/.test(lower);
+  const withoutVat = /без\s+ндс/.test(lower);
+  if (bareVat && !withVat && !withoutVat) score -= 50;
+  if (withoutVat) score -= 20;
+  else if (withVat) score += 20;
   if (/скидк/.test(lower)) score += 30;
   return score;
 }
