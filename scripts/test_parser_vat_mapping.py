@@ -58,6 +58,21 @@ m_d = detect_column_mapping(['№', 'Наименование', 'Количес�
 print(f'    mapping: {m_d}')
 check('D: amount = col 5 (Сумма, с НДС)', m_d.get('amount') == 5, f'got {m_d}')
 
+# ── Case E: колонка «Итого» — CARRY-1 guard ──
+# Before the fix Python HEADER_KEYWORDS['amount'] lacked 'итого', so this column
+# was not detected at all (amount == None).  After adding it, amount == 4.
+print('Case E: Итого column (CARRY-1 — итого keyword)')
+m_e = detect_column_mapping(['№', 'Наименование', 'Количество', 'Цена', 'Итого'])
+print(f'    mapping: {m_e}')
+check('E: amount = col 4 (Итого)', m_e.get('amount') == 4, f'got {m_e}')
+
+# ── Case F: колонка «Всего» — CARRY-1 guard ──
+# Similarly 'всего' was absent before the fix.
+print('Case F: Всего column (CARRY-1 — всего keyword)')
+m_f = detect_column_mapping(['№', 'Наименование', 'Количество', 'Цена', 'Всего'])
+print(f'    mapping: {m_f}')
+check('F: amount = col 4 (Всего)', m_f.get('amount') == 4, f'got {m_f}')
+
 print('')
 if failures:
     print(f'{failures} assertion(s) FAILED')
