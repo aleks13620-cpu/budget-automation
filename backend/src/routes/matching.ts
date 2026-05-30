@@ -3,7 +3,7 @@ import stringSimilarity from 'string-similarity';
 import multer from 'multer';
 import * as XLSX from 'xlsx';
 import { getDatabase } from '../database';
-import { runMatching, runMatchingIncremental, normalizeForMatching } from '../services/matcher';
+import { runMatching, runMatchingIncremental, normalizeForMatching, extractDnValue, isParameterizedSpecName } from '../services/matcher';
 import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constructionSynonymLearner';
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 import { isGeminiMatchingEnabled } from '../services/llmMatcher';
@@ -76,6 +76,67 @@ function normalizeHeaderCell(value: unknown): string {
 
 function clearSelectedForSpec(db: ReturnType<typeof getDatabase>, specItemId: number) {
   db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(specItemId);
+}
+
+// Carry-task #15: duplicate detector in spec.
+// Group spec_items by normalized name + DN so the operator confirms once per group.
+// Synthesizes parent context for parameterized children (mirrors matcher.ts:226-238)
+// to avoid false-merging "DN15" rows from different parents.
+type DupGroupMeta = {
+  key: string;
+  size: number;
+  leaderSpecItemId: number;
+  role: 'leader' | 'follower';
+};
+
+export function computeDupGroups(
+  specItems: Array<{
+    id: number;
+    name: string;
+    full_name: string | null;
+    position_number: string | null;
+  }>,
+): Map<number, DupGroupMeta> {
+  const synthesizedNameById = new Map<number, string>();
+  const lastParentByPosition = new Map<string, string>();
+  for (const spec of specItems) {
+    const position = (spec.position_number || '').trim().toLowerCase();
+    const hasPosition = position.length > 0;
+    const isParam = isParameterizedSpecName(spec.name);
+    if (hasPosition && isParam) {
+      const parent = lastParentByPosition.get(position);
+      if (parent) synthesizedNameById.set(spec.id, `${parent} ${spec.name}`.trim());
+    } else if (hasPosition) {
+      lastParentByPosition.set(position, spec.full_name || spec.name);
+    }
+  }
+
+  const groups = new Map<string, number[]>();
+  for (const spec of specItems) {
+    const nameBase = spec.full_name || synthesizedNameById.get(spec.id) || spec.name;
+    const normalized = normalizeForMatching(nameBase);
+    const dn = extractDnValue(nameBase);
+    const key = `${normalized}|DN${dn ?? ''}`;
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(spec.id);
+    else groups.set(key, [spec.id]);
+  }
+
+  const result = new Map<number, DupGroupMeta>();
+  for (const [key, ids] of groups) {
+    if (ids.length < 2) continue;
+    ids.sort((a, b) => a - b);
+    const leaderSpecItemId = ids[0];
+    for (const id of ids) {
+      result.set(id, {
+        key,
+        size: ids.length,
+        leaderSpecItemId,
+        role: id === leaderSpecItemId ? 'leader' : 'follower',
+      });
+    }
+  }
+  return result;
 }
 
 function sendMatchingRunning(res: Response, projectId: number) {
@@ -565,7 +626,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
     // Get all spec items with their matches
     const specItems = db.prepare(`
       SELECT id, name, characteristics, equipment_code, unit, quantity, section,
-             parent_item_id, full_name
+             parent_item_id, full_name, position_number
       FROM specification_items
       WHERE project_id = ?
       ORDER BY id
@@ -574,7 +635,11 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       equipment_code: string | null; unit: string | null;
       quantity: number | null; section: string | null;
       parent_item_id: number | null; full_name: string | null;
+      position_number: string | null;
     }>;
+
+    // #15: detect duplicate spec rows so the operator confirms once per group.
+    const dupGroupBySpecId = computeDupGroups(specItems);
 
     const getMatches = db.prepare(`
       SELECT m.id, COALESCE(m.invoice_item_id, m.price_list_item_id) as invoice_item_id, m.confidence, m.match_type,
@@ -637,6 +702,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
           parentItemId: spec.parent_item_id,
           fullName: spec.full_name,
         },
+        dupGroup: dupGroupBySpecId.get(spec.id) ?? null,
           matches: matches.map(m => {
             const pricing = computeUnitPriceWithVat(m.price, m.vat_rate, m.prices_include_vat, m.invoice_quantity, m.amount);
             return {
@@ -790,6 +856,140 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
   } catch (error) {
     res.status(500).json({
       error: 'Ошибка при bulk подтверждении',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// POST /api/projects/:id/matching/group-confirm — carry-task #15.
+// Confirm the leader of a duplicate-spec group; auto-confirm followers that have a match
+// on the same invoice item. Learner runs ONCE for the leader, not N times.
+//
+// Body: { leaderMatchId: number }
+// Response: { leaderSpecItemId, groupSize, autoConfirmedSpecIds, conflictedSpecIds, skippedSpecIds }
+//   - autoConfirmed: follower had unconfirmed match on same invoice → confirmed without learner.
+//   - conflicted:    follower already had ANY confirmed match → left untouched (operator signal).
+//   - skipped:       follower has no match on this invoice → left for manual review.
+router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const leaderMatchId = parseInt(String(req.body?.leaderMatchId), 10);
+    if (!Number.isFinite(leaderMatchId) || leaderMatchId <= 0) {
+      return res.status(400).json({ error: 'leaderMatchId обязателен' });
+    }
+
+    const db = getDatabase();
+    const leader = getMatchRuleActionDetails(db, leaderMatchId);
+    if (!leader || !leader.invoice_name) {
+      return res.status(404).json({ error: 'Матч-лидер не найден' });
+    }
+    if (leader.project_id !== projectId) {
+      return res.status(400).json({ error: 'Матч не принадлежит проекту' });
+    }
+    if (!ensureMatchingNotRunning(projectId, res)) return;
+
+    const specItems = db.prepare(`
+      SELECT id, name, full_name, position_number
+      FROM specification_items
+      WHERE project_id = ?
+      ORDER BY id
+    `).all(projectId) as Array<{
+      id: number; name: string; full_name: string | null; position_number: string | null;
+    }>;
+
+    const dupGroups = computeDupGroups(specItems);
+    const leaderMeta = dupGroups.get(leader.specification_item_id);
+    if (!leaderMeta) {
+      return res.status(400).json({ error: 'Эта позиция не входит в дубль-группу' });
+    }
+    if (leaderMeta.role !== 'leader') {
+      return res.status(400).json({
+        error: 'Указанный матч — не лидер группы',
+        leaderSpecItemId: leaderMeta.leaderSpecItemId,
+      });
+    }
+
+    const followerSpecIds: number[] = [];
+    for (const [specId, meta] of dupGroups) {
+      if (meta.key === leaderMeta.key && meta.role === 'follower') followerSpecIds.push(specId);
+    }
+
+    const result = db.transaction(() => {
+      // 1. Confirm leader with full rule + learner.
+      clearSelectedForSpec(db, leader.specification_item_id);
+      db.prepare(
+        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
+      ).run(leaderMatchId);
+
+      const specPattern = normalizeForMatching(leader.spec_name);
+      const invoicePattern = normalizeForMatching(leader.invoice_name as string);
+      const ruleSource = leader.match_type === LLM_MATCH_TYPE ? 'llm_confirm' : 'manual';
+      upsertPositiveMatchingRule(db, specPattern, invoicePattern, leader.supplier_id, 0.92, ruleSource);
+      learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, leader.confidence ?? 0);
+      saveFeedback(db, 'confirm', projectId, leader.specification_item_id, leader.target_item_id, leader.supplier_id, leader.source);
+
+      // 2. Followers: 3 buckets.
+      const autoConfirmed: number[] = [];
+      const conflicted: number[] = [];
+      const skipped: number[] = [];
+
+      const findExistingConfirmed = db.prepare(`
+        SELECT id FROM matched_items
+        WHERE specification_item_id = ? AND is_confirmed = 1
+        LIMIT 1
+      `);
+      const findFollowerMatch = db.prepare(`
+        SELECT id FROM matched_items
+        WHERE specification_item_id = ?
+          AND COALESCE(invoice_item_id, price_list_item_id) = ?
+          AND COALESCE(source, 'invoice') = ?
+      `);
+      const updateConfirm = db.prepare(
+        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
+      );
+
+      for (const followerSpecId of followerSpecIds) {
+        const existing = findExistingConfirmed.get(followerSpecId) as { id: number } | undefined;
+        if (existing) {
+          conflicted.push(followerSpecId);
+          continue;
+        }
+        const followerMatch = findFollowerMatch.get(
+          followerSpecId,
+          leader.target_item_id,
+          leader.source,
+        ) as { id: number } | undefined;
+        if (!followerMatch) {
+          skipped.push(followerSpecId);
+          continue;
+        }
+        clearSelectedForSpec(db, followerSpecId);
+        updateConfirm.run(followerMatch.id);
+        saveFeedback(
+          db,
+          'confirm_group_follower',
+          projectId,
+          followerSpecId,
+          leader.target_item_id,
+          leader.supplier_id,
+          leader.source,
+        );
+        autoConfirmed.push(followerSpecId);
+      }
+
+      return { autoConfirmed, conflicted, skipped };
+    })();
+
+    res.json({
+      leaderSpecItemId: leader.specification_item_id,
+      groupSize: leaderMeta.size,
+      autoConfirmedSpecIds: result.autoConfirmed,
+      conflictedSpecIds: result.conflicted,
+      skippedSpecIds: result.skipped,
+    });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Ошибка при подтверждении группы',
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }

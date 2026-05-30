@@ -177,7 +177,7 @@ function extractEntityWords(text: string): string {
   return text.toLowerCase();
 }
 
-function isParameterizedSpecName(name: string): boolean {
+export function isParameterizedSpecName(name: string): boolean {
   const n = name.trim();
   if (!n) return false;
   if (/^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}/i.test(n)) return true;
@@ -186,7 +186,7 @@ function isParameterizedSpecName(name: string): boolean {
   return false;
 }
 
-function extractDnValue(text: string): number | null {
+export function extractDnValue(text: string): number | null {
   const normalized = normalizeForMatching(text);
   const match = normalized.match(/\bdn\s*(\d{1,4})\b/i);
   if (!match) return null;

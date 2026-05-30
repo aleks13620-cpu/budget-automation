@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { api } from '../api';
 
 interface MatchItem {
@@ -32,9 +32,17 @@ interface SpecItem {
   fullName?: string | null;
 }
 
+interface DupGroupMeta {
+  key: string;
+  size: number;
+  leaderSpecItemId: number;
+  role: 'leader' | 'follower';
+}
+
 interface MatchRow {
   specItem: SpecItem;
   matches: MatchItem[];
+  dupGroup?: DupGroupMeta | null;
 }
 
 interface SectionGroup {
@@ -81,6 +89,10 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
   // Reset on page reload — backend persists the actual feedback row.
   const [appliedTags, setAppliedTags] = useState<Set<string>>(new Set());
   const [tagLoading, setTagLoading] = useState<string | null>(null);
+  // #15: which dup-group leaders have their followers expanded.
+  const [expandedDupGroups, setExpandedDupGroups] = useState<Set<number>>(new Set());
+  // #15: last group-confirm status message (autoConfirmed / conflicted / skipped breakdown).
+  const [groupConfirmStatus, setGroupConfirmStatus] = useState<string | null>(null);
 
   const handleTag = async (specItemId: number, invoiceItemId: number | null, supplierId: number | null, tag: string) => {
     if (projectId == null) return;
@@ -134,6 +146,44 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
   const handleUnconfirm = (matchId: number) =>
     handleAction(matchId, () => api.put(`/matching/${matchId}/unconfirm`));
 
+  // #15: confirm the leader of a dup group; backend auto-confirms followers
+  // that have a match on the same invoice item (learner runs only once).
+  const handleGroupConfirm = async (leaderMatchId: number) => {
+    if (projectId == null) return;
+    setLoading(leaderMatchId);
+    setActionError(null);
+    setGroupConfirmStatus(null);
+    try {
+      const { data } = await api.post(
+        `/projects/${projectId}/matching/group-confirm`,
+        { leaderMatchId },
+      );
+      const auto = data.autoConfirmedSpecIds?.length ?? 0;
+      const conflicted = data.conflictedSpecIds?.length ?? 0;
+      const skipped = data.skippedSpecIds?.length ?? 0;
+      const groupSize = data.groupSize ?? 1;
+      const followersTotal = Math.max(0, groupSize - 1);
+      let msg = `Группа ×${groupSize}: лидер + ${auto}/${followersTotal} автоподтверждено`;
+      if (conflicted > 0) msg += `, ${conflicted} уже подтверждены ранее`;
+      if (skipped > 0) msg += `, ${skipped} с другим матчем (проверить вручную)`;
+      setGroupConfirmStatus(msg);
+      onRefresh();
+    } catch {
+      setActionError('Ошибка при подтверждении группы');
+    } finally {
+      setLoading(null);
+    }
+  };
+
+  const toggleDupExpand = (leaderSpecItemId: number) => {
+    setExpandedDupGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(leaderSpecItemId)) next.delete(leaderSpecItemId);
+      else next.add(leaderSpecItemId);
+      return next;
+    });
+  };
+
   const toggleSelected = (matchId: number) => {
     setSelectedMatchIds(prev => {
       const next = new Set(prev);
@@ -177,6 +227,31 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
   return (
     <>
     {actionError && <p className="error-msg">{actionError}</p>}
+    {groupConfirmStatus && (
+      <p
+        style={{
+          background: '#ecfdf5',
+          color: '#065f46',
+          padding: '0.5rem 0.75rem',
+          borderRadius: '4px',
+          border: '1px solid #6ee7b7',
+          marginBottom: '0.5rem',
+          fontSize: '0.85rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.5rem',
+        }}
+      >
+        <span>📑 {groupConfirmStatus}</span>
+        <button
+          className="btn btn-sm"
+          style={{ marginLeft: 'auto', padding: '0.1rem 0.4rem', fontSize: '0.75rem' }}
+          onClick={() => setGroupConfirmStatus(null)}
+        >
+          ×
+        </button>
+      </p>
+    )}
     {selectedMatchIds.size > 0 && (
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
         <span className="muted">Выбрано: {selectedMatchIds.size}</span>
@@ -200,7 +275,30 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
           <th style={{ width: '150px' }}>Действия</th>
         </tr>
       </thead>
-      {groupedItems.map(group => (
+      {groupedItems.map(group => {
+        // #15: separate dup-group leaders from followers so followers render only inside expand.
+        const followersByLeader = new Map<number, MatchRow[]>();
+        const visibleLeaderIds = new Set<number>();
+        for (const r of group.rows) {
+          if (r.dupGroup?.role === 'leader') visibleLeaderIds.add(r.specItem.id);
+        }
+        for (const r of group.rows) {
+          if (r.dupGroup?.role === 'follower') {
+            const list = followersByLeader.get(r.dupGroup.leaderSpecItemId) ?? [];
+            list.push(r);
+            followersByLeader.set(r.dupGroup.leaderSpecItemId, list);
+          }
+        }
+        // Promote orphan followers (whose leader was filtered out by status/section/search
+        // in MatchingView) to the main render so they don't silently disappear from the table.
+        const orphanFollowers = group.rows.filter(r =>
+          r.dupGroup?.role === 'follower' && !visibleLeaderIds.has(r.dupGroup.leaderSpecItemId)
+        );
+        const visibleRows = [
+          ...group.rows.filter(r => !r.dupGroup || r.dupGroup.role === 'leader'),
+          ...orphanFollowers,
+        ];
+        return (
         <tbody key={group.section}>
           {groupedItems.length > 1 && (
             <tr className="section-header-row">
@@ -209,13 +307,17 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
               </td>
             </tr>
           )}
-          {group.rows.map(row => {
+          {visibleRows.map(row => {
             const best = getBestMatch(row);
             const isExpanded = expandedId === row.specItem.id;
             const hasMatches = row.matches.length > 0;
+            const isDupLeader = row.dupGroup?.role === 'leader' && row.dupGroup.size > 1;
+            const dupExpanded = isDupLeader && expandedDupGroups.has(row.specItem.id);
+            const followers = isDupLeader ? (followersByLeader.get(row.specItem.id) ?? []) : [];
 
             return (
-              <tr key={row.specItem.id} className={getRowClass(row)}>
+              <Fragment key={row.specItem.id}>
+              <tr className={getRowClass(row)}>
                 <td colSpan={9} style={{ padding: 0 }}>
                   {/* Main row */}
                   <div style={{ display: 'flex', alignItems: 'center', padding: '0.5rem 0.75rem' }}>
@@ -236,6 +338,25 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                       )}
                       {!row.specItem.fullName && row.specItem.characteristics && (
                         <div className="muted" style={{ fontSize: '0.75rem' }}>{row.specItem.characteristics}</div>
+                      )}
+                      {isDupLeader && (
+                        <button
+                          type="button"
+                          onClick={() => toggleDupExpand(row.specItem.id)}
+                          title="Группа одинаковых позиций спеки"
+                          style={{
+                            marginTop: '0.2rem',
+                            padding: '0.1rem 0.4rem',
+                            fontSize: '0.7rem',
+                            background: '#fef3c7',
+                            border: '1px solid #fcd34d',
+                            color: '#92400e',
+                            borderRadius: '4px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          📑 ×{row.dupGroup!.size} копий {dupExpanded ? '▲' : '▼'}
+                        </button>
                       )}
                     </div>
                     <div style={{ flex: '0 0 80px', paddingRight: '0.75rem' }}>
@@ -289,6 +410,17 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                           >
                             ✓
                           </button>
+                          {isDupLeader && projectId != null && (
+                            <button
+                              className="btn btn-primary btn-sm"
+                              onClick={() => handleGroupConfirm(best.id)}
+                              disabled={loading === best.id}
+                              title={`Подтвердить лидер + автоподтвердить ${row.dupGroup!.size - 1} копий с тем же матчем`}
+                              style={{ background: '#b45309', borderColor: '#b45309' }}
+                            >
+                              ✓×{row.dupGroup!.size}
+                            </button>
+                          )}
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleConfirmAnalog(best.id)}
@@ -471,10 +603,61 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                   )}
                 </td>
               </tr>
+              {dupExpanded && followers.map(f => {
+                const fBest = getBestMatch(f);
+                return (
+                  <tr key={f.specItem.id} className={`${getRowClass(f)} dup-follower-row`}>
+                    <td colSpan={9} style={{ padding: 0, background: '#fefce8' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '0.4rem 0.75rem 0.4rem 3rem', fontSize: '0.85rem' }}>
+                        <div style={{ flex: '0 0 25%', paddingRight: '0.75rem' }}>
+                          <span style={{ color: '#92400e', marginRight: '0.3rem' }}>↳</span>
+                          {f.specItem.fullName || f.specItem.name}
+                        </div>
+                        <div style={{ flex: '0 0 80px', paddingRight: '0.75rem' }}>
+                          {f.specItem.quantity != null ? `${f.specItem.quantity} ${f.specItem.unit || ''}` : '—'}
+                        </div>
+                        <div style={{ flex: '0 0 22%', paddingRight: '0.75rem' }}>
+                          {fBest ? fBest.invoiceName : <span className="muted">Нет матча</span>}
+                        </div>
+                        <div style={{ flex: 1, paddingRight: '0.75rem' }}>
+                          {fBest?.supplierName || '—'}
+                        </div>
+                        <div style={{ flex: 1, paddingRight: '0.75rem' }}>
+                          {fBest?.effectivePrice != null ? fBest.effectivePrice.toLocaleString('ru-RU') : (fBest?.price != null ? fBest.price.toLocaleString('ru-RU') : '—')}
+                        </div>
+                        <div style={{ flex: 1, paddingRight: '0.75rem' }}>
+                          {fBest?.amount != null ? fBest.amount.toLocaleString('ru-RU') : '—'}
+                        </div>
+                        <div style={{ flex: '0 0 80px', paddingRight: '0.75rem' }}>
+                          {fBest && (
+                            <span className="confidence-badge">
+                              {Math.round(fBest.confidence * 100)}%
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ flex: '0 0 150px', display: 'flex', gap: '0.25rem' }}>
+                          {fBest?.isConfirmed && <span style={{ fontSize: '0.75rem', color: '#16a34a' }}>✓ Подтверждено</span>}
+                          {fBest && !fBest.isConfirmed && (
+                            <>
+                              <button className="btn btn-primary btn-sm" onClick={() => handleConfirm(fBest.id)} disabled={loading === fBest.id} title="Подтвердить копию отдельно">✓</button>
+                              <button className="btn btn-secondary btn-sm" onClick={() => handleReject(fBest.id)} disabled={loading === fBest.id} title="Отклонить копию">✕</button>
+                            </>
+                          )}
+                          {!fBest && onManualMatch && (
+                            <button className="btn btn-secondary btn-sm" onClick={() => onManualMatch(f.specItem)}>Сопоставить</button>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              </Fragment>
             );
           })}
         </tbody>
-      ))}
+        );
+      })}
     </table>
     </>
   );
