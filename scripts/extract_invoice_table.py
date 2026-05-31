@@ -8,6 +8,17 @@ pdfplumber — точное извлечение таблиц
 Выход: JSON на stdout в формате {items: [...], metadata: {...}, stats: {...}}
 
 Запуск: python -X utf8 scripts/extract_invoice_table.py path/to/invoice.pdf
+
+TS/Python sync (см. память «правило в 2 реализациях правится синхронно»):
+  Это ПРОД-путь (pdfplumber); backend/src/services/pdfParser.ts — TS fallback
+  (pdf-parse), активен только если pdfplumber упал.
+  * Net-total ("Всего наименований N, на сумму X") — ЗЕРКАЛИРОВАН в обоих
+    extractMetadata и extractMetadataFromRows в pdfParser.ts.
+  * Групп-фильтр (is_group_subheader_row), перенос грида между страницами
+    (multi-page carry) и refine_price_column — артефакты pdfplumber cell-grid:
+    в TS-пути pdf-parse строит плоский текст, эти конкретные баги там не
+    воспроизводятся, поэтому НЕ дублируются слепо (a structural rule, not a
+    label list, так что прод-поведение совпадает).
 """
 
 import sys
@@ -285,6 +296,67 @@ def merge_mappings(header_mapping, inferred_mapping):
     return merged
 
 
+def _price_consistency(col, data_rows, mapping):
+    """Fraction of sample rows where col_value * quantity ≈ amount (the per-unit
+    price identity). Higher = stronger evidence `col` is the line's unit-price."""
+    qty_col = mapping.get('quantity')
+    amt_col = mapping.get('amount')
+    if qty_col is None or amt_col is None or col is None:
+        return 0.0
+    ok = 0
+    seen = 0
+    for row in data_rows:
+        if col >= len(row) or qty_col >= len(row) or amt_col >= len(row):
+            continue
+        p = parse_number(clean_cell(row[col]))
+        q = parse_number(clean_cell(row[qty_col]))
+        a = parse_number(clean_cell(row[amt_col]))
+        if p is None or q is None or a is None or q <= 0 or a <= 0:
+            continue
+        seen += 1
+        # tolerance scales with amount; covers source rounding (≤0.05₽) and ±0.5%
+        if abs(p * q - a) <= max(0.05, abs(a) * 0.005):
+            ok += 1
+    return ok / seen if seen else 0.0
+
+
+def refine_price_column(mapping, data_rows):
+    """Choose the unit-price column structurally: the one whose value × Кол-во
+    reproduces the line total (Сумма). On discount-bearing invoices the header's
+    greedy 'Цена' grabs the BEFORE-discount gross unit; the AFTER-discount net
+    unit ('Цена со скидкой') is the column satisfying price×qty == Сумма(net).
+    Aligns `price` with the net line total without touching qty/amount, so
+    computeUnitPriceWithVat (= amount/qty) is unchanged. No supplier/column
+    hardcoding — purely the arithmetic identity. Conservative: only override when
+    a different column is clearly more consistent than the current pick."""
+    if not data_rows:
+        return mapping
+    reserved = {mapping.get('num'), mapping.get('name'), mapping.get('unit'),
+                mapping.get('quantity'), mapping.get('amount')}
+    num_cols = max((len(r) for r in data_rows), default=0)
+    current = mapping.get('price')
+    current_score = _price_consistency(current, data_rows, mapping)
+    best_col, best_score = current, current_score
+    for c in range(num_cols):
+        if c in reserved or c == current:
+            continue
+        # must actually be a numeric column on the sample
+        numeric = sum(1 for r in data_rows
+                      if c < len(r) and parse_number(clean_cell(r[c])) is not None)
+        if numeric < max(2, len(data_rows) // 2):
+            continue
+        score = _price_consistency(c, data_rows, mapping)
+        if score > best_score + 1e-9:
+            best_col, best_score = c, score
+    # Require strong agreement and a real improvement before switching columns.
+    if best_col is not None and best_col != current and best_score >= 0.8 \
+            and best_score > current_score + 0.1:
+        new_mapping = dict(mapping)
+        new_mapping['price'] = best_col
+        return new_mapping
+    return mapping
+
+
 # ── Phase 3: Row classification ──
 
 def is_header_row(cells):
@@ -309,7 +381,44 @@ def is_col_number_row(cells):
     return all(COL_NUM_RE.match(c) for c in non_empty)
 
 
+def is_multicell_item_header(cells):
+    """True when a row is a *real grid* header (name keyword in one cell AND a
+    quantity/price/amount keyword in a DIFFERENT cell). Distinguishes a genuine
+    column-header row from a single 'mega-cell' blob (where pdfplumber dumps the
+    whole page text into one cell — that blob trips is_header_row but is not a
+    usable grid). Used to keep an item table that carries a bank-block blob from
+    being misclassified as a requisites table. Structural, no label hardcoding."""
+    name_kws = ['наименование', 'название', 'описание', 'номенклатура', 'товар']
+    field_kws = ['количест', 'кол-во', 'кол.', 'к-во', 'цена', 'сумма', 'ед.', 'изм']
+    name_cols = set()
+    field_cols = set()
+    for ci, c in enumerate(cells):
+        t = clean_cell(c).lower()
+        if not t:
+            continue
+        # A blob cell holds the whole page — far too long to be a header label.
+        if len(t) > 60:
+            continue
+        if any(kw in t for kw in name_kws):
+            name_cols.add(ci)
+        if any(kw in t for kw in field_kws):
+            field_cols.add(ci)
+    return bool(name_cols) and bool(field_cols - name_cols)
+
+
+def table_has_item_header(table):
+    """Does any row in the table look like a real multi-cell grid header?"""
+    return any(row and is_multicell_item_header(row) for row in table)
+
+
 def is_requisites_table(table):
+    # A bank/requisites block hits the keyword regex, but so does an item table
+    # that carries the receiver block inside a pdfplumber 'mega-cell' (the whole
+    # page text in cell 0). Only drop the table when it has NO real grid header —
+    # otherwise we would lose every position on that page (root cause of inv47
+    # page-1 loss). Structural guard, not label-based.
+    if table_has_item_header(table):
+        return False
     text = ' '.join(clean_cell(c) for row in table[:5] for c in row).lower()
     hits = len(REQUISITES_RE.findall(text))
     return hits >= 3
@@ -349,6 +458,50 @@ def is_summary_row(cells, mapping):
     if SUMMARY_RE.match(combined.strip()):
         return True
     return False
+
+
+def is_group_subheader_row(cells, mapping):
+    """True when a row is a group/section SUBTOTAL line, not a real position.
+
+    Structural PRIMARY rule (no label hardcoding): a real position MUST carry a
+    unit-price; a group subheader fills only the right-hand sum cluster (line
+    totals) and leaves the per-unit price cell empty. Some suppliers (РОВЕН form
+    B) emit per-section subtotals — `ПЕ2`, `ВЕ`, `П1`, `В1..В6`, `Пенофол` — that
+    otherwise leak in as items AND, because they are sparse on the left, skew the
+    data-driven column inference. They must be dropped BEFORE inference/extraction.
+
+    Discriminators (need price column known; mapping must be the corrected grid):
+      PRIMARY:   unit-price cell empty while a line-total (amount) cell is filled.
+      STRONG:    no unit token (Ед.) present.
+      SECONDARY: no leading row number.
+    Require the unit-price to be ABSENT (primary) plus at least one corroborating
+    signal, so a legitimate priced position is never dropped on величину Кол-во.
+    """
+    name_col = mapping.get('name')
+    price_col = mapping.get('price')
+    amount_col = mapping.get('amount')
+    if name_col is None or price_col is None or amount_col is None:
+        return False
+
+    def cell(field):
+        col = mapping.get(field)
+        if col is not None and col < len(cells):
+            return clean_cell(cells[col])
+        return ''
+
+    name = cell('name')
+    if not name:
+        return False
+
+    has_unit_price = parse_number(cell('price')) is not None
+    has_amount = parse_number(cell('amount')) is not None
+    if has_unit_price or not has_amount:
+        return False  # PRIMARY: a position has a unit-price; a group has a total but none
+
+    # Corroborating signals (group rows also lack a unit token and a row number)
+    no_unit = parse_number(cell('quantity')) is not None and not cell('unit')
+    no_num = not ROW_NUM_RE.match(cell('num') or '')
+    return no_unit or no_num
 
 
 # ── Phase 4: Item extraction ──
@@ -508,13 +661,24 @@ def extract_metadata(pdf_path):
             if not any(w in lower for w in ['банк', 'бик', 'р/с', 'к/с', 'акб']):
                 meta['supplierName'] = candidate.rstrip('.,;: ')
 
-    # Total amount — search full text (may be at end of document)
-    full_norm = normalized[:10000]
-    total_match = re.search(
-        r'(?:итого|всего|total|итого к оплате)\s*[:\s]*([0-9\s]+[.,]\d{2})',
+    # Total amount — prefer the NET payable, not the first "Итого".
+    # Many discount invoices print "Итого:" as a ROW of three figures
+    # (Сумма-без-скидки=gross, Скидка, Сумма=net); the bare regex below grabs the
+    # FIRST (gross). The "Всего наименований N, на сумму X руб." sentence states
+    # the net payable explicitly and unambiguously, so try it first. No hardcoded
+    # sums — purely the document's own summary phrasing.
+    full_norm = normalized
+    net_match = re.search(
+        r'всего\s+наименований\s+\d+\s*,?\s*на\s+сумму\s+([0-9][0-9\s]*[.,]\d{2})',
         full_norm, re.I)
-    if total_match:
-        meta['totalAmount'] = parse_number(total_match.group(1))
+    if net_match:
+        meta['totalAmount'] = parse_number(net_match.group(1))
+    if meta['totalAmount'] is None:
+        total_match = re.search(
+            r'(?:итого|всего|total|итого к оплате)\s*[:\s]*([0-9\s]+[.,]\d{2})',
+            full_norm[:10000], re.I)
+        if total_match:
+            meta['totalAmount'] = parse_number(total_match.group(1))
 
     return meta
 
@@ -587,14 +751,23 @@ def extract_invoice_items(pdf_path):
                     if not row:
                         continue
 
-                    if is_header_row(row):
+                    # Only treat a row as the column header when it is a real
+                    # multi-cell grid header. A pdfplumber 'mega-cell' blob (whole
+                    # page text in one cell) trips is_header_row but yields a bogus
+                    # 1-field mapping; accepting it on a header-less continuation
+                    # page (inv47 p2) drops the carried grid and shifts columns.
+                    if is_header_row(row) and is_multicell_item_header(row):
                         header_mapping = detect_column_mapping(row)
                         stats['header_detections'] += 1
+                        # Exclude group-subtotal rows from the inference sample:
+                        # their sparse left side (no unit-price) skews data-driven
+                        # column picking. They are dropped via the header grid here.
                         data_sample = [r for r in table
                                        if r and not is_header_row(r)
                                        and not is_col_number_row(r)][:20]
                         inferred = infer_mapping_from_data(data_sample)
                         page_mapping = merge_mappings(header_mapping, inferred)
+                        page_mapping = refine_price_column(page_mapping, data_sample)
                         prev_mapping = page_mapping
                         if not vat_state_captured:
                             header_lc = [clean_cell(c).lower() for c in row]
@@ -622,20 +795,36 @@ def extract_invoice_items(pdf_path):
                         continue
 
                     if page_mapping is None:
-                        data_rows_buf.append(row)
-                        if len(data_rows_buf) >= 3:
-                            inferred = infer_mapping_from_data(data_rows_buf)
-                            if 'name' in inferred:
-                                page_mapping = inferred
-                                prev_mapping = page_mapping
-                                print(f'[info] p{page_idx+1}: inferred mapping='
+                        # A header-less table on a multi-page document is a
+                        # continuation: reuse the grid already established by the
+                        # header on an earlier page. Re-inferring from this page's
+                        # data alone re-derives the wrong right-to-left numeric
+                        # columns (inv47 p2 → qty/price/amount shift). Only fall
+                        # back to inference when there is no prior grid at all.
+                        if prev_mapping:
+                            page_mapping = prev_mapping
+                            if page_idx < 5:
+                                print(f'[info] p{page_idx+1}: carry prev mapping='
                                       f'{page_mapping}', file=sys.stderr)
-                            elif prev_mapping:
-                                page_mapping = prev_mapping
-                        continue
+                        else:
+                            data_rows_buf.append(row)
+                            if len(data_rows_buf) >= 3:
+                                inferred = infer_mapping_from_data(data_rows_buf)
+                                if 'name' in inferred:
+                                    page_mapping = inferred
+                                    prev_mapping = page_mapping
+                                    print(f'[info] p{page_idx+1}: inferred mapping='
+                                          f'{page_mapping}', file=sys.stderr)
+                            continue
+                        # fall through with carried mapping to classify THIS row
 
                     if is_summary_row(row, page_mapping):
                         stats['summary_rows_skipped'] += 1
+                        continue
+
+                    if is_group_subheader_row(row, page_mapping):
+                        stats['group_rows_skipped'] = stats.get('group_rows_skipped', 0) + 1
+                        global_row_idx += 1
                         continue
 
                     item = extract_item(row, page_mapping, global_row_idx)
@@ -656,6 +845,10 @@ def extract_invoice_items(pdf_path):
                     for row in data_rows_buf:
                         if is_summary_row(row, page_mapping):
                             stats['summary_rows_skipped'] += 1
+                            continue
+                        if is_group_subheader_row(row, page_mapping):
+                            stats['group_rows_skipped'] = stats.get('group_rows_skipped', 0) + 1
+                            global_row_idx += 1
                             continue
                         item = extract_item(row, page_mapping, global_row_idx)
                         if item:

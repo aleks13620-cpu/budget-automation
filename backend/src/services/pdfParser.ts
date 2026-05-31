@@ -472,11 +472,21 @@ export function extractMetadata(text: string): { invoiceNumber: string | null; i
   // === BIK + correspondent account ===
   const { bik, corrAccount } = extractBikAndCorAccount(snippet);
 
-  // Total amount from text
+  // Total amount from text — prefer the NET payable over the first "Итого".
+  // On discount invoices "Итого:" is a ROW of figures (Сумма-без-скидки=gross,
+  // Скидка, Сумма=net) and the bare regex grabs the gross one. The "Всего
+  // наименований N, на сумму X руб." sentence states the net total explicitly.
+  // MIRROR of the net-total preference in extract_metadata (Python prod path).
   let totalAmount: number | null = null;
-  const totalMatch = snippet.match(/(?:итого|всего|total)\s*[:\s]*([0-9\s]+[.,]\d{2})/i);
-  if (totalMatch) {
-    totalAmount = parsePrice(totalMatch[1]);
+  const netMatch = text.match(/всего\s+наименований\s+\d+\s*,?\s*на\s+сумму\s+([0-9][0-9\s]*[.,]\d{2})/i);
+  if (netMatch) {
+    totalAmount = parsePrice(netMatch[1]);
+  }
+  if (totalAmount === null) {
+    const totalMatch = snippet.match(/(?:итого|всего|total)\s*[:\s]*([0-9\s]+[.,]\d{2})/i);
+    if (totalMatch) {
+      totalAmount = parsePrice(totalMatch[1]);
+    }
   }
 
   return { invoiceNumber, invoiceDate, supplierName, totalAmount, bik, corrAccount };
@@ -581,7 +591,7 @@ export function extractMetadataFromRows(rows: string[][]): {
         }
       }
 
-      // Total amount
+      // Total amount (gross-first fallback; net override applied after the loop)
       if (!totalAmount) {
         const totalMatch = text.match(/(?:итого|всего|total)\s*[:\s]*([0-9\s]+[.,]\d{2})/i);
         if (totalMatch) {
@@ -589,6 +599,16 @@ export function extractMetadataFromRows(rows: string[][]): {
         }
       }
     }
+  }
+
+  // Prefer the explicit NET payable ("Всего наименований N, на сумму X руб.")
+  // over whatever "Итого" matched first (which is the gross before-discount
+  // figure on discount invoices). MIRROR of extract_metadata (Python prod path).
+  const joined = rows.map(r => r.join(' ')).join(' ');
+  const netMatch = joined.match(/всего\s+наименований\s+\d+\s*,?\s*на\s+сумму\s+([0-9][0-9\s]*[.,]\d{2})/i);
+  if (netMatch) {
+    const net = parsePrice(netMatch[1]);
+    if (net !== null) totalAmount = net;
   }
 
   return { invoiceNumber, invoiceDate, supplierName, totalAmount, bik, corrAccount };
