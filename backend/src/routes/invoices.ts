@@ -666,7 +666,8 @@ export async function processInvoiceFile(
   // Фича #3 (detect→review): обнаружена скидка «−X%» в тексте счёта. Суммы строк НЕ трогаем
   // (на проде нет данных для валидации авто-применения) — только помечаем счёт на ревью
   // оператору и дописываем процент в reason. Процент динамический (detectDiscount → number).
-  if (parseResult.discountDetected != null) {
+  // > 0: detectDiscount возвращает 0 на «скидка 0%» — это не скидка, не флагуем.
+  if (parseResult.discountDetected != null && parseResult.discountDetected > 0) {
     needsAmountReview = 1;
     parsingCategoryReason += ` | обнаружена скидка ${parseResult.discountDetected}% — проверьте, учтена ли в ценах строк`;
   }

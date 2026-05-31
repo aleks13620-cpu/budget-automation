@@ -155,6 +155,28 @@ async function main(): Promise<void> {
   check('6b: ветка скидки НЕ ставит review (флаг = 0)', invClean?.needs_amount_review === 0, `got ${invClean?.needs_amount_review} (если 1 — либо ветка скидки ложно сработала, либо conflict; reason=${invClean?.parsing_category_reason})`);
   check('6c: reason без пометки скидки', typeof invClean?.parsing_category_reason === 'string' && !invClean.parsing_category_reason.includes('скидка'), `reason=${invClean?.parsing_category_reason}`);
 
+  // Кейс «скидка 0%»: detectDiscount вернёт 0 (не null), но guard `> 0` НЕ даёт ветке сработать.
+  // Структура сходится (sum=total) → computeNeedsAmountReview=0 → флаг не должен подняться от скидки.
+  db.prepare('INSERT INTO suppliers (name, vat_rate, prices_include_vat) VALUES (?, 22, 1)').run('ZeroDiscSup');
+  const zeroRows = [
+    ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма'],
+    ['1', 'Уголок 40х40', '10', '5', '50'],
+  ];
+  const zeroText = zeroRows.map(r => r.join('  ')).join('\n') + '\nСкидка 0%\nИтого 50';
+  const zeroPdf = path.join(os.tmpdir(), `zerodisc_upload_${process.pid}.pdf`);
+  fs.writeFileSync(zeroPdf, '%PDF-1.4\n');
+
+  const resZero = await processInvoiceFile(
+    { originalname: 'ZeroDiscSup_invoice.pdf', path: zeroPdf },
+    projectId,
+    db,
+    { extractedOverride: { rows: zeroRows, fullText: zeroText } },
+  );
+  const invZero = db.prepare('SELECT discount_detected, needs_amount_review, parsing_category_reason FROM invoices WHERE id = ?').get(resZero.invoiceId) as any;
+  check('7a: detectDiscount поймал 0 (discount_detected = 0, не null)', invZero?.discount_detected === 0, `got ${invZero?.discount_detected}`);
+  check('7b: guard >0 — ветка скидки НЕ ставит review на 0%', invZero?.needs_amount_review === 0, `got ${invZero?.needs_amount_review} (reason=${invZero?.parsing_category_reason})`);
+  check('7c: reason без пометки скидки на 0%', typeof invZero?.parsing_category_reason === 'string' && !invZero.parsing_category_reason.includes('скидка'), `reason=${invZero?.parsing_category_reason}`);
+
   console.log('');
   if (failures > 0) { console.error(`${failures} assertion(s) FAILED`); process.exitCode = 1; }
   else console.log('All VAT upload-path integration assertions passed');
