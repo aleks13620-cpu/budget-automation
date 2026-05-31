@@ -89,6 +89,17 @@ check('G: "Всего с учётом НДС" -> gross/True', _classify_column_v
       f'got {_classify_column_vat("Всего с учётом НДС")!r}')
 check('G: пусто -> None', _classify_column_vat('') is None, f'got {_classify_column_vat("")!r}')
 
+# ── Case H: «Сумма без скидки» НЕ выбирается, когда есть итоговая «Сумма с НДС» ──
+# Feature #2: discount scorer fix. Before the fix, /скидк/ gave +30 to «Сумма без скидки»,
+# beating «Сумма с НДС» (+20) → pre-discount column was chosen → budget overstatement.
+# After the fix: /без\s+скидк/ → -20, so «Сумма с НДС» (+20) wins correctly.
+print('Case H: Сумма без скидки vs Сумма с НДС (Feature #2 — discount scorer)')
+header_h = ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма без скидки', 'Сумма с НДС']
+m_h = detect_column_mapping(header_h)
+print(f'    mapping: {m_h}')
+check('H: amount = col 5 (Сумма с НДС, not Сумма без скидки)', m_h.get('amount') == 5,
+      f'got {m_h} — "Сумма без скидки" (col 4) must NOT be chosen')
+
 print('')
 if failures:
     print(f'{failures} assertion(s) FAILED')

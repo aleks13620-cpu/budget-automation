@@ -128,7 +128,10 @@ def _score_amount_column(text):
         score -= 20
     elif with_vat:
         score += 20
-    if re.search(r'скидк', text):
+    without_discount = re.search(r'без\s+скидк', text) is not None
+    if without_discount:
+        score -= 20
+    elif re.search(r'скидк', text):
         score += 30
     return score
 
@@ -289,7 +292,7 @@ def is_header_row(cells):
     name_kws = ['наименование', 'название', 'описание', 'номенклатура', 'товар']
     qty_kws = ['количест', 'кол-во', 'кол.', 'к-во']
     price_kws = ['цена', 'стоимость за']
-    amount_kws = ['сумма', 'стоимость']
+    amount_kws = ['сумма', 'стоимость', 'итого', 'всего', 'total']
     unit_kws = ['ед.', 'единиц', 'изм']
     has_name = any(kw in text for kw in name_kws)
     has_qty = any(kw in text for kw in qty_kws)

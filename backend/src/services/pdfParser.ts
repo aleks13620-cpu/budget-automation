@@ -64,7 +64,9 @@ function scoreVatDiscount(cellText: string): number {
   if (bareVat && !withVat && !withoutVat) score -= 50;
   if (withoutVat) score -= 20;
   else if (withVat) score += 20;
-  if (/скидк/.test(lower)) score += 30;
+  const withoutDiscount = /без\s+скидк/.test(lower);
+  if (withoutDiscount) score -= 20;
+  else if (/скидк/.test(lower)) score += 30;
   return score;
 }
 

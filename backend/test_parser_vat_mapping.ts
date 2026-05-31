@@ -81,6 +81,23 @@ console.log('Case D: Сумма без НДС + Сумма');
   if (r) check('D: amount = col 5 (Сумма, с НДС)', r.mapping.amount === 5, `got ${fmt(r.mapping)}`);
 }
 
+// ── Case H: «Сумма без скидки» НЕ выбирается, когда есть итоговая «Сумма с НДС» ──
+// Feature #2: discount scorer fix. Before the fix, /скидк/ gave +30 to «Сумма без скидки»,
+// beating «Сумма с НДС» (+20) → pre-discount column was chosen → budget overstatement.
+// After the fix: /без\s+скидк/ → -20, so «Сумма с НДС» (+20) wins correctly.
+console.log('Case H: Сумма без скидки vs Сумма с НДС (Feature #2 — discount scorer)');
+{
+  const r = detectColumns([
+    ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма без скидки', 'Сумма с НДС'],
+    ['1', 'Товар', '10', '100,00', '1000,00', '1200,00'],
+  ]);
+  check('H: detection succeeded', r !== null);
+  if (r) {
+    check('H: amount = col 5 (Сумма с НДС, not Сумма без скидки)', r.mapping.amount === 5,
+      `got ${fmt(r.mapping)} — "Сумма без скидки" (col 4) must NOT be chosen`);
+  }
+}
+
 console.log('');
 if (failures > 0) {
   console.error(`${failures} assertion(s) FAILED`);
