@@ -104,6 +104,57 @@ async function main(): Promise<void> {
   // 4. Конфликт колонка↔флаг помечен на review.
   check('4: needs_amount_review выставлен', inv?.needs_amount_review === 1, `got ${inv?.needs_amount_review}`);
 
+  // ── Фича #3 (detect→review): скидка «−X%» в тексте счёта ──────────────────────────────
+  // Прогоняем НАСТОЯЩИЙ processInvoiceFile. discountDetected для PDF берётся из detectDiscount(fullText),
+  // поэтому скидку задаём через инжектируемый fullText. Суммы строк трогать НЕЛЬЗЯ — проверяем только
+  // флаг review и приписку процента в parsing_category_reason. Процент динамический (10, не хардкод).
+  const discountRows = [
+    ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма'],
+    ['1', 'Профиль ПН-2', '3', '100', '300'],
+  ];
+  const discountText = discountRows.map(r => r.join('  ')).join('\n') + '\nСкидка 10%\nИтого 270';
+  const discountPdf = path.join(os.tmpdir(), `discount_upload_${process.pid}.pdf`);
+  fs.writeFileSync(discountPdf, '%PDF-1.4\n');
+
+  const resDisc = await processInvoiceFile(
+    { originalname: 'DiscountSupplier_invoice.pdf', path: discountPdf },
+    projectId,
+    db,
+    { extractedOverride: { rows: discountRows, fullText: discountText } },
+  );
+  const invDisc = db.prepare('SELECT discount_detected, needs_amount_review, parsing_category_reason FROM invoices WHERE id = ?').get(resDisc.invoiceId) as any;
+  const itemsDisc = db.prepare('SELECT amount, price FROM invoice_items WHERE invoice_id = ? ORDER BY row_index').all(resDisc.invoiceId) as any[];
+
+  check('5a: discount_detected записан = 10', invDisc?.discount_detected === 10, `got ${invDisc?.discount_detected}`);
+  check('5b: needs_amount_review выставлен веткой скидки', invDisc?.needs_amount_review === 1, `got ${invDisc?.needs_amount_review}`);
+  check('5c: reason содержит «скидка 10%»', typeof invDisc?.parsing_category_reason === 'string' && invDisc.parsing_category_reason.includes('скидка 10%'), `reason=${invDisc?.parsing_category_reason}`);
+  // Гарантия НЕ-применения скидки: суммы строк остались исходными (300×0.9=270 НЕ должно появиться).
+  check('5d: суммы строк НЕ изменены (ветка только помечает)', (itemsDisc[0]?.amount === 300) && (itemsDisc[0]?.price === 100), `got amount=${itemsDisc[0]?.amount} price=${itemsDisc[0]?.price}`);
+  // Дописка не затёрла базовый reason (категория «A: N позиций» сохранилась перед разделителем).
+  check('5e: reason дописан, не затёрт (есть разделитель | и базовая часть)', typeof invDisc?.parsing_category_reason === 'string' && invDisc.parsing_category_reason.includes(' | ') && /позиц/i.test(invDisc.parsing_category_reason), `reason=${invDisc?.parsing_category_reason}`);
+
+  // Негативный кейс: скидки в тексте нет → ветка флаг review НЕ ставит (значение остаётся от computeNeedsAmountReview).
+  // Поставщик prices_include_vat=1, простая нетто-структура без конфликта → computeNeedsAmountReview = 0, ветка скидки не срабатывает.
+  db.prepare('INSERT INTO suppliers (name, vat_rate, prices_include_vat) VALUES (?, 22, 1)').run('NoDiscountSup');
+  const cleanRows = [
+    ['№', 'Наименование', 'Кол-во', 'Цена', 'Сумма'],
+    ['1', 'Саморез 4х50', '10', '5', '50'],
+  ];
+  const cleanText = cleanRows.map(r => r.join('  ')).join('\n') + '\nИтого 50';
+  const cleanPdf = path.join(os.tmpdir(), `nodiscount_upload_${process.pid}.pdf`);
+  fs.writeFileSync(cleanPdf, '%PDF-1.4\n');
+
+  const resClean = await processInvoiceFile(
+    { originalname: 'NoDiscountSup_invoice.pdf', path: cleanPdf },
+    projectId,
+    db,
+    { extractedOverride: { rows: cleanRows, fullText: cleanText } },
+  );
+  const invClean = db.prepare('SELECT discount_detected, needs_amount_review, parsing_category_reason FROM invoices WHERE id = ?').get(resClean.invoiceId) as any;
+  check('6a: discount_detected = null (скидки нет)', invClean?.discount_detected == null, `got ${invClean?.discount_detected}`);
+  check('6b: ветка скидки НЕ ставит review (флаг = 0)', invClean?.needs_amount_review === 0, `got ${invClean?.needs_amount_review} (если 1 — либо ветка скидки ложно сработала, либо conflict; reason=${invClean?.parsing_category_reason})`);
+  check('6c: reason без пометки скидки', typeof invClean?.parsing_category_reason === 'string' && !invClean.parsing_category_reason.includes('скидка'), `reason=${invClean?.parsing_category_reason}`);
+
   console.log('');
   if (failures > 0) { console.error(`${failures} assertion(s) FAILED`); process.exitCode = 1; }
   else console.log('All VAT upload-path integration assertions passed');

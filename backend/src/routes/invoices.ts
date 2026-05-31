@@ -663,6 +663,13 @@ export async function processInvoiceFile(
   let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, parsedVatRate, supplierPricesIncludeVatForReview);
   if (lastGigaParseQuality?.suggestElevatedReview) needsAmountReview = 1;
   if (priceOverrideNeedsAmountReview) needsAmountReview = 1;
+  // Фича #3 (detect→review): обнаружена скидка «−X%» в тексте счёта. Суммы строк НЕ трогаем
+  // (на проде нет данных для валидации авто-применения) — только помечаем счёт на ревью
+  // оператору и дописываем процент в reason. Процент динамический (detectDiscount → number).
+  if (parseResult.discountDetected != null) {
+    needsAmountReview = 1;
+    parsingCategoryReason += ` | обнаружена скидка ${parseResult.discountDetected}% — проверьте, учтена ли в ценах строк`;
+  }
 
   const insertInvoice = db.prepare(`
     INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
