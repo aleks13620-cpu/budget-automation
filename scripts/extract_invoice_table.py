@@ -320,7 +320,21 @@ def _price_consistency(col, data_rows, mapping):
     return ok / seen if seen else 0.0
 
 
-def refine_price_column(mapping, data_rows):
+# A refine_price_column candidate must look like a PRICE column by its header.
+# "Цена" and "Цена со скидкой" qualify; "Скидка"/"НДС"/"Сумма…" do NOT — they can
+# satisfy value×qty≈amount by coincidence and would otherwise hijack `price`.
+PRICE_HEADER_KEYS = ('цена', 'стоимость за', 'цена за')
+
+
+def _header_has_price_key(header_cells, col):
+    """True when column `col`'s header text contains a unit-price keyword."""
+    if header_cells is None or col is None or col >= len(header_cells):
+        return False
+    t = clean_cell(header_cells[col]).lower()
+    return any(k in t for k in PRICE_HEADER_KEYS)
+
+
+def refine_price_column(mapping, data_rows, header_cells=None):
     """Choose the unit-price column structurally: the one whose value × Кол-во
     reproduces the line total (Сумма). On discount-bearing invoices the header's
     greedy 'Цена' grabs the BEFORE-discount gross unit; the AFTER-discount net
@@ -328,7 +342,14 @@ def refine_price_column(mapping, data_rows):
     Aligns `price` with the net line total without touching qty/amount, so
     computeUnitPriceWithVat (= amount/qty) is unchanged. No supplier/column
     hardcoding — purely the arithmetic identity. Conservative: only override when
-    a different column is clearly more consistent than the current pick."""
+    a different column is clearly more consistent than the current pick.
+
+    F4: when the header row is available, restrict candidates to columns whose
+    HEADER names a price ("цена"). A «Скидка»/«НДС»/«Сумма без скидки» column can
+    coincidentally satisfy value×qty ≈ amount and would otherwise be promoted to
+    `price`, corrupting the unit price. «Цена» and «Цена со скидкой» pass this
+    filter, so the РОВЕН gross→net switch is preserved; «Скидка»/«НДС» are blocked.
+    """
     if not data_rows:
         return mapping
     reserved = {mapping.get('num'), mapping.get('name'), mapping.get('unit'),
@@ -339,6 +360,9 @@ def refine_price_column(mapping, data_rows):
     best_col, best_score = current, current_score
     for c in range(num_cols):
         if c in reserved or c == current:
+            continue
+        # Only consider columns whose header denotes a price (when headers known).
+        if header_cells is not None and not _header_has_price_key(header_cells, c):
             continue
         # must actually be a numeric column on the sample
         numeric = sum(1 for r in data_rows
@@ -355,6 +379,97 @@ def refine_price_column(mapping, data_rows):
         new_mapping['price'] = best_col
         return new_mapping
     return mapping
+
+
+# Numeric fields whose carried column index must still hold numbers on a
+# continuation page for the previous-page mapping to be reusable.
+_CARRY_NUMERIC_FIELDS = ('quantity', 'price', 'amount')
+
+
+def page_classifiable_data_rows(table, limit=40):
+    """Rows of `table` that look like item DATA rows — the subset a carried
+    mapping would actually be applied to. Mirrors the noise filters of the main
+    extraction loop (drops header / column-number / too-short / all-tiny rows) so
+    the compatibility check below judges the mapping against the same rows that
+    would be classified, not against headers or blank padding. Structural, no
+    label hardcoding."""
+    rows = []
+    for row in table:
+        if not row:
+            continue
+        if is_header_row(row):
+            continue
+        if is_col_number_row(row):
+            continue
+        cells = [clean_cell(c) for c in row]
+        non_empty = [c for c in cells if c]
+        # A fully blank row carries no layout signal and the main loop never
+        # emits an item from it; exclude it so it does not dilute the numeric
+        # ratio of the compatibility check below.
+        if not non_empty:
+            continue
+        combined = ' '.join(cells)
+        if len(combined) < 3:
+            continue
+        if all(len(c) <= 2 for c in non_empty):
+            continue
+        rows.append(row)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def mapping_compatible_with_page(prev_mapping, page_data_rows):
+    """Is a mapping established on an EARLIER page safe to carry onto THIS page?
+
+    A header-less continuation page is normally a true continuation (same grid),
+    but blindly carrying `prev_mapping` silently mis-maps qty/price/amount when the
+    page actually has a different column layout. This guard validates the carry
+    structurally — no supplier/column hardcoding:
+
+      1. Width: the page's data rows must be wide enough to address every column
+         the mapping references (the carried max index must exist on this page).
+      2. Numeric coherence: every NUMERIC column the mapping names
+         (quantity/price/amount) must still read as numbers here — at least half
+         of the classifiable data rows must yield `parse_number` in that column.
+         If a carried numeric column is empty/non-numeric on this page, the layout
+         differs and the carry would shift values.
+
+    Returns True  -> safe to carry (e.g. inv47 p2, a genuine continuation).
+    Returns False -> layout differs; caller should re-infer per page instead.
+
+    Conservative edges: with no data rows to judge (can't disprove) or a mapping
+    that references no numeric columns (nothing numeric to validate), returns True
+    so behaviour matches the pre-guard carry; the guard only ever BLOCKS a carry
+    when it has positive evidence the layout is incompatible."""
+    if not prev_mapping:
+        return False
+    if not page_data_rows:
+        return True
+
+    indices = [i for i in prev_mapping.values() if isinstance(i, int)]
+    if not indices:
+        return True
+    max_idx = max(indices)
+
+    # 1. Width: a majority of data rows must be wide enough to hold max_idx.
+    wide_enough = sum(1 for r in page_data_rows if len(r) > max_idx)
+    if wide_enough < max(1, (len(page_data_rows) + 1) // 2):
+        return False
+
+    # 2. Numeric coherence: each carried numeric column must read as numbers.
+    numeric_fields = [f for f in _CARRY_NUMERIC_FIELDS
+                      if isinstance(prev_mapping.get(f), int)]
+    if not numeric_fields:
+        return True
+    threshold = max(1, (len(page_data_rows) + 1) // 2)
+    for field in numeric_fields:
+        col = prev_mapping[field]
+        numeric = sum(1 for r in page_data_rows
+                      if col < len(r) and parse_number(clean_cell(r[col])) is not None)
+        if numeric < threshold:
+            return False
+    return True
 
 
 # ── Phase 3: Row classification ──
@@ -461,7 +576,7 @@ def is_summary_row(cells, mapping):
 
 
 def is_group_subheader_row(cells, mapping):
-    """True when a row is a group/section SUBTOTAL line, not a real position.
+    """Single-row STRUCTURAL test: does this row LOOK like a group/section subtotal?
 
     Structural PRIMARY rule (no label hardcoding): a real position MUST carry a
     unit-price; a group subheader fills only the right-hand sum cluster (line
@@ -476,6 +591,12 @@ def is_group_subheader_row(cells, mapping):
       SECONDARY: no leading row number.
     Require the unit-price to be ABSENT (primary) plus at least one corroborating
     signal, so a legitimate priced position is never dropped on величину Кол-во.
+
+    NOTE: a РОВЕН section subtotal and a lump-sum service line («Доставка»,
+    «Монтаж» — name + amount, empty price, qty=1, no unit, no row number) are
+    INDISTINGUISHABLE at the single-row level. The pipeline therefore does NOT
+    drop on this predicate alone; it confirms via confirm_group_subheader_row(),
+    which checks the section-subtotal identity against the following member rows.
     """
     name_col = mapping.get('name')
     price_col = mapping.get('price')
@@ -502,6 +623,83 @@ def is_group_subheader_row(cells, mapping):
     no_unit = parse_number(cell('quantity')) is not None and not cell('unit')
     no_num = not ROW_NUM_RE.match(cell('num') or '')
     return no_unit or no_num
+
+
+# A section subtotal must reproduce the sum of its member rows to within this
+# fraction. Kept loose enough to absorb source rounding and the occasional member
+# pdfplumber drops mid-block, tight enough that an unrelated следующая позиция
+# (a lump-sum service line's neighbour) does not accidentally match.
+GROUP_SUBTOTAL_TOL_FRAC = 0.02
+
+
+def _row_is_classifiable(row):
+    """Mirror of the pipeline's per-row gate: rows the extractor would consider as
+    data (not headers / column-number strips / 2-char noise). Used by the member
+    scan so the subtotal identity is measured over the same rows the pipeline maps."""
+    if not row:
+        return False
+    cells = [clean_cell(c) for c in row]
+    if len(' '.join(cells)) < 3:
+        return False
+    non_empty = [c for c in cells if c]
+    if non_empty and all(len(c) <= 2 for c in non_empty):
+        return False
+    if is_header_row(row) or is_col_number_row(row):
+        return False
+    return True
+
+
+def confirm_group_subheader_row(table, row_index, mapping):
+    """CONTEXT-AWARE confirmation that the flagged row is a section subtotal (drop)
+    rather than a legitimate lump-sum line (keep). A РОВЕН subtotal and a service
+    line look identical in isolation; only the surrounding rows disambiguate them.
+
+    Rule — drop the row ONLY when its `amount` is corroborated by the member rows
+    that follow it (the rows belonging to the section), so we never eat a real
+    «Доставка»/«Монтаж»:
+      * Walk the following classifiable rows until the next group-shaped row or a
+        summary row (the section boundary), summing their `amount`s.
+      * cnt == 0  → no members at all (e.g. trailing service line, or a service
+        block where the next row is itself group-shaped) → KEEP (not a subtotal).
+      * clean stop (hit a group/summary boundary) → DROP iff Σmembers ≈ amount;
+        otherwise the "members" are unrelated siblings → KEEP.
+      * truncated by table/page end with cnt ≥ 1 → the member run is incomplete
+        (РОВЕН splits a section across a page boundary), so the sum cannot be
+        verified; fall back to the legacy behaviour and DROP. A service line is
+        almost never the 2nd-to-last row of a table, so this is safe in practice.
+
+    No supplier/label hardcoding — purely the subtotal = Σ(parts) arithmetic.
+    """
+    row = table[row_index]
+    if not is_group_subheader_row(row, mapping):
+        return False
+    amount_col = mapping.get('amount')
+    amount = parse_number(clean_cell(row[amount_col])) if (
+        amount_col is not None and amount_col < len(row)) else None
+    if amount is None:
+        return False
+
+    member_sum = 0.0
+    member_count = 0
+    ended_cleanly = False
+    for k in range(row_index + 1, len(table)):
+        nxt = table[k]
+        if not _row_is_classifiable(nxt):
+            continue
+        if is_summary_row(nxt, mapping) or is_group_subheader_row(nxt, mapping):
+            ended_cleanly = True  # reached the section boundary
+            break
+        a = parse_number(clean_cell(nxt[amount_col])) if (
+            amount_col is not None and amount_col < len(nxt)) else None
+        if a is not None:
+            member_sum += a
+            member_count += 1
+
+    if member_count == 0:
+        return False  # a leaf line (service / standalone), not a section subtotal
+    if not ended_cleanly:
+        return True   # incomplete member run (section spans page break) → legacy drop
+    return abs(member_sum - amount) <= max(0.05, abs(amount) * GROUP_SUBTOTAL_TOL_FRAC)
 
 
 # ── Phase 4: Item extraction ──
@@ -576,9 +774,20 @@ MONTH_NAMES = {
 
 def extract_metadata(pdf_path):
     with fitz.open(pdf_path) as doc:
+        # Header fields (number/date/supplier) live near the top, so the first few
+        # pages are enough and keep us away from late-page noise. The NET total
+        # sentence ("Всего наименований N, на сумму X"), however, sits AFTER the
+        # item table and on a long discount invoice can land on page 4+ — so it is
+        # searched over the WHOLE document (full_text below), not just these pages.
         text = ''
         for pi in range(min(3, len(doc))):
             text += doc[pi].get_text() + '\n'
+        full_text = ''
+        if len(doc) <= 3:
+            full_text = text
+        else:
+            for pi in range(len(doc)):
+                full_text += doc[pi].get_text() + '\n'
 
     # Normalize non-breaking spaces for regex matching
     normalized = text.replace('\xa0', ' ')
@@ -667,16 +876,25 @@ def extract_metadata(pdf_path):
     # FIRST (gross). The "Всего наименований N, на сумму X руб." sentence states
     # the net payable explicitly and unambiguously, so try it first. No hardcoded
     # sums — purely the document's own summary phrasing.
-    full_norm = normalized
+    #
+    # F3: the NET sentence follows the item table and may land on page 4+ on a long
+    # discount invoice. Search the WHOLE document for it (full_doc_norm), not just
+    # the first-3-pages snippet — otherwise we silently fall back to the gross total.
+    # The regex is highly specific ("всего наименований N … на сумму X.YY"), so a
+    # wider search window does not introduce false positives. Mirrors the TS path,
+    # whose extractMetadata already runs this match over the full text.
+    full_doc_norm = full_text.replace('\xa0', ' ')
     net_match = re.search(
         r'всего\s+наименований\s+\d+\s*,?\s*на\s+сумму\s+([0-9][0-9\s]*[.,]\d{2})',
-        full_norm, re.I)
+        full_doc_norm, re.I)
     if net_match:
         meta['totalAmount'] = parse_number(net_match.group(1))
     if meta['totalAmount'] is None:
+        # Fallback gross "Итого" stays scoped to the early text: it is a generic
+        # keyword grab that could match late-page boilerplate if widened.
         total_match = re.search(
             r'(?:итого|всего|total|итого к оплате)\s*[:\s]*([0-9\s]+[.,]\d{2})',
-            full_norm[:10000], re.I)
+            normalized[:10000], re.I)
         if total_match:
             meta['totalAmount'] = parse_number(total_match.group(1))
 
@@ -746,8 +964,13 @@ def extract_invoice_items(pdf_path):
                 stats['tables_found'] += 1
                 page_mapping = None
                 data_rows_buf = []
+                # F5: data rows of THIS table, used to decide whether a mapping
+                # carried from an earlier page is structurally compatible here
+                # (computed once; the carry decision below fires on the first
+                # header-less row, before the loop has seen the rest).
+                page_data_rows = page_classifiable_data_rows(table)
 
-                for row in table:
+                for row_index, row in enumerate(table):
                     if not row:
                         continue
 
@@ -767,7 +990,12 @@ def extract_invoice_items(pdf_path):
                                        and not is_col_number_row(r)][:20]
                         inferred = infer_mapping_from_data(data_sample)
                         page_mapping = merge_mappings(header_mapping, inferred)
-                        page_mapping = refine_price_column(page_mapping, data_sample)
+                        # F4: pass the header row so refine_price_column restricts
+                        # price candidates to columns whose HEADER names a price.
+                        # Without it header_cells defaults to None and the filter is
+                        # a no-op (a «Скидка»/«НДС» column could hijack `price`).
+                        page_mapping = refine_price_column(page_mapping, data_sample,
+                                                           header_cells=row)
                         prev_mapping = page_mapping
                         if not vat_state_captured:
                             header_lc = [clean_cell(c).lower() for c in row]
@@ -799,14 +1027,23 @@ def extract_invoice_items(pdf_path):
                         # continuation: reuse the grid already established by the
                         # header on an earlier page. Re-inferring from this page's
                         # data alone re-derives the wrong right-to-left numeric
-                        # columns (inv47 p2 → qty/price/amount shift). Only fall
-                        # back to inference when there is no prior grid at all.
-                        if prev_mapping:
+                        # columns (inv47 p2 → qty/price/amount shift). Carry only
+                        # when the prior grid is STRUCTURALLY COMPATIBLE with this
+                        # page (F5: same width + carried numeric columns still hold
+                        # numbers here) — otherwise the page has a different layout
+                        # and a blind carry would silently mis-map qty/price/amount,
+                        # so fall back to per-page inference instead.
+                        if prev_mapping and mapping_compatible_with_page(
+                                prev_mapping, page_data_rows):
                             page_mapping = prev_mapping
                             if page_idx < 5:
                                 print(f'[info] p{page_idx+1}: carry prev mapping='
                                       f'{page_mapping}', file=sys.stderr)
                         else:
+                            if prev_mapping and page_idx < 5:
+                                print(f'[info] p{page_idx+1}: prev mapping '
+                                      f'incompatible with page → re-infer',
+                                      file=sys.stderr)
                             data_rows_buf.append(row)
                             if len(data_rows_buf) >= 3:
                                 inferred = infer_mapping_from_data(data_rows_buf)
@@ -822,7 +1059,11 @@ def extract_invoice_items(pdf_path):
                         stats['summary_rows_skipped'] += 1
                         continue
 
-                    if is_group_subheader_row(row, page_mapping):
+                    # Drop only CONFIRMED section subtotals (amount == Σ following
+                    # members). A lump-sum service line looks identical to a РОВЕН
+                    # subtotal in isolation, so confirmation against the member rows
+                    # is what keeps «Доставка»/«Монтаж» from being eaten.
+                    if confirm_group_subheader_row(table, row_index, page_mapping):
                         stats['group_rows_skipped'] = stats.get('group_rows_skipped', 0) + 1
                         global_row_idx += 1
                         continue
@@ -838,15 +1079,23 @@ def extract_invoice_items(pdf_path):
                         if 'name' in inferred:
                             page_mapping = inferred
                             prev_mapping = page_mapping
-                    if page_mapping is None and prev_mapping:
+                    # F5: same compatibility guard before carrying onto the
+                    # buffered continuation rows — only reuse the earlier grid when
+                    # it structurally matches these rows (width + numeric columns),
+                    # otherwise leave page_mapping None so they are NOT emitted with
+                    # a mismatched grid rather than silently mis-mapped.
+                    if page_mapping is None and prev_mapping \
+                            and mapping_compatible_with_page(prev_mapping, data_rows_buf):
                         page_mapping = prev_mapping
 
                 if page_mapping and data_rows_buf:
-                    for row in data_rows_buf:
+                    for buf_index, row in enumerate(data_rows_buf):
                         if is_summary_row(row, page_mapping):
                             stats['summary_rows_skipped'] += 1
                             continue
-                        if is_group_subheader_row(row, page_mapping):
+                        # Same confirmed-subtotal gate as the main loop, scoped to
+                        # the buffered continuation rows as the member context.
+                        if confirm_group_subheader_row(data_rows_buf, buf_index, page_mapping):
                             stats['group_rows_skipped'] = stats.get('group_rows_skipped', 0) + 1
                             global_row_idx += 1
                             continue
