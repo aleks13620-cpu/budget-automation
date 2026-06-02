@@ -4,6 +4,8 @@ import { api } from '../api';
 interface GlobalItem {
   id: number;
   comment: string | null;
+  kind?: 'tag' | 'note';
+  label?: string | null;
   status: string;
   created_at: string;
   project_id: number;
@@ -125,7 +127,11 @@ export function GlobalFeedbackPage({ onBack, onGoToProject }: Props) {
                     </button>
                   ) : '—'}
                 </td>
-                <td style={{ fontSize: '0.85rem' }}>{item.comment || '—'}</td>
+                <td style={{ fontSize: '0.85rem' }}>
+                  {item.kind === 'tag'
+                    ? <span title="Тег (1 клик)">🏷 {item.label || item.comment}</span>
+                    : (item.comment || '—')}
+                </td>
                 <td style={{ fontSize: '0.85rem', color: '#6b7280' }}>{item.spec_name || '—'}</td>
                 <td style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
                   {new Date(item.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
