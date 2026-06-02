@@ -117,6 +117,22 @@ def looks_double_text_corrupted(s):
     return bool(_SHADOW_INTERIOR_RE.search(s) or _LEAD_NOISE_RE.search(s))
 
 
+# Signs that fitz.get_textbox FAILED to decode some glyph(s) — replacement
+# chars or NBSP wedged inside a Cyrillic word. Seen on Ровен 5244 where fitz
+# couldn't recover «Р» and returned «�\xa0ешетка». Treated as "fitz also
+# garbled" so baseline is kept.
+_FITZ_GARBAGE_NBSP_RE = re.compile(r'[Ѐ-ӿ]\xa0[Ѐ-ӿ]')
+
+
+def looks_fitz_garbage(s):
+    """True if the fitz repair output shows decoder-failure signs."""
+    if not s:
+        return True
+    if '�' in s:
+        return True
+    return bool(_FITZ_GARBAGE_NBSP_RE.search(s))
+
+
 def strip_leading_ascii_line(s):
     """Drop a leading ASCII-only line if a cyrillic-containing line follows.
     fitz.get_textbox() often returns the article-shadow row above the name."""
@@ -142,7 +158,13 @@ def fitz_repair_cell(fitz_page, bbox, baseline):
         return baseline
     if looks_double_text_corrupted(repaired):
         return baseline
-    if len(repaired) > max(40, len(baseline) * 3):
+    # Caught fitz-side decoder failure (Ровен 5244): kept baseline rather
+    # than substituting «�\xa0ешетка» for the original «Решетка».
+    if looks_fitz_garbage(repaired):
+        return baseline
+    # Cap loose enough to accept real names (ITESA radiator names ~75 chars).
+    # When baseline is a tiny corrupt stub ("PР") the absolute floor protects us.
+    if len(repaired) > max(200, len(baseline) * 3):
         return baseline
     return repaired
 
@@ -986,7 +1008,10 @@ def extract_invoice_items(pdf_path):
     # Open the PDF via fitz too — used by fitz_repair_cell() to repair cells
     # whose pdfplumber.extract_tables() output matches the double-text
     # corruption signature (see looks_double_text_corrupted). Per-cell fallback
-    # only; baseline kept whenever fitz also returns garbage.
+    # only; baseline kept whenever fitz also returns garbage. Closed inside the
+    # pdfplumber `with`-block below so the handle is released even if
+    # pdfplumber raises mid-iteration (otherwise the post-`with` close-block
+    # would be unreachable).
     fitz_doc = None
     try:
         fitz_doc = fitz.open(str(pdf_path))
