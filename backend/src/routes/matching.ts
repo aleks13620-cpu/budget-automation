@@ -1708,7 +1708,7 @@ router.get('/api/projects/:id/feedback', (req: Request, res: Response) => {
     const projectId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
 
-    const items = db.prepare(`
+    const rawItems = db.prepare(`
       SELECT f.id, f.type, f.created_at, f.comment,
              si.name as spec_name,
              COALESCE(f.invoice_item_id, f.price_list_item_id) as invoice_item_id,
@@ -1720,13 +1720,26 @@ router.get('/api/projects/:id/feedback', (req: Request, res: Response) => {
       WHERE f.project_id = ?
       ORDER BY f.created_at DESC
       LIMIT 200
-    `).all(projectId);
+    `).all(projectId) as any[];
+    // Tag rows store the bare tag id in `comment`; expose its readable RU label (single
+    // source TAG_LABELS) so the per-project page shows «Цена не та», not `price_wrong`.
+    const items = rawItems.map(r => {
+      const isTag = typeof r.type === 'string' && r.type.startsWith('tag_');
+      return { ...r, kind: isTag ? 'tag' : 'other', label: isTag ? (TAG_LABELS[r.comment] ?? r.comment) : null };
+    });
 
     const counts = db.prepare(`
       SELECT type, COUNT(*) as cnt FROM operator_feedback WHERE project_id = ? GROUP BY type
     `).all(projectId) as { type: string; cnt: number }[];
+    // Readable labels for tag_* count keys (action types like confirm/reject are labelled on the frontend).
+    const typeLabels: Record<string, string> = {};
+    for (const r of counts) {
+      if (typeof r.type === 'string' && r.type.startsWith('tag_')) {
+        typeLabels[r.type] = TAG_LABELS[r.type.slice(4)] ?? r.type;
+      }
+    }
 
-    res.json({ items, counts: Object.fromEntries(counts.map(r => [r.type, r.cnt])) });
+    res.json({ items, counts: Object.fromEntries(counts.map(r => [r.type, r.cnt])), typeLabels });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при получении feedback', details: error instanceof Error ? error.message : 'Unknown error' });
   }

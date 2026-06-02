@@ -4,6 +4,8 @@ import { api } from '../api';
 interface FeedbackItem {
   id: number;
   type: string;
+  kind?: 'tag' | 'other';
+  label?: string | null;
   spec_name: string | null;
   invoice_name: string;
   comment: string | null;
@@ -28,6 +30,7 @@ type TabFilter = 'all' | 'errors' | 'new_errors';
 export function FeedbackPage({ projectId, onBack }: Props) {
   const [items, setItems] = useState<FeedbackItem[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [typeLabels, setTypeLabels] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabFilter>('all');
   const [resolving, setResolving] = useState<number | null>(null);
@@ -38,6 +41,7 @@ export function FeedbackPage({ projectId, onBack }: Props) {
       .then(({ data }) => {
         setItems(data.items || []);
         setCounts(data.counts || {});
+        setTypeLabels(data.typeLabels || {});
       })
       .finally(() => setLoading(false));
   };
@@ -82,7 +86,7 @@ export function FeedbackPage({ projectId, onBack }: Props) {
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
         {Object.entries(counts).map(([type, cnt]) => (
           <div key={type} style={{ padding: '0.5rem 1rem', background: '#f3f4f6', borderRadius: '6px', fontSize: '0.85rem' }}>
-            <span style={{ fontWeight: 600 }}>{TYPE_LABELS[type] ?? type}</span>
+            <span style={{ fontWeight: 600 }}>{TYPE_LABELS[type] ?? typeLabels[type] ?? type}</span>
             <span style={{ marginLeft: '0.5rem', color: '#6b7280' }}>{cnt}</span>
           </div>
         ))}
@@ -136,11 +140,11 @@ export function FeedbackPage({ projectId, onBack }: Props) {
                     fontSize: '0.8rem', fontWeight: 600,
                     color: item.type === 'confirm' ? '#16a34a' : item.type === 'reject' ? '#dc2626' : item.type === 'error_report' ? '#d97706' : '#6b7280',
                   }}>
-                    {TYPE_LABELS[item.type] ?? item.type}
+                    {item.kind === 'tag' ? `🏷 ${item.label || item.comment}` : (TYPE_LABELS[item.type] ?? item.type)}
                   </span>
                 </td>
                 <td style={{ fontSize: '0.85rem' }}>{item.spec_name || '—'}</td>
-                <td style={{ fontSize: '0.85rem' }}>{item.comment || item.invoice_name || '—'}</td>
+                <td style={{ fontSize: '0.85rem' }}>{item.kind === 'tag' ? (item.invoice_name || '—') : (item.comment || item.invoice_name || '—')}</td>
                 <td style={{ fontSize: '0.8rem', color: '#9ca3af' }}>
                   {new Date(item.created_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}
                 </td>
