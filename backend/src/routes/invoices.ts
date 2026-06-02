@@ -12,6 +12,7 @@ import type { SupplierParserOverrides } from '../services/invoiceRouter';
 import type { GigaChatParseQuality } from '../services/gigachatParseQuality';
 import { parsePdfWithGigaChat, parseExcelWithGigaChat } from '../services/gigachatParser';
 import { isGigaChatConfigured } from '../services/gigachatService';
+import { analyzeNameCorruption, NAME_CORRUPTION_RATIO_THRESHOLD } from '../services/nameCorruption';
 import stringSimilarity from 'string-similarity';
 import type { ExcelParseResult } from '../types/invoice';
 
@@ -653,6 +654,21 @@ export async function processInvoiceFile(
     parsingCategoryReason += ` | ${priceOverrideReasonParts.join('; ')}`;
   }
 
+  // Broken-font name corruption (detect→review): silent A is the blind spot here —
+  // finances can be perfectly valid while names are scrambled (Cyr+Lat/digit wedges
+  // from a font without ToUnicode). We do NOT auto-reparse (would replace correct
+  // finances); we only surface the invoice to the operator who can hit /reparse-gigachat.
+  const nameCorruption = analyzeNameCorruption(parseResult.items.map(it => it.name || ''));
+  if (nameCorruption.ratio >= NAME_CORRUPTION_RATIO_THRESHOLD) {
+    const pct = Math.round(nameCorruption.ratio * 100);
+    if (parsingCategory === 'A') {
+      parsingCategory = 'B';
+      parsingCategoryReason += ` | Понижено до B: имена нечитаемы (битый шрифт): ${pct}%`;
+    } else {
+      parsingCategoryReason += ` | имена нечитаемы (битый шрифт): ${pct}%`;
+    }
+  }
+
   const status = parseResult.items.length > 0 ? 'parsed' : 'needs_mapping';
   const fileName = fixFilename(file.originalname);
 
@@ -663,6 +679,7 @@ export async function processInvoiceFile(
   let needsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, parsedVatRate, supplierPricesIncludeVatForReview);
   if (lastGigaParseQuality?.suggestElevatedReview) needsAmountReview = 1;
   if (priceOverrideNeedsAmountReview) needsAmountReview = 1;
+  if (nameCorruption.ratio >= NAME_CORRUPTION_RATIO_THRESHOLD) needsAmountReview = 1;
   // Фича #3 (detect→review): обнаружена скидка «−X%» в тексте счёта. Суммы строк НЕ трогаем
   // (на проде нет данных для валидации авто-применения) — только помечаем счёт на ревью
   // оператору и дописываем процент в reason. Процент динамический (detectDiscount → number).
