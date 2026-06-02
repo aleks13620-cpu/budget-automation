@@ -74,6 +74,7 @@ const QUICK_TAGS: Array<{ id: string; icon: string; label: string }> = [
   { id: 'not_purchased', icon: '🚫', label: 'Не покупали' },
   { id: 'analog_brand', icon: '≈', label: 'Аналог другого бренда' },
   { id: 'parser_missed', icon: '🐛', label: 'Парсер пропустил' },
+  { id: 'question', icon: '❓', label: 'Вопрос / не уверен' },
 ];
 
 const ALT_CONFIDENCE_THRESHOLD = 0.5;

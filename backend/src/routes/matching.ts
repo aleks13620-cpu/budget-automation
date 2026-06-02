@@ -1988,14 +1988,27 @@ router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
   }
 });
 
-// POST /api/projects/:id/feedback/tag — submit one-click quick-tag
-// (carry-task #17). Stores as operator_feedback row with type='tag_<name>'
-// so existing /feedback/all (filter type='error_report') is not polluted.
-// Allowed tags are validated server-side to prevent arbitrary type names.
-const ALLOWED_TAGS = new Set([
-  'price_wrong', 'wrong_marking', 'needs_alternatives', 'duplicate',
-  'not_purchased', 'analog_brand', 'parser_missed',
-]);
+// POST /api/projects/:id/feedback/tag — submit one-click quick-tag (carry-task #17).
+// Stores as operator_feedback row with type='tag_<name>', distinct from free-text
+// 'error_report' notes. Tags ARE surfaced in /feedback/all + /feedback/export with the
+// RU labels below; the type prefix keeps them separate from notes and out of the
+// training signal. Allowed tags are validated server-side (safelist) to block
+// arbitrary type names.
+//
+// Single source of truth: tag id -> RU label. Labels mirror the operator UI strip
+// (frontend MatchTable.tsx QUICK_TAGS) so the team sees exactly what was clicked.
+// ALLOWED_TAGS is derived from these keys so the safelist and labels cannot drift.
+const TAG_LABELS: Record<string, string> = {
+  price_wrong: 'Цена не та',
+  wrong_marking: 'Не та маркировка',
+  needs_alternatives: 'Нужны альтернативы',
+  duplicate: 'Дубль',
+  not_purchased: 'Не покупали',
+  analog_brand: 'Аналог другого бренда',
+  parser_missed: 'Парсер пропустил',
+  question: 'Вопрос / не уверен',
+};
+const ALLOWED_TAGS = new Set(Object.keys(TAG_LABELS));
 router.post('/api/projects/:id/feedback/tag', (req: Request, res: Response) => {
   try {
     const projectId = parseInt(String(req.params.id), 10);
@@ -2029,15 +2042,17 @@ router.patch('/api/feedback/:id/resolve', (req: Request, res: Response) => {
   }
 });
 
-// GET /api/feedback/all — all error_reports across all projects
+// GET /api/feedback/all — all operator feedback (free-text notes + one-click tags)
 router.get('/api/feedback/all', (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const status = req.query.status as string | undefined;
-    const whereParts = [`f.type = 'error_report'`];
+    // Surface BOTH free-text error_report notes AND one-click tags (type='tag_%').
+    const typeFilter = `(f.type = 'error_report' OR f.type LIKE 'tag_%')`;
+    const whereParts = [typeFilter];
     if (status === 'new') whereParts.push(`COALESCE(f.status, 'new') = 'new'`);
     if (status === 'resolved') whereParts.push(`f.status = 'resolved'`);
-    const items = db.prepare(`
+    const rows = db.prepare(`
       SELECT f.id, f.type, f.comment, f.created_at, COALESCE(f.status, 'new') as status,
              p.id as project_id, p.name as project_name,
              si.name as spec_name
@@ -2047,42 +2062,55 @@ router.get('/api/feedback/all', (req: Request, res: Response) => {
       WHERE ${whereParts.join(' AND ')}
       ORDER BY f.created_at DESC
       LIMIT 500
-    `).all();
-    const total = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback WHERE type = 'error_report'`).get() as any).cnt;
-    const newCount = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback WHERE type = 'error_report' AND COALESCE(status,'new') = 'new'`).get() as any).cnt;
+    `).all() as any[];
+    // Tag rows store the bare tag id in `comment`; map it to a readable RU label.
+    const items = rows.map(r => {
+      const isTag = typeof r.type === 'string' && r.type.startsWith('tag_');
+      return {
+        ...r,
+        kind: isTag ? 'tag' : 'note',
+        label: isTag ? (TAG_LABELS[r.comment] ?? r.comment) : null,
+      };
+    });
+    const total = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback f WHERE ${typeFilter}`).get() as any).cnt;
+    const newCount = (db.prepare(`SELECT COUNT(*) as cnt FROM operator_feedback f WHERE ${typeFilter} AND COALESCE(f.status,'new') = 'new'`).get() as any).cnt;
     res.json({ items, total, newCount });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
-// GET /api/feedback/export — download all error_reports as xlsx
+// GET /api/feedback/export — download all operator feedback (notes + tags) as xlsx
 router.get('/api/feedback/export', (req: Request, res: Response) => {
   try {
     const db = getDatabase();
     const rows = db.prepare(`
-      SELECT p.name as project, f.created_at as date, f.comment,
+      SELECT p.name as project, f.created_at as date, f.type, f.comment,
              COALESCE(f.status,'new') as status, si.name as spec_name
       FROM operator_feedback f
       LEFT JOIN projects p ON f.project_id = p.id
       LEFT JOIN specification_items si ON f.spec_item_id = si.id
-      WHERE f.type = 'error_report'
+      WHERE (f.type = 'error_report' OR f.type LIKE 'tag_%')
       ORDER BY f.created_at DESC
     `).all() as any[];
 
     const wsData = [
-      ['Проект', 'Дата', 'Замечание', 'Позиция спецификации', 'Статус'],
-      ...rows.map(r => [
-        r.project || '',
-        r.date ? new Date(r.date).toLocaleString('ru-RU') : '',
-        r.comment || '',
-        r.spec_name || '',
-        r.status === 'resolved' ? 'Разобрано' : 'Новое',
-      ]),
+      ['Проект', 'Дата', 'Тип', 'Замечание', 'Позиция спецификации', 'Статус'],
+      ...rows.map(r => {
+        const isTag = typeof r.type === 'string' && r.type.startsWith('tag_');
+        return [
+          r.project || '',
+          r.date ? new Date(r.date).toLocaleString('ru-RU') : '',
+          isTag ? 'Тег' : 'Замечание',
+          isTag ? (TAG_LABELS[r.comment] ?? r.comment) : (r.comment || ''),
+          r.spec_name || '',
+          r.status === 'resolved' ? 'Разобрано' : 'Новое',
+        ];
+      }),
     ];
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    ws['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 60 }, { wch: 40 }, { wch: 12 }];
+    ws['!cols'] = [{ wch: 25 }, { wch: 18 }, { wch: 12 }, { wch: 60 }, { wch: 40 }, { wch: 12 }];
     XLSX.utils.book_append_sheet(wb, ws, 'Замечания');
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', 'attachment; filename="feedback_errors.xlsx"');
