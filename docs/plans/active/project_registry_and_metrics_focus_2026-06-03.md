@@ -38,7 +38,9 @@
 - **Фаза 2 (дашборд):** страница с графиком динамики.
 - Гейт каждой фазы — sub-agent + pre-deploy-check. Регрессия проекта 6 (333/268/44) не падает.
 
-**Статус (обновлено 2026-06-03):** **Фаза 1 «Захват» ЗАДЕПЛОЕНА** (`6f02bc9`) — таблица `metric_snapshots` + снимки на прогон / действие оператора / старт / ежедневно. pre-deploy 5-move сошёлся за **3 круга** (loop-until-clean поймал 4 snapshot-bypass пути: unconfirm, select-override, manual-match reuse, gigachat-validate). Build+smoke зелёные, регрессия 6/11 не дрогнула. Дальше — **Фаза 2** (эндпоинт чтения истории) → **Фаза 3** (страница-график).
+**Статус (обновлено 2026-06-03):** **Фаза 1 «Захват» ЗАДЕПЛОЕНА** (`6f02bc9`) — таблица `metric_snapshots` + снимки на прогон / действие оператора / старт / ежедневно. pre-deploy 5-move сошёлся за **3 круга** (loop-until-clean поймал 4 snapshot-bypass пути: unconfirm, select-override, manual-match reuse, gigachat-validate). Build+smoke зелёные, регрессия 6/11 не дрогнула.
+
+**Фаза 2 «Чтение» ЗАДЕПЛОЕНА** (`a5b599e`): `GET /api/projects/:id/metrics/history` (newest-N в хронологическом порядке). **Живая верификация прода:** проект 6 cov=88.3%/conf=268/**learnedRules=452**/learnedSyn=22; Ласточка 64.3%/conf=0. Поправлено по ходу: newest-N (ASC рвал свежие данные) + **learnedRules** (был `source='learned'`→0, операторские правила = `'manual'`; теперь весь rule-base). Дальше — **Фаза 3** (страница-график): handoff `next_chat_prompt_metrics_phase3_dashboard.md`.
 
 **CARRY (метрики, не блокеры):**
 - **C1:** bulk-циклы (bulk-confirm/reject/analog, group-followers) пишут N снимков на одно bulk-действие → снимок один раз после цикла (perf + меньше дублей в таймлайне).
