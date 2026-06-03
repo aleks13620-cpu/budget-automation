@@ -9,6 +9,7 @@ import { isGigaChatConfigured, chatCompletion } from '../services/gigachatServic
 import { isGeminiMatchingEnabled } from '../services/llmMatcher';
 import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive, setMatchingResult, getMatchingResult, clearMatchingResult } from '../services/matchingRunLock';
 import { recordMetricSnapshot, getMetricsHistory } from '../services/metricSnapshots';
+import { notifyFeedback } from '../services/telegramNotify';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const LLM_MATCH_TYPE = 'llm_suggestion';
@@ -2027,6 +2028,8 @@ router.post('/api/projects/:id/feedback', (req: Request, res: Response) => {
       INSERT INTO operator_feedback (type, project_id, supplier_id, spec_item_id, invoice_item_id, comment)
       VALUES ('error_report', ?, ?, ?, ?, ?)
     `).run(projectId, supplierId, spec_item_id || null, invoice_item_id || null, comment.trim());
+    // F3: notify the team (residency-safe — generic label, NOT the free-text comment).
+    notifyFeedback(db, 'new', { projectId, specItemId: spec_item_id || null, label: 'Замечание (текст)' });
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при сохранении отзыва', details: error instanceof Error ? error.message : 'Unknown error' });
@@ -2069,6 +2072,8 @@ router.post('/api/projects/:id/feedback/tag', (req: Request, res: Response) => {
       INSERT INTO operator_feedback (type, project_id, supplier_id, spec_item_id, invoice_item_id, comment)
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(`tag_${tag}`, projectId, supplierId, spec_item_id || null, invoice_item_id || null, tag);
+    // F3: notify the team. Label from the single TAG_LABELS source (residency-safe).
+    notifyFeedback(db, 'new', { projectId, specItemId: spec_item_id || null, label: TAG_LABELS[tag] || tag });
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при сохранении тега', details: error instanceof Error ? error.message : 'Unknown error' });
@@ -2081,6 +2086,13 @@ router.patch('/api/feedback/:id/resolve', (req: Request, res: Response) => {
     const id = parseInt(String(req.params.id), 10);
     const db = getDatabase();
     db.prepare(`UPDATE operator_feedback SET status = 'resolved' WHERE id = ?`).run(id);
+    // F3: send the "✓ Отработано" ack (residency-safe label from the single TAG_LABELS source).
+    const fb = db.prepare('SELECT project_id, spec_item_id, type FROM operator_feedback WHERE id = ?').get(id) as
+      { project_id: number | null; spec_item_id: number | null; type: string } | undefined;
+    if (fb) {
+      const ackLabel = fb.type.startsWith('tag_') ? (TAG_LABELS[fb.type.slice(4)] || fb.type) : 'Замечание (текст)';
+      notifyFeedback(db, 'resolved', { projectId: fb.project_id, specItemId: fb.spec_item_id, label: ackLabel });
+    }
     res.json({ ok: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка', details: error instanceof Error ? error.message : 'Unknown error' });
