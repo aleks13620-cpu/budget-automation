@@ -8,7 +8,7 @@ import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constru
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 import { isGeminiMatchingEnabled } from '../services/llmMatcher';
 import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive, setMatchingResult, getMatchingResult, clearMatchingResult } from '../services/matchingRunLock';
-import { recordMetricSnapshot, getMetricsHistory } from '../services/metricSnapshots';
+import { recordMetricSnapshot, getMetricsHistory, getOverview } from '../services/metricSnapshots';
 import { notifyFeedback } from '../services/telegramNotify';
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -1798,6 +1798,16 @@ router.get('/api/projects/:id/metrics/history', (req: Request, res: Response) =>
     res.json({ projectId, count: series.length, series });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при получении истории метрик', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// GET /api/metrics/overview — all-projects "finish" overview (Phase 6).
+// Current per-project readiness + a dynamic aggregate readiness trend over time. Read-only.
+router.get('/api/metrics/overview', (_req: Request, res: Response) => {
+  try {
+    res.json(getOverview(getDatabase()));
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении сводки метрик', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

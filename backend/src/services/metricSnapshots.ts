@@ -130,3 +130,67 @@ export function getMetricsHistory(db: DB, projectId: number, limit = 2000) {
     };
   });
 }
+
+/**
+ * All-projects "finish" overview (Phase 6 of the learning dashboard).
+ *
+ * "Готовность" (readiness toward a finished spec) = confirmed / total — a position is
+ * "done" when the operator has CONFIRMED its match; matched-but-unconfirmed still needs an
+ * operator decision, so it counts as "осталось до финиша". v1 uses total as the denominator
+ * (no exclusion of structurally-unmatchable header rows) and focuses on the TREND, which can
+ * go down as well as up (operator re-work, re-upload) — agreed with the owner.
+ *
+ * The dynamic aggregate trend is derived from the per-project `metric_snapshots` already being
+ * captured: walk every snapshot in time order, keep each project's latest (total, confirmed),
+ * and emit the running global readiness at each step (a step-function over real events).
+ * Read-only.
+ */
+export function getOverview(db: DB) {
+  const rows = db.prepare(`
+    SELECT s.project_id AS pid, s.created_at AS createdAt, s.total AS total, s.confirmed AS confirmed,
+           p.name AS name
+    FROM metric_snapshots s
+    LEFT JOIN projects p ON s.project_id = p.id
+    ORDER BY s.created_at ASC, s.id ASC
+  `).all() as Array<{ pid: number; createdAt: string; total: number; confirmed: number; name: string | null }>;
+
+  const latest: Record<number, { total: number; confirmed: number; name: string | null }> = {};
+  let sumTotal = 0, sumConfirmed = 0;
+  const series: Array<{ createdAt: string; total: number; confirmed: number; readiness: number }> = [];
+  for (const r of rows) {
+    const prev = latest[r.pid];
+    if (prev) { sumTotal -= prev.total; sumConfirmed -= prev.confirmed; }
+    latest[r.pid] = { total: r.total, confirmed: r.confirmed, name: r.name };
+    sumTotal += r.total; sumConfirmed += r.confirmed;
+    series.push({
+      createdAt: r.createdAt,
+      total: sumTotal,
+      confirmed: sumConfirmed,
+      readiness: sumTotal > 0 ? Math.round((sumConfirmed / sumTotal) * 1000) / 10 : 0,
+    });
+  }
+
+  const byProject = Object.entries(latest).map(([pid, v]) => ({
+    id: Number(pid),
+    name: v.name || `#${pid}`,
+    total: v.total,
+    confirmed: v.confirmed,
+    remaining: Math.max(0, v.total - v.confirmed),
+    readiness: v.total > 0 ? Math.round((v.confirmed / v.total) * 1000) / 10 : 0,
+  })).sort((a, b) => b.remaining - a.remaining);
+
+  const total = byProject.reduce((s, p) => s + p.total, 0);
+  const confirmed = byProject.reduce((s, p) => s + p.confirmed, 0);
+
+  return {
+    current: {
+      projects: byProject.length,
+      total,
+      confirmed,
+      remaining: Math.max(0, total - confirmed),
+      readiness: total > 0 ? Math.round((confirmed / total) * 1000) / 10 : 0,
+      byProject,
+    },
+    series: series.slice(-5000), // cap response size (CARRY C2: downsample later if needed)
+  };
+}

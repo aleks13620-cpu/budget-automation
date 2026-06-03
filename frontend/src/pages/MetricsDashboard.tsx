@@ -22,6 +22,16 @@ interface Snapshot {
   learnedRules: number;
 }
 
+const OVERVIEW = -1; // sentinel projectId for the all-projects "finish" overview
+
+interface OverviewData {
+  current: {
+    projects: number; total: number; confirmed: number; remaining: number; readiness: number;
+    byProject: Array<{ id: number; name: string; total: number; confirmed: number; remaining: number; readiness: number }>;
+  };
+  series: Array<{ createdAt: string; total: number; confirmed: number; readiness: number }>;
+}
+
 interface Props {
   onBack: () => void;
   initialProjectId?: number | null;
@@ -206,8 +216,9 @@ function ChartCard({ title, subtitle, legend, children }: {
 
 export function MetricsDashboard({ onBack, initialProjectId }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectId, setProjectId] = useState<number | null>(initialProjectId ?? null);
+  const [projectId, setProjectId] = useState<number | null>(initialProjectId ?? OVERVIEW);
   const [series, setSeries] = useState<Snapshot[]>([]);
+  const [overview, setOverview] = useState<OverviewData | null>(null);
   const [loadingProjects, setLoadingProjects] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -229,9 +240,11 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
     let stale = false; // guard against out-of-order responses overwriting a newer selection
     setLoading(true);
     setError(null);
-    api.get(`/projects/${projectId}/metrics/history?limit=2000`)
-      .then(({ data }) => { if (!stale) setSeries(data.series || []); })
-      .catch(() => { if (!stale) setError('Не удалось загрузить историю метрик'); })
+    const req = projectId === OVERVIEW
+      ? api.get('/metrics/overview').then(({ data }) => { if (!stale) setOverview(data || null); })
+      : api.get(`/projects/${projectId}/metrics/history?limit=2000`).then(({ data }) => { if (!stale) setSeries(data.series || []); });
+    req
+      .catch(() => { if (!stale) setError(projectId === OVERVIEW ? 'Не удалось загрузить сводку' : 'Не удалось загрузить историю метрик'); })
       .finally(() => { if (!stale) setLoading(false); });
     return () => { stale = true; };
   }, [projectId, reloadKey]);
@@ -257,6 +270,11 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
   const synSeries = useMemo<ChartSeries[]>(
     () => [{ label: 'Синонимы', color: '#7c3aed', values: series.map(s => s.learnedSynonyms) }], [series]);
 
+  // All-projects overview (F6) derived series.
+  const ovXDates = useMemo(() => overview?.series.map(p => p.createdAt) ?? [], [overview]);
+  const ovSeries = useMemo<ChartSeries[]>(
+    () => [{ label: 'Готовность', color: '#16a34a', values: overview?.series.map(p => p.readiness) ?? [] }], [overview]);
+
   const actionIndices = useMemo(
     () => series.map((s, i) => (s.kind === 'operator_action' ? i : -1)).filter(i => i >= 0),
     [series],
@@ -268,6 +286,7 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
     const act = s.actionType ? ` (${ACTION_LABELS[s.actionType] || s.actionType})` : '';
     return `${fmtDateTime(s.createdAt)} · ${k}${act} · покрытие ${s.coverage}%, подтв. ${s.confirmed}`;
   };
+  const isOverview = projectId === OVERVIEW;
 
   return (
     <div>
@@ -277,20 +296,21 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
       </div>
 
       <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', marginBottom: '1rem', flexWrap: 'wrap' }}>
-        <div className="field" style={{ minWidth: 240 }}>
-          <label>Проект</label>
+        <div className="field" style={{ minWidth: 260 }}>
+          <label>Область</label>
           <select
             value={projectId ?? ''}
             onChange={e => setProjectId(e.target.value ? Number(e.target.value) : null)}
-            disabled={loadingProjects || projects.length === 0}
+            disabled={loadingProjects}
           >
+            <option value={OVERVIEW}>📊 Все проекты (сводно)</option>
             {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         </div>
-        <button className="btn btn-secondary" onClick={() => setReloadKey(k => k + 1)} disabled={loading || projectId == null}>
+        <button className="btn btn-secondary" onClick={() => setReloadKey(k => k + 1)} disabled={loading}>
           ↻ Обновить
         </button>
-        {series.length > 0 && (
+        {!isOverview && series.length > 0 && (
           <span className="muted" style={{ marginBottom: '0.4rem' }}>
             {series.length} снимков · {fmtDate(series[0].createdAt)}–{fmtDate(series[series.length - 1].createdAt)}
           </span>
@@ -301,6 +321,69 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
 
       {loadingProjects ? (
         <p className="loading">Загрузка проектов</p>
+      ) : isOverview ? (
+        loading ? (
+          <p className="loading">Загрузка сводки</p>
+        ) : !overview || overview.current.projects === 0 ? (
+          <p className="muted">Нет данных по проектам.</p>
+        ) : (
+          <>
+            <div className="matching-summary">
+              <div className="summary-card summary-confirmed">
+                <div className="summary-value">{overview.current.readiness}%</div>
+                <div className="summary-label">Готовность ({overview.current.confirmed}/{overview.current.total})</div>
+              </div>
+              <div className="summary-card summary-unmatched">
+                <div className="summary-value">{overview.current.remaining}</div>
+                <div className="summary-label">Осталось до финиша</div>
+              </div>
+              <div className="summary-card summary-matched">
+                <div className="summary-value">{overview.current.total}</div>
+                <div className="summary-label">Всего позиций</div>
+              </div>
+              <div className="summary-card">
+                <div className="summary-value">{overview.current.projects}</div>
+                <div className="summary-label">Проектов</div>
+              </div>
+            </div>
+
+            <ChartCard
+              title="🏁 Готовность по всем проектам, % (во времени)"
+              subtitle="Доля подтверждённых оператором позиций от всех. Тренд живой: растёт по мере подтверждений, может падать при переделке/перезаливке. До 100% обычно не доходит (заголовки/служебные строки)."
+              legend={<Legend items={[{ label: 'Готовность', color: '#16a34a', value: `${overview.current.readiness}%` }]} />}
+            >
+              {ovSeries[0].values.length === 0
+                ? <p className="muted">Пока нет снимков для тренда.</p>
+                : <LineChart series={ovSeries} xDates={ovXDates} yMax={100} yUnit="%"
+                    pointTitle={i => `${fmtDateTime(overview.series[i].createdAt)} · готовность ${overview.series[i].readiness}% (${overview.series[i].confirmed}/${overview.series[i].total})`} />}
+            </ChartCard>
+
+            <ChartCard title="📋 По проектам" subtitle="Сколько в каждом проекте подтверждено и сколько осталось до финиша.">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Проект</th>
+                    <th style={{ width: 95 }}>Готовность</th>
+                    <th style={{ width: 80 }}>Подтв.</th>
+                    <th style={{ width: 80 }}>Всего</th>
+                    <th style={{ width: 100 }}>Осталось</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {overview.current.byProject.map(p => (
+                    <tr key={p.id} style={{ background: p.remaining > 0 ? '#fffbeb' : undefined }}>
+                      <td style={{ fontSize: '0.85rem' }}>{p.name}</td>
+                      <td><b>{p.readiness}%</b></td>
+                      <td>{p.confirmed}</td>
+                      <td>{p.total}</td>
+                      <td>{p.remaining > 0 ? p.remaining : '✓'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </ChartCard>
+          </>
+        )
       ) : projects.length === 0 ? (
         <p className="muted">Нет проектов.</p>
       ) : loading ? (
