@@ -128,6 +128,13 @@ function LineChart({
         Math.round((k / (tickCount - 1)) * (n - 1)))));
   const showAllPoints = n <= 40;
 
+  // Cap emphasized markers so a project with hundreds of operator actions doesn't emit
+  // hundreds of SVG nodes; sample evenly to keep the spread of activity visible.
+  const MARKER_CAP = 60;
+  const shownMarkers = !markerIndices ? []
+    : markerIndices.length <= MARKER_CAP ? markerIndices
+    : markerIndices.filter((_, k) => k % Math.ceil(markerIndices.length / MARKER_CAP) === 0);
+
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" preserveAspectRatio="xMidYMid meet" style={{ display: 'block' }}>
       {yTicks.map((tv, k) => (
@@ -157,7 +164,7 @@ function LineChart({
           ))}
         </g>
       ))}
-      {markerIndices && series[0] && !showAllPoints && markerIndices.map(i => (
+      {series[0] && !showAllPoints && shownMarkers.map(i => (
         <circle key={`m${i}`} cx={x(i)} cy={y(series[0].values[i])} r={2.2}
           fill={series[0].color} fillOpacity={0.55}>
           {pointTitle && <title>{pointTitle(i)}</title>}
@@ -219,12 +226,14 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
 
   useEffect(() => {
     if (projectId == null) return;
+    let stale = false; // guard against out-of-order responses overwriting a newer selection
     setLoading(true);
     setError(null);
     api.get(`/projects/${projectId}/metrics/history?limit=2000`)
-      .then(({ data }) => setSeries(data.series || []))
-      .catch(() => setError('Не удалось загрузить историю метрик'))
-      .finally(() => setLoading(false));
+      .then(({ data }) => { if (!stale) setSeries(data.series || []); })
+      .catch(() => { if (!stale) setError('Не удалось загрузить историю метрик'); })
+      .finally(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
   }, [projectId, reloadKey]);
 
   const xDates = useMemo(() => series.map(s => s.createdAt), [series]);
@@ -236,15 +245,17 @@ export function MetricsDashboard({ onBack, initialProjectId }: Props) {
     return [...keys];
   }, [series]);
 
-  const coverageSeries: ChartSeries[] = [
+  const coverageSeries = useMemo<ChartSeries[]>(() => [
     { label: 'Покрытие', color: '#2563eb', values: series.map(s => s.coverage) },
     { label: 'Подтверждено', color: '#16a34a', values: series.map(s => s.confirmedPct) },
-  ];
-  const tierSeries: ChartSeries[] = tierKeys.map((k, i) => ({
+  ], [series]);
+  const tierSeries = useMemo<ChartSeries[]>(() => tierKeys.map((k, i) => ({
     label: tierLabel(k), color: tierColor(k, i), values: series.map(s => s.tierBreakdown?.[k] ?? 0),
-  }));
-  const rulesSeries: ChartSeries[] = [{ label: 'Правила', color: '#2563eb', values: series.map(s => s.learnedRules) }];
-  const synSeries: ChartSeries[] = [{ label: 'Синонимы', color: '#7c3aed', values: series.map(s => s.learnedSynonyms) }];
+  })), [series, tierKeys]);
+  const rulesSeries = useMemo<ChartSeries[]>(
+    () => [{ label: 'Правила', color: '#2563eb', values: series.map(s => s.learnedRules) }], [series]);
+  const synSeries = useMemo<ChartSeries[]>(
+    () => [{ label: 'Синонимы', color: '#7c3aed', values: series.map(s => s.learnedSynonyms) }], [series]);
 
   const actionIndices = useMemo(
     () => series.map((s, i) => (s.kind === 'operator_action' ? i : -1)).filter(i => i >= 0),
