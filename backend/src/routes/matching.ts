@@ -1706,6 +1706,10 @@ router.post('/api/projects/:id/matching/validate-gigachat', async (req: Request,
       }
     }
 
+    // Learning-metrics: a GigaChat validation that REMOVED matches lowered the
+    // matched count — capture it. (A boost-only pass changes confidence, which the
+    // snapshot does not track, so it produces no count/tier change and needs no row.)
+    if (removed > 0) recordMetricSnapshot(db, projectId, 'operator_action', 'gigachat_validate');
     res.json({ validated, boosted, removed, skipped, total: candidates.length });
   } catch (error) {
     res.status(500).json({
