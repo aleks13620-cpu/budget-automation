@@ -85,3 +85,44 @@ export function snapshotAllProjects(db: DB, kind: SnapshotKind): void {
     console.error('[metrics] snapshotAllProjects failed:', err instanceof Error ? err.message : err);
   }
 }
+
+/**
+ * Read the learning-metrics history for a project (Phase 2 read path / Phase 3 dashboard).
+ * Returns the NEWEST `limit` snapshots in CHRONOLOGICAL (oldest→newest) order — so a
+ * project with more than `limit` snapshots shows its most recent trend, never silently
+ * dropping the latest data. Read-only.
+ */
+export function getMetricsHistory(db: DB, projectId: number, limit = 2000) {
+  const capped = Math.min(Math.max(Number.isFinite(limit) ? Math.trunc(limit) : 2000, 1), 10000);
+  const rows = db.prepare(`
+    SELECT id, created_at, kind, action_type, total, matched, confirmed,
+           tier_breakdown, learned_synonyms, learned_rules
+    FROM metric_snapshots
+    WHERE project_id = ?
+    ORDER BY created_at DESC, id DESC
+    LIMIT ?
+  `).all(projectId, capped) as Array<{
+    id: number; created_at: string; kind: string; action_type: string | null;
+    total: number; matched: number; confirmed: number;
+    tier_breakdown: string | null; learned_synonyms: number; learned_rules: number;
+  }>;
+  rows.reverse(); // newest `capped` fetched (DESC) → return oldest→newest for the time axis
+  return rows.map(r => {
+    let tierBreakdown: Record<string, number> = {};
+    try { if (r.tier_breakdown) tierBreakdown = JSON.parse(r.tier_breakdown); } catch { /* malformed JSON → {} */ }
+    return {
+      id: r.id,
+      createdAt: r.created_at,
+      kind: r.kind,
+      actionType: r.action_type,
+      total: r.total,
+      matched: r.matched,
+      confirmed: r.confirmed,
+      coverage: r.total > 0 ? Math.round((r.matched / r.total) * 1000) / 10 : 0,
+      confirmedPct: r.total > 0 ? Math.round((r.confirmed / r.total) * 1000) / 10 : 0,
+      tierBreakdown,
+      learnedSynonyms: r.learned_synonyms,
+      learnedRules: r.learned_rules,
+    };
+  });
+}

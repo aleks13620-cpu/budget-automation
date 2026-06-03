@@ -9,7 +9,7 @@ const tmpDb = path.join(__dirname, 'smoke-test-metrics-tmp.db');
 try { require('fs').unlinkSync(tmpDb); } catch {}
 
 const { CREATE_TABLES_SQL } = require(path.join(__dirname, '..', 'dist', 'database', 'schema'));
-const { recordMetricSnapshot, snapshotAllProjects } =
+const { recordMetricSnapshot, snapshotAllProjects, getMetricsHistory } =
   require(path.join(__dirname, '..', 'dist', 'services', 'metricSnapshots'));
 
 const db = new Database(tmpDb);
@@ -69,6 +69,23 @@ check('no throw on non-existent project (FK skip)', !threw999);
 let threw2 = false;
 try { recordMetricSnapshot({ prepare() { throw new Error('boom'); } }, 1, 'manual'); } catch { threw2 = true; }
 check('never throws on internal error', !threw2);
+
+// 5) getMetricsHistory — NEWEST-N returned in chronological order (the Phase 2 read path)
+db.prepare("INSERT INTO projects (id, name) VALUES (3, 'Hist')").run();
+db.prepare("INSERT INTO specification_items (id, project_id, name) VALUES (301,3,'s')").run();
+for (let i = 0; i < 5; i++) recordMetricSnapshot(db, 3, 'matching_run');
+const allHist = getMetricsHistory(db, 3, 100);
+check('history returns all 5 snapshots', allHist.length === 5);
+check('history chronological (ascending id)', allHist.every((p, i) => i === 0 || p.id > allHist[i - 1].id));
+check('history coverage is a number', typeof allHist[0].coverage === 'number');
+const ids = allHist.map(p => p.id);
+const maxId = Math.max(...ids), minId = Math.min(...ids);
+const newest2 = getMetricsHistory(db, 3, 2);
+check('limit=2 returns 2', newest2.length === 2);
+check('limit returns the NEWEST (includes max id)', newest2.some(p => p.id === maxId));
+check('limit drops the OLDEST (excludes min id)', !newest2.some(p => p.id === minId));
+check('limited result still chronological', newest2[0].id < newest2[1].id);
+check('history empty for project with no snapshots', getMetricsHistory(db, 999, 10).length === 0);
 
 console.log(failures === 0 ? '\nALL PASS' : `\n${failures} FAILURE(S)`);
 try { require('fs').unlinkSync(tmpDb); } catch {}
