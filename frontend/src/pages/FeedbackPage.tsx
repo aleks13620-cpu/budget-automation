@@ -20,6 +20,7 @@ interface Props {
 
 const TYPE_LABELS: Record<string, string> = {
   confirm: '✅ Подтверждён',
+  confirm_analog: '🔁 Аналог',
   reject: '❌ Отклонён',
   manual_select: '✋ Вручную',
   error_report: '⚠ Ошибка',
