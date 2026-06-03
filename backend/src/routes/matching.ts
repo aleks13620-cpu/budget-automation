@@ -1026,6 +1026,8 @@ router.put('/api/matching/:id/unconfirm', (req: Request, res: Response) => {
       db.prepare('UPDATE matched_items SET is_confirmed = 0, is_selected = 0 WHERE id = ?').run(matchId);
     })();
 
+    // Learning-metrics: unconfirm lowers the confirmed count — capture the delta.
+    if (match.project_id != null) recordMetricSnapshot(db, match.project_id, 'operator_action', 'unconfirm');
     res.json({ unconfirmed: true });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при сбросе матча', details: error instanceof Error ? error.message : 'Unknown error' });
@@ -1242,6 +1244,8 @@ router.put('/api/matching/select/:id', (req: Request, res: Response) => {
       ).run(matchId);
     })();
 
+    // Learning-metrics: switching the selected match changes tier composition — capture it.
+    recordMetricSnapshot(db, match.project_id, 'operator_action', 'select');
     res.json({ selected: true });
   } catch (error) {
     res.status(500).json({
@@ -1307,6 +1311,8 @@ router.post('/api/projects/:id/manual-match', (req: Request, res: Response) => {
         // learner so future projects auto-match similarly worded items.
         learnConstructionSynonymsFromConfirmedMatch(db, specPattern, invoicePattern, 0.96);
       })();
+      // Learning-metrics: this branch confirms a reused match without saveFeedback — snapshot directly.
+      recordMetricSnapshot(db, projectId, 'operator_action', 'manual_select');
       return res.json({ matchId: existingMatch.id, confirmed: true, reused: true });
     }
 
