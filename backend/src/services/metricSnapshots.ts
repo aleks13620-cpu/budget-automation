@@ -56,8 +56,12 @@ export function recordMetricSnapshot(
       "SELECT COUNT(*) AS c FROM construction_synonyms WHERE source = 'learned'",
     ).get() as { c: number }).c;
 
+    // Whole matching-rule base — grows as operator confirmations / manual matches upsert
+    // rules. NOTE: operator rules are stored with source='manual' (see
+    // upsertPositiveMatchingRule), and matching_rules has no 'seed' source, so filtering
+    // by source='learned' would wrongly read 0. Count the entire base.
     const learnedRules = (db.prepare(
-      "SELECT COUNT(*) AS c FROM matching_rules WHERE source = 'learned'",
+      'SELECT COUNT(*) AS c FROM matching_rules',
     ).get() as { c: number }).c;
 
     db.prepare(`

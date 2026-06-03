@@ -27,7 +27,7 @@ db.prepare("INSERT INTO invoice_items (id, invoice_id, name) VALUES (201,9,'ia')
 db.prepare(`INSERT INTO matched_items (specification_item_id, invoice_item_id, match_type, is_selected, is_confirmed, source)
             VALUES (101,201,'llm_suggestion',1,1,'invoice'),(102,202,'name_similarity',1,0,'invoice')`).run();
 db.prepare("INSERT INTO construction_synonyms (abbreviation, full_form, category, source) VALUES ('x','full','cat','learned')").run();
-db.prepare("INSERT INTO matching_rules (specification_pattern, invoice_pattern, source) VALUES ('p','q','learned')").run();
+db.prepare("INSERT INTO matching_rules (specification_pattern, invoice_pattern, source) VALUES ('p','q','learned'),('p2','q2','manual')").run();
 
 let failures = 0;
 const check = (name, cond) => { console.log(`  ${cond ? 'PASS' : 'FAIL'}  ${name}`); if (!cond) failures++; };
@@ -42,7 +42,7 @@ check('confirmed=1', row && row.confirmed === 1);
 check('kind=operator_action', row && row.kind === 'operator_action');
 check('action_type=confirm', row && row.action_type === 'confirm');
 check('learned_synonyms=1', row && row.learned_synonyms === 1);
-check('learned_rules=1', row && row.learned_rules === 1);
+check('learned_rules=2 (whole rule base, any source)', row && row.learned_rules === 2);
 const tiers = row ? JSON.parse(row.tier_breakdown) : {};
 check('tier llm_suggestion=1', tiers.llm_suggestion === 1);
 check('tier name_similarity=1', tiers.name_similarity === 1);
