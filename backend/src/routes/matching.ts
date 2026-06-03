@@ -1785,6 +1785,53 @@ router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => 
   }
 });
 
+// GET /api/projects/:id/metrics/history — learning-metrics snapshot series over time (Phase 2).
+// Read-only over metric_snapshots; powers the learning dashboard (Phase 3).
+router.get('/api/projects/:id/metrics/history', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const rawLimit = parseInt(String(req.query.limit ?? '2000'), 10);
+    const limit = Math.min(Math.max(Number.isFinite(rawLimit) ? rawLimit : 2000, 1), 10000);
+    const db = getDatabase();
+
+    const rows = db.prepare(`
+      SELECT id, created_at, kind, action_type, total, matched, confirmed,
+             tier_breakdown, learned_synonyms, learned_rules
+      FROM metric_snapshots
+      WHERE project_id = ?
+      ORDER BY created_at ASC, id ASC
+      LIMIT ?
+    `).all(projectId, limit) as Array<{
+      id: number; created_at: string; kind: string; action_type: string | null;
+      total: number; matched: number; confirmed: number;
+      tier_breakdown: string | null; learned_synonyms: number; learned_rules: number;
+    }>;
+
+    const series = rows.map(r => {
+      let tierBreakdown: Record<string, number> = {};
+      try { if (r.tier_breakdown) tierBreakdown = JSON.parse(r.tier_breakdown); } catch { /* malformed JSON → keep {} */ }
+      return {
+        id: r.id,
+        createdAt: r.created_at,
+        kind: r.kind,
+        actionType: r.action_type,
+        total: r.total,
+        matched: r.matched,
+        confirmed: r.confirmed,
+        coverage: r.total > 0 ? Math.round((r.matched / r.total) * 1000) / 10 : 0,
+        confirmedPct: r.total > 0 ? Math.round((r.confirmed / r.total) * 1000) / 10 : 0,
+        tierBreakdown,
+        learnedSynonyms: r.learned_synonyms,
+        learnedRules: r.learned_rules,
+      };
+    });
+
+    res.json({ projectId, count: series.length, series });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при получении истории метрик', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
 // POST /api/projects/:id/import-matches — bulk import matching rules from Excel
 // Excel columns (detected by keywords): spec_name, invoice_name, supplier (optional)
 //
