@@ -145,7 +145,7 @@ export function GlobalFeedbackPage({ onBack, onGoToProject }: Props) {
                         disabled={resolving === item.id}
                         onClick={() => handleResolve(item.id)}
                       >
-                        {resolving === item.id ? '...' : '✓ Разобрано'}
+                        {resolving === item.id ? '...' : 'Отметить разобранным'}
                       </button>
                   }
                 </td>

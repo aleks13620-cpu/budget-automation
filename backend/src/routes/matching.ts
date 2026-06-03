@@ -1727,6 +1727,7 @@ router.get('/api/projects/:id/feedback', (req: Request, res: Response) => {
 
     const rawItems = db.prepare(`
       SELECT f.id, f.type, f.created_at, f.comment,
+             COALESCE(f.status, 'new') as status,
              si.name as spec_name,
              COALESCE(f.invoice_item_id, f.price_list_item_id) as invoice_item_id,
              COALESCE(ii.name, pli.name, '') as invoice_name
