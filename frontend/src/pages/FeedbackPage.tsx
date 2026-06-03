@@ -21,6 +21,7 @@ interface Props {
 const TYPE_LABELS: Record<string, string> = {
   confirm: '✅ Подтверждён',
   confirm_analog: '🔁 Аналог',
+  confirm_group_follower: '✅ Дубль-группа',
   reject: '❌ Отклонён',
   manual_select: '✋ Вручную',
   error_report: '⚠ Ошибка',
