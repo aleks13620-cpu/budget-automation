@@ -245,6 +245,21 @@ CREATE TABLE IF NOT EXISTS spec_parse_rules (
   UNIQUE(specification_id, field, raw_value)
 );
 
+-- Снимки метрик обучения (дашборд динамики). Только дозапись: читает counts, пишет 1 строку.
+CREATE TABLE IF NOT EXISTS metric_snapshots (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER REFERENCES projects(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  action_type TEXT,
+  total INTEGER NOT NULL DEFAULT 0,
+  matched INTEGER NOT NULL DEFAULT 0,
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  tier_breakdown TEXT,
+  learned_synonyms INTEGER NOT NULL DEFAULT 0,
+  learned_rules INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
 `;
 
 export const CREATE_INDEXES_SQL = `
@@ -269,4 +284,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_construction_syn_unique ON construction_sy
 CREATE INDEX IF NOT EXISTS idx_spec_parse_rules_spec ON spec_parse_rules(specification_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_spec_parse_rules_unique ON spec_parse_rules(specification_id, field, raw_value);
 CREATE INDEX IF NOT EXISTS idx_spec_items_history_spec ON specification_items_history(specification_id);
+CREATE INDEX IF NOT EXISTS idx_metric_snapshots_project ON metric_snapshots(project_id, created_at);
 `;

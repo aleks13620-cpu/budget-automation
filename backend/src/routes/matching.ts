@@ -8,6 +8,7 @@ import { learnConstructionSynonymsFromConfirmedMatch } from '../services/constru
 import { isGigaChatConfigured, chatCompletion } from '../services/gigachatService';
 import { isGeminiMatchingEnabled } from '../services/llmMatcher';
 import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive, setMatchingResult, getMatchingResult, clearMatchingResult } from '../services/matchingRunLock';
+import { recordMetricSnapshot } from '../services/metricSnapshots';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const LLM_MATCH_TYPE = 'llm_suggestion';
@@ -30,6 +31,10 @@ function saveFeedback(
         type, project_id, supplier_id, spec_item_id, invoice_item_id, price_list_item_id, source
       ) VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).run(type, projectId, supplierId, specItemId, invoiceItemId, priceListItemId, source);
+    // Phase 1 learning-metrics: capture a snapshot on every operator decision
+    // (confirm / reject / confirm_analog / manual_select). Safe inside the
+    // caller's transaction; recordMetricSnapshot never throws.
+    if (projectId != null) recordMetricSnapshot(db, projectId, 'operator_action', type);
   } catch { /* table may not exist yet — ignore */ }
 }
 
@@ -551,6 +556,8 @@ async function runMatchingBackground(projectId: number, mode: string): Promise<v
       llmMatchingEnabled: isGeminiMatchingEnabled() && Boolean(process.env.OPENROUTER_API_KEY),
     });
     console.log(`[Matcher] project ${projectId} done: ${matched}/${totalSpec} matched, ${insertedLlmSuggestions} LLM suggestions`);
+    // Phase 1 learning-metrics: capture coverage right after a completed run.
+    recordMetricSnapshot(db, projectId, 'matching_run');
   } catch (error) {
     console.error(`[Matcher] project ${projectId} failed:`, error);
     setMatchingResult(projectId, {

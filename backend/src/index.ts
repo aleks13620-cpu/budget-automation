@@ -5,6 +5,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { getDatabase, initializeDatabase } from './database';
+import { snapshotAllProjects } from './services/metricSnapshots';
 import { pruneExpiredGigaChatCache } from './services/gigachatFileCache';
 import { safeUnlink } from './utils/safeUnlink';
 import specificationRoutes from './routes/specifications';
@@ -235,6 +236,11 @@ async function start() {
     console.log('Initializing database...');
     initializeDatabase();
     pruneExpiredGigaChatCache();
+
+    // Phase 1 learning-metrics: baseline snapshot on startup + daily heartbeat,
+    // so the dashboard has history even when the system sits idle.
+    snapshotAllProjects(getDatabase(), 'startup');
+    setInterval(() => snapshotAllProjects(getDatabase(), 'daily'), 24 * 60 * 60 * 1000);
 
     app.listen(PORT, () => {
       console.log(`Server running on http://localhost:${PORT}`);
