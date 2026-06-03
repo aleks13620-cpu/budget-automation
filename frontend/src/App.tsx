@@ -8,8 +8,9 @@ import { UnitTriggers } from './pages/UnitTriggers';
 import { SpecificationEditor } from './pages/SpecificationEditor';
 import { FeedbackPage } from './pages/FeedbackPage';
 import { GlobalFeedbackPage } from './pages/GlobalFeedbackPage';
+import { MetricsDashboard } from './pages/MetricsDashboard';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all' | 'metrics';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -57,6 +58,10 @@ function App() {
     setPage('feedback-all');
   };
 
+  const goToMetrics = () => {
+    setPage('metrics');
+  };
+
   return (
     <>
       {/* Breadcrumbs */}
@@ -68,6 +73,9 @@ function App() {
           </button>
           <button className="btn btn-secondary btn-sm" onClick={goToFeedbackAll} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
             ⚠ Замечания
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={goToMetrics} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
+            📈 Метрики
           </button>
           {projectId && (
             <button className="btn btn-secondary btn-sm" onClick={goToFeedback} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
@@ -144,6 +152,13 @@ function App() {
         <GlobalFeedbackPage
           onBack={goToProjects}
           onGoToProject={goToProject}
+        />
+      )}
+
+      {page === 'metrics' && (
+        <MetricsDashboard
+          onBack={goToProjects}
+          initialProjectId={projectId}
         />
       )}
 
