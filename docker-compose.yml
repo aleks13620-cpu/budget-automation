@@ -21,4 +21,10 @@ services:
       # OpenRouter — для Gemini Flash matching (фаза 8.1)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       ENABLE_OPENROUTER_LLM_MATCHING: ${ENABLE_OPENROUTER_LLM_MATCHING:-false}
+      # API auth (SEC-1) — задать API_SECRET в .env рядом с docker-compose.yml, чтобы закрыть /api.
+      API_SECRET: ${API_SECRET:-}
+      # Telegram-уведомления о замечаниях (F3) — задать токен + chat_id (+опц. APP_BASE_URL), чтобы включить.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
     restart: unless-stopped
