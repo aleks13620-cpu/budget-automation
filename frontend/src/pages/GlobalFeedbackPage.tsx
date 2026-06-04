@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api';
+import { api, apiUrlWithToken } from '../api';
 
 interface GlobalItem {
   id: number;
@@ -54,7 +54,7 @@ export function GlobalFeedbackPage({ onBack, onGoToProject }: Props) {
   };
 
   const handleExport = () => {
-    window.open(`/api/feedback/export`, '_blank');
+    window.open(apiUrlWithToken('/api/feedback/export'), '_blank');
   };
 
   return (

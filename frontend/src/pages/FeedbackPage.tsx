@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { api } from '../api';
+import { api, apiUrlWithToken } from '../api';
 
 interface FeedbackItem {
   id: number;
@@ -61,7 +61,7 @@ export function FeedbackPage({ projectId, onBack }: Props) {
   };
 
   const handleExport = () => {
-    window.open(`/api/feedback/export`, '_blank');
+    window.open(apiUrlWithToken('/api/feedback/export'), '_blank');
   };
 
   const filtered = items.filter(i => {

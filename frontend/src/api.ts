@@ -18,6 +18,14 @@ try {
 
 export const api = axios.create({ baseURL: '/api' });
 
+// Build a URL with the token as a ?k= param — for browser-level downloads (window.open)
+// that bypass the axios interceptor. Returns the plain path when no token is stored.
+export function apiUrlWithToken(path: string): string {
+  const t = localStorage.getItem(TOKEN_KEY);
+  if (!t) return path;
+  return path + (path.includes('?') ? '&' : '?') + 'k=' + encodeURIComponent(t);
+}
+
 // Attach the stored token (if any) to every request.
 api.interceptors.request.use(cfg => {
   const t = localStorage.getItem(TOKEN_KEY);

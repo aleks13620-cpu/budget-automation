@@ -34,7 +34,10 @@ if (API_SECRET) {
   app.use('/api', (req, res, next) => {
     if (req.path === '/health') return next();
 
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    // token from the Authorization header (axios) OR a ?k= query param (used by
+    // window.open downloads like the Excel export, which cannot set a header).
+    const token = req.headers.authorization?.replace('Bearer ', '')
+      || (typeof req.query.k === 'string' ? req.query.k : '');
     if (token !== API_SECRET) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
