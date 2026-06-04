@@ -19,7 +19,11 @@ import { getDatabase } from '../database';
  */
 
 type DB = ReturnType<typeof getDatabase>;
-const TIMEOUT_MS = 5000;
+const TIMEOUT_MS = 8000;
+// Telegram is reachable from this RU host only over IPv6 (IPv4 is blocked), and that
+// container->Telegram IPv6 path is intermittently lossy (~10-20% of attempts time out).
+// Retry a few times so a transient drop does not silently lose a notification.
+const SEND_ATTEMPTS = 3;
 
 function cfg() {
   return {
@@ -37,18 +41,42 @@ export function isTelegramConfigured(): boolean {
 function send(text: string): void {
   const { token, chat } = cfg();
   if (!token || !chat) return; // no-op until configured
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
-  // fire-and-forget; handlers attached so there is never an unhandled rejection
-  fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
-    signal: ctrl.signal,
-  })
-    .then(res => { if (!res.ok) console.error(`[telegram] sendMessage HTTP ${res.status}`); })
-    .catch(err => console.error('[telegram] send failed:', err instanceof Error ? err.message : 'unknown'))
-    .finally(() => clearTimeout(timer));
+  // fire-and-forget; sendWithRetry never throws, so there is never an unhandled rejection
+  void sendWithRetry(token, chat, text);
+}
+
+/**
+ * POST the message, retrying transient failures (network error, timeout, 429/5xx).
+ * Bad-request errors (4xx except 429 — wrong token/chat/payload) are NOT retried.
+ * Never throws: every path is caught so the caller stays fire-and-forget.
+ */
+async function sendWithRetry(token: string, chat: string, text: string): Promise<void> {
+  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chat, text, disable_web_page_preview: true }),
+        signal: ctrl.signal,
+      });
+      if (res.ok) return; // delivered
+      if (res.status >= 400 && res.status < 500 && res.status !== 429) {
+        // wrong token / chat / payload — retrying will not help
+        console.error(`[telegram] sendMessage HTTP ${res.status} (no retry)`);
+        return;
+      }
+      console.error(`[telegram] sendMessage HTTP ${res.status} (attempt ${attempt}/${SEND_ATTEMPTS})`);
+    } catch (err) {
+      console.error(`[telegram] send attempt ${attempt}/${SEND_ATTEMPTS} failed:`, err instanceof Error ? err.message : 'unknown');
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < SEND_ATTEMPTS) {
+      await new Promise(resolve => setTimeout(resolve, 400 * attempt)); // small backoff
+    }
+  }
 }
 
 /** Residency-SAFE context for a feedback row: project NAME + position NUMBER only. */
