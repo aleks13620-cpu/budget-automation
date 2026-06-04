@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import './App.css';
+import { setUnauthorizedHandler } from './api';
 import { ProjectList } from './pages/ProjectList';
 import { ProjectDetail } from './pages/ProjectDetail';
 import { InvoicePreview } from './pages/InvoicePreview';
@@ -14,6 +15,8 @@ type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-trig
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
+  const [noAccess, setNoAccess] = useState(false);
+  useEffect(() => { setUnauthorizedHandler(() => setNoAccess(true)); }, []);
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectName, setProjectName] = useState('');
   const [invoiceId, setInvoiceId] = useState<number | null>(null);
@@ -61,6 +64,15 @@ function App() {
   const goToMetrics = () => {
     setPage('metrics');
   };
+
+  if (noAccess) {
+    return (
+      <div style={{ maxWidth: 460, margin: '4rem auto', textAlign: 'center', padding: '2rem' }}>
+        <h2>🔒 Нет доступа</h2>
+        <p className="muted">Откройте приложение по рабочей ссылке с ключом доступа. Если ссылки нет — запросите её у администратора.</p>
+      </div>
+    );
+  }
 
   return (
     <>
