@@ -28,3 +28,13 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       APP_BASE_URL: ${APP_BASE_URL:-}
     restart: unless-stopped
+
+# F3 Telegram: РФ-провайдер блокирует Telegram по IPv4 — сервер достаёт его только по IPv6.
+# Дефолтная сеть Docker без IPv6 => контейнер не мог слать уведомления (fetch failed / ETIMEDOUT).
+# Включаем IPv6 на дефолтной сети (ULA + NAT66, поддержка Docker 27+). Мост и проброс портов не меняются.
+networks:
+  default:
+    enable_ipv6: true
+    ipam:
+      config:
+        - subnet: fd00:dead:beef::/64
