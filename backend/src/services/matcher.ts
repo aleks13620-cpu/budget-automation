@@ -134,6 +134,10 @@ function normalizeEngineeringTokens(text: string): string {
   // Safe canonicalization: apply only explicit engineering token patterns.
   result = result.replace(/[ø⌀]/g, ' dn ');
   result = result.replace(/(^|\s)ду\.?\s*(\d{1,4})(?=\s|$)/gi, ' dn $2 ');
+  // Cyrillic outer-diameter markers «Дн» / «дп» (e.g. «Дн57х3,5», «дп=15») ->
+  // canonical DN. Requires trailing digits so plain words («дно»,
+  // «переходной») are never touched.
+  result = result.replace(/(^|[^a-zа-я0-9])д[нп]\.?\s*=?\s*(\d{1,4})/gi, '$1 dn $2 ');
   result = result.replace(/\bdn\.?\s*(\d{1,4})\b/gi, ' dn $1 ');
   result = result.replace(/\bd\s*=\s*(\d{1,4})\b/gi, ' dn $1 ');
   result = result.replace(/\bd\s*(\d{1,4})\b/gi, ' dn $1 ');
@@ -186,9 +190,23 @@ export function isParameterizedSpecName(name: string): boolean {
   return false;
 }
 
+/**
+ * DB-free structural normalization: GOST/TU bracket stripping + engineering
+ * token canonicalization (DN/Ду/Дн/дп/ø, size separators, decimal comma).
+ * Intentionally excludes the DB-backed synonym/alias steps — structural feature
+ * extraction depends only on lexical form, so it stays pure and testable.
+ */
+function normalizeStructuralTokens(text: string): string {
+  return normalizeEngineeringTokens(removeGostBrackets(text));
+}
+
 export function extractDnValue(text: string): number | null {
-  const normalized = normalizeForMatching(text);
-  const match = normalized.match(/\bdn\s*(\d{1,4})\b/i);
+  const normalized = normalizeStructuralTokens(text);
+  // Allow separators between «dn» and the digits («dn-50», «dn. 50») — the old
+  // full-pipeline normalization stripped them, so preserve that. No trailing \b:
+  // a cross-section suffix glues to the digits («dn57x3.5»), and \b would fail
+  // between the digit and the `x`.
+  const match = normalized.match(/\bdn[\s.\-/]*(\d{1,4})/i);
   if (!match) return null;
   const value = Number(match[1]);
   return Number.isFinite(value) ? value : null;
@@ -203,12 +221,104 @@ function getQuantityScore(specQty: number | null, invQty: number | null): -1 | 0
   return -1;
 }
 
-function getDnScore(specText: string, invText: string): -1 | 0 | 1 {
-  const specDn = extractDnValue(specText);
-  if (specDn == null) return 0;
-  const invDn = extractDnValue(invText);
-  if (invDn == null) return -1;
-  return specDn === invDn ? 1 : -1;
+export interface MarkingFeatures {
+  dn: number | null;        // diameter (DN / Ду / Дн / дп / ø), null if absent
+  cross: string | null;     // cross-section «AxB», e.g. "57x3.5"
+  config: string | null;    // multi-way config «NN-NN-NN», e.g. "16-20-16"
+  marks: string[];          // short Latin marking codes, e.g. ["cv"], ["cvl"]
+  sizes: number[];          // bare dimension integers, e.g. fixator [16]
+}
+
+// Multi-way size/config token, e.g. tee «16-20-16» (transition) vs «16-16-16»
+// (equal-pass). Requires >= 3 dash-joined numbers so it does not catch a range
+// («16-20») or a letter-prefixed equipment code («C22-400-600», whose leading
+// letter glues to the first number and removes the boundary before it).
+const CONFIG_RE = /\b\d{1,4}-\d{1,4}(?:-\d{1,4})+\b/;
+// Cross-section size «AxB», e.g. «57x3.5» (after separator/comma normalization).
+const CROSS_RE = /\b(\d{1,4})x(\d{1,3}(?:\.\d+)?)\b/;
+// Short all-caps Latin marking codes (CV, CVL, C). Brand names are Title-case
+// and codes glued to digits (DN15, PN16) lack the trailing boundary, so neither
+// is picked up.
+const MARK_RE = /\b[A-Z]{1,3}\b/g;
+// Tokens that look like marks but are diameter markers or standard prefixes —
+// excluded so they never drive a marking conflict.
+const EXCLUDED_MARKS = new Set(['dn', 'du', 'din', 'iso', 'en']);
+// Standard references (ГОСТ/ТУ/DIN/...) whose numbers must not be read as sizes
+// or configs. ASCII \b is unreliable around Cyrillic, hence the explicit
+// non-letter/non-digit boundary group.
+const STANDARD_REF_RE = /(^|[^a-zа-яё0-9])(?:гост|ост|ту|сто|снип|din|iso|en)[\s.№-]*\d[\d.\-/]*/gi;
+
+/**
+ * Extract structural discriminators from an item name. DB-free and pure, so it
+ * is unit-testable without a database.
+ */
+export function extractMarkingFeatures(text: string): MarkingFeatures {
+  const dn = extractDnValue(text);
+  const norm = normalizeStructuralTokens(text).replace(STANDARD_REF_RE, ' ');
+
+  const configMatch = norm.match(CONFIG_RE);
+  const config = configMatch ? configMatch[0] : null;
+
+  const crossMatch = norm.match(CROSS_RE);
+  const cross = crossMatch ? `${crossMatch[1]}x${crossMatch[2]}` : null;
+
+  const marks = [...new Set(
+    (text.match(MARK_RE) || []).map(m => m.toLowerCase()).filter(m => !EXCLUDED_MARKS.has(m)),
+  )];
+
+  // Bare dimension integers (e.g. fixator sizes 16 / 20 / 25) not already
+  // accounted for by the dn / cross / config tokens. Decimal fractions are
+  // dropped first so a «.5» tail is not mistaken for a bare size.
+  const consumed = new Set<number>();
+  if (dn != null) consumed.add(dn);
+  if (cross) for (const p of cross.split('x')) { const n = parseInt(p, 10); if (Number.isFinite(n)) consumed.add(n); }
+  if (config) for (const p of config.split('-')) { const n = parseInt(p, 10); if (Number.isFinite(n)) consumed.add(n); }
+  const ints = (norm.replace(/\d+\.\d+/g, ' ').match(/\b\d{1,4}\b/g) || []).map(Number);
+  const sizes = [...new Set(ints.filter(n => !consumed.has(n)))];
+
+  return { dn, cross, config, marks, sizes };
+}
+
+/**
+ * Structural discriminator score — the original DN logic generalized across
+ * feature dimensions (DN, cross-section, multi-way config, letter markings,
+ * bare sizes):
+ *   -1  a feature CONFLICTS (both sides present it and they differ) — the wrong
+ *       variant; or the spec carries a DN the invoice neither states nor even
+ *       mentions as a number (mirrors the original DN penalty)
+ *    1  at least one feature AGREES and nothing conflicts
+ *    0  no comparable discriminating feature
+ * A conflict dominates so the wrong variant cannot win the dnScore-keyed ranking
+ * and is penalized in scoring (see the dnScore penalty). Agreement on any
+ * dimension outranks a one-sided DN omission, so a pipe written «Дн57х3,5» still
+ * matches an invoice line that drops the «Дн» prefix («Труба 57х3,5»).
+ */
+export function getStructuralScore(specText: string, invText: string): -1 | 0 | 1 {
+  const spec = extractMarkingFeatures(specText);
+  const inv = extractMarkingFeatures(invText);
+  let conflict = false;
+  let agreement = false;
+  const note = (same: boolean) => { if (same) agreement = true; else conflict = true; };
+
+  // Compare each dimension only when BOTH sides carry it.
+  if (spec.dn != null && inv.dn != null) note(spec.dn === inv.dn);
+  if (spec.cross && inv.cross) note(spec.cross === inv.cross);
+  if (spec.config && inv.config) note(spec.config === inv.config);
+  if (spec.marks.length && inv.marks.length) note(spec.marks.some(m => inv.marks.includes(m)));
+  if (spec.sizes.length && inv.sizes.length) note(spec.sizes.some(s => inv.sizes.includes(s)));
+
+  if (conflict) return -1;
+  if (agreement) return 1;
+
+  // One-sided DN omission: the spec is DN-typed but the invoice line has no DN.
+  // Penalize only when the invoice does not mention that number anywhere (a bare
+  // size could be the same diameter), preserving the pipe-vs-insulation catch.
+  if (spec.dn != null && inv.dn == null) {
+    const invNumbers = new Set<number>(inv.sizes);
+    if (inv.cross) for (const p of inv.cross.split('x')) { const n = parseInt(p, 10); if (Number.isFinite(n)) invNumbers.add(n); }
+    return invNumbers.has(spec.dn) ? 0 : -1;
+  }
+  return 0;
 }
 
 /**
@@ -487,7 +597,10 @@ async function matchSpecItems(
       }
 
       quantityScore = getQuantityScore(spec.quantity, inv.quantity);
-      dnScore = getDnScore(nameForMatching, inv.name);
+      // `dnScore` carries the structural discriminator score (DN + marking /
+      // type-size / config). Kept the field name for ranking-consumer compat
+      // (matcher sort, routes auto-#1 selection, replay/bench tools).
+      dnScore = getStructuralScore(nameForMatching, inv.name);
 
       if (quantityScore === 1) bestConfidence += 0.07;
       if (quantityScore === -1) bestConfidence -= 0.12;
@@ -569,7 +682,7 @@ async function matchSpecItems(
         matchType: 'llm_suggestion',
         source,
         quantityScore: getQuantityScore(spec.quantity, inv.quantity),
-        dnScore: getDnScore(specMatchTextById.get(spec.id) || spec.full_name || spec.name, inv.name),
+        dnScore: getStructuralScore(specMatchTextById.get(spec.id) || spec.full_name || spec.name, inv.name),
         matchingRuleId: null,
         matchReason: llmMatch.reason,
         isAnalog: false,

@@ -22,7 +22,8 @@
     "problem-registry:db:snapshot": "node ../scripts/problem-registry.mjs db:snapshot",
     "plans:check": "node ../scripts/plan-guard.mjs check",
     "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict",
-    "test:spec-pdf": "node ../scripts/test-spec-parent-child.mjs"
+    "test:spec-pdf": "node ../scripts/test-spec-parent-child.mjs",
+    "test:matcher": "node ../scripts/test-matcher-marking-discriminator.mjs"
   },
   "keywords": [],
   "author": "",
