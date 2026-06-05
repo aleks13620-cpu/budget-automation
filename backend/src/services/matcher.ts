@@ -131,22 +131,28 @@ function normalizeUnitSynonyms(text: string): string {
 function normalizeEngineeringTokens(text: string): string {
   let result = text.toLowerCase().replace(/ё/g, 'е');
 
+  // Normalize decimal comma in sizes/prices to dot FIRST, before the DN-marker
+  // rules below. Those rules capture only the integer diameter and reinsert it
+  // spaced («Дн108,0» -> «dn 108 …»); if the «,0» tail were still attached when
+  // they fire, it would be split off and later leak as a phantom bare size.
+  // Converting «108,0»->«108.0» up front lets each DN rule swallow the «.0»
+  // fraction in one shot (DN is a nominal integer — the fraction is dropped).
+  result = result.replace(/(\d),(\d)/g, '$1.$2');
+
   // Safe canonicalization: apply only explicit engineering token patterns.
   result = result.replace(/[ø⌀]/g, ' dn ');
-  result = result.replace(/(^|\s)ду\.?\s*(\d{1,4})(?=\s|$)/gi, ' dn $2 ');
+  result = result.replace(/(^|\s)ду\.?\s*(\d{1,4})(?:\.\d+)?(?=\s|$)/gi, ' dn $2 ');
   // Cyrillic outer-diameter markers «Дн» / «дп» (e.g. «Дн57х3,5», «дп=15») ->
   // canonical DN. Requires trailing digits so plain words («дно»,
-  // «переходной») are never touched.
-  result = result.replace(/(^|[^a-zа-я0-9])д[нп]\.?\s*=?\s*(\d{1,4})/gi, '$1 dn $2 ');
-  result = result.replace(/\bdn\.?\s*(\d{1,4})\b/gi, ' dn $1 ');
-  result = result.replace(/\bd\s*=\s*(\d{1,4})\b/gi, ' dn $1 ');
-  result = result.replace(/\bd\s*(\d{1,4})\b/gi, ' dn $1 ');
+  // «переходной») are never touched. A trailing decimal fraction is consumed and
+  // dropped: «Дн57,5» and «Дн57,8» are the same nominal DN (57), not a conflict.
+  result = result.replace(/(^|[^a-zа-я0-9])д[нп]\.?\s*=?\s*(\d{1,4})(?:\.\d+)?/gi, '$1 dn $2 ');
+  result = result.replace(/\bdn\.?\s*(\d{1,4})(?:\.\d+)?\b/gi, ' dn $1 ');
+  result = result.replace(/\bd\s*=\s*(\d{1,4})(?:\.\d+)?\b/gi, ' dn $1 ');
+  result = result.replace(/\bd\s*(\d{1,4})(?:\.\d+)?\b/gi, ' dn $1 ');
 
   // Normalize size separators 500x300, 500×300, 500 X 300, 500*300.
   result = result.replace(/(\d)\s*[xх×*]\s*(\d)/gi, '$1x$2');
-
-  // Normalize decimal comma in sizes/prices to dot.
-  result = result.replace(/(\d),(\d)/g, '$1.$2');
 
   return result;
 }
@@ -197,7 +203,14 @@ export function isParameterizedSpecName(name: string): boolean {
  * extraction depends only on lexical form, so it stays pure and testable.
  */
 function normalizeStructuralTokens(text: string): string {
-  return normalizeEngineeringTokens(removeGostBrackets(text));
+  let s = normalizeEngineeringTokens(removeGostBrackets(text));
+  // Dimension pairs joined by the word «на» («3600 на 1200») are a cross-section
+  // for discrimination, identical to «3600x1200» / «3600*1200» (those symbol
+  // separators are already canonicalized inside normalizeEngineeringTokens).
+  // Done here, not in the shared normalizer, because the main matching path
+  // strips «на» as a stop word; the structural path keeps it as a separator.
+  s = s.replace(/(\d)\s*на\s*(\d)/gi, '$1x$2');
+  return s;
 }
 
 export function extractDnValue(text: string): number | null {
@@ -234,8 +247,10 @@ export interface MarkingFeatures {
 // («16-20») or a letter-prefixed equipment code («C22-400-600», whose leading
 // letter glues to the first number and removes the boundary before it).
 const CONFIG_RE = /\b\d{1,4}-\d{1,4}(?:-\d{1,4})+\b/;
-// Cross-section size «AxB», e.g. «57x3.5» (after separator/comma normalization).
-const CROSS_RE = /\b(\d{1,4})x(\d{1,3}(?:\.\d+)?)\b/;
+// Cross-section size «AxB», e.g. «57x3.5» (pipe section) or «3600x1200»
+// (radiator panel), after separator/comma normalization. Both components allow
+// up to 4 digits so a full dimension pair is captured as one ordered entity.
+const CROSS_RE = /\b(\d{1,4})x(\d{1,4}(?:\.\d+)?)\b/;
 // Short all-caps Latin marking codes (CV, CVL, C). Brand names are Title-case
 // and codes glued to digits (DN15, PN16) lack the trailing boundary, so neither
 // is picked up.
@@ -247,6 +262,13 @@ const EXCLUDED_MARKS = new Set(['dn', 'du', 'din', 'iso', 'en']);
 // or configs. ASCII \b is unreliable around Cyrillic, hence the explicit
 // non-letter/non-digit boundary group.
 const STANDARD_REF_RE = /(^|[^a-zа-яё0-9])(?:гост|ост|ту|сто|снип|din|iso|en)[\s.№-]*\d[\d.\-/]*/gi;
+// Free catalog / article codes («арт. 123», «артикул 456», «код 789»): their
+// digits are an order reference, not a physical size, so they must not fabricate
+// a bare-size conflict between two lines of the same product. Keyword-gated and
+// digit-anchored (a separator run then a digit must follow), so ordinary words
+// like «кодовый», «каток», «стандарт» are never stripped. Longest keyword first
+// so «артикул»/«каталог» win over their «арт»/«кат» prefixes.
+const ARTICLE_REF_RE = /(^|[^a-zа-яё0-9])(?:артикул|каталог|арт|кат|код)[.:№\s-]*\d[\d.\-/]*/gi;
 
 /**
  * Extract structural discriminators from an item name. DB-free and pure, so it
@@ -254,13 +276,18 @@ const STANDARD_REF_RE = /(^|[^a-zа-яё0-9])(?:гост|ост|ту|сто|сн
  */
 export function extractMarkingFeatures(text: string): MarkingFeatures {
   const dn = extractDnValue(text);
-  const norm = normalizeStructuralTokens(text).replace(STANDARD_REF_RE, ' ');
+  const norm = normalizeStructuralTokens(text)
+    .replace(STANDARD_REF_RE, ' ')
+    .replace(ARTICLE_REF_RE, ' ');
 
   const configMatch = norm.match(CONFIG_RE);
   const config = configMatch ? configMatch[0] : null;
 
+  // Normalize each component numerically so a trailing-zero spelling does not
+  // fork the token: «108,0x4,0» and «108x4» must both yield «108x4», while a real
+  // fraction is kept («3.5» stays «3.5», «3.50» -> «3.5»).
   const crossMatch = norm.match(CROSS_RE);
-  const cross = crossMatch ? `${crossMatch[1]}x${crossMatch[2]}` : null;
+  const cross = crossMatch ? `${Number(crossMatch[1])}x${Number(crossMatch[2])}` : null;
 
   const marks = [...new Set(
     (text.match(MARK_RE) || []).map(m => m.toLowerCase()).filter(m => !EXCLUDED_MARKS.has(m)),
@@ -281,34 +308,53 @@ export function extractMarkingFeatures(text: string): MarkingFeatures {
 
 /**
  * Structural discriminator score — the original DN logic generalized across
- * feature dimensions (DN, cross-section, multi-way config, letter markings,
- * bare sizes):
- *   -1  a feature CONFLICTS (both sides present it and they differ) — the wrong
- *       variant; or the spec carries a DN the invoice neither states nor even
- *       mentions as a number (mirrors the original DN penalty)
- *    1  at least one feature AGREES and nothing conflicts
+ * feature dimensions, split into STRONG identity features and a WEAK bare-size
+ * tail so an insignificant number cannot veto a real match:
+ *
+ *   STRONG = DN, cross-section «AxB», multi-way config «NN-NN-NN», letter marks.
+ *            These ARE the product identity; a conflict here is a different item.
+ *   WEAK   = bare dimension integers (a pipe cut length, a cable coil length, a
+ *            standalone radiator height). Meaningful only when nothing stronger
+ *            spoke.
+ *
+ * Returns:
+ *   -1  a STRONG feature conflicts; or (no strong signal) the bare sizes conflict;
+ *       or the spec carries a DN the invoice neither states nor mentions as a
+ *       number (the original one-sided-DN penalty)
+ *    1  a STRONG feature agrees (a weak bare-size conflict does NOT override it);
+ *       or (no strong signal) the bare sizes agree
  *    0  no comparable discriminating feature
- * A conflict dominates so the wrong variant cannot win the dnScore-keyed ranking
- * and is penalized in scoring (see the dnScore penalty). Agreement on any
- * dimension outranks a one-sided DN omission, so a pipe written «Дн57х3,5» still
- * matches an invoice line that drops the «Дн» prefix («Труба 57х3,5»).
+ *
+ * The key fix over the prior version: a bare-size conflict is no longer a veto.
+ * «Труба Дн57х3,5 6000» vs «…3000» now matches (diameter+section agree, only the
+ * cut length differs), while «Радиатор 500» vs «600» still differs (the bare
+ * height is the only signal, so it decides). A conflict still dominates so the
+ * wrong variant cannot win the dnScore-keyed ranking, and strong agreement still
+ * outranks a one-sided DN omission («Дн57х3,5» vs «Труба 57х3,5»).
  */
 export function getStructuralScore(specText: string, invText: string): -1 | 0 | 1 {
   const spec = extractMarkingFeatures(specText);
   const inv = extractMarkingFeatures(invText);
-  let conflict = false;
-  let agreement = false;
-  const note = (same: boolean) => { if (same) agreement = true; else conflict = true; };
 
-  // Compare each dimension only when BOTH sides carry it.
-  if (spec.dn != null && inv.dn != null) note(spec.dn === inv.dn);
-  if (spec.cross && inv.cross) note(spec.cross === inv.cross);
-  if (spec.config && inv.config) note(spec.config === inv.config);
-  if (spec.marks.length && inv.marks.length) note(spec.marks.some(m => inv.marks.includes(m)));
-  if (spec.sizes.length && inv.sizes.length) note(spec.sizes.some(s => inv.sizes.includes(s)));
+  // Strong identity features — compared only when BOTH sides carry the dimension.
+  let strongConflict = false;
+  let strongAgreement = false;
+  const strong = (same: boolean) => { if (same) strongAgreement = true; else strongConflict = true; };
+  if (spec.dn != null && inv.dn != null) strong(spec.dn === inv.dn);
+  if (spec.cross && inv.cross) strong(spec.cross === inv.cross);
+  if (spec.config && inv.config) strong(spec.config === inv.config);
+  if (spec.marks.length && inv.marks.length) strong(spec.marks.some(m => inv.marks.includes(m)));
 
-  if (conflict) return -1;
-  if (agreement) return 1;
+  // A strong conflict is a different variant — it dominates.
+  if (strongConflict) return -1;
+  // Strong agreement is NOT overridden by a weak bare-size conflict (the cut
+  // length of a pipe whose diameter and section already match is irrelevant).
+  if (strongAgreement) return 1;
+
+  // No strong feature decided — fall back to bare sizes as the weak tiebreaker.
+  if (spec.sizes.length && inv.sizes.length) {
+    return spec.sizes.some(s => inv.sizes.includes(s)) ? 1 : -1;
+  }
 
   // One-sided DN omission: the spec is DN-typed but the invoice line has no DN.
   // Penalize only when the invoice does not mention that number anywhere (a bare

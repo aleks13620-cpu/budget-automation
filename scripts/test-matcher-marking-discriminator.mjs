@@ -143,6 +143,82 @@ check('G2 cross token', extractMarkingFeatures('Труба Дн57х3,5').cross, 
 check('G3 dn from cross-suffixed', extractMarkingFeatures('Труба Дн57х3,5').dn, 57);
 check('G4 GOST number is not a bare size', extractMarkingFeatures('Труба Дн57х3,5 ГОСТ 8732-78').sizes, []);
 
+// ===========================================================================
+// FIX-ROUND 1 — bare numbers are a WEAK signal, not a veto.
+// A bare-size conflict must NOT override agreement on a strong feature (DN /
+// cross / config / letter mark); it still discriminates when nothing stronger
+// spoke. Plus decimal-comma and article-code hygiene. Red before the fix.
+// ===========================================================================
+
+// H. Strong agreement is not killed by an insignificant bare number (cut length,
+//    coil length). Cross/DN match -> still a match.
+check(
+  'H1 pipe Дн57х3,5 6000 vs 3000 (only cut length differs) -> match',
+  getStructuralScore('Труба Дн57х3,5 6000', 'Труба Дн57х3,5 3000'),
+  1,
+);
+check(
+  'H2 cable 3х2,5 coil 100 vs 200 (only coil length differs) -> match',
+  getStructuralScore('Кабель ВВГ 3х2,5 бухта 100', 'Кабель ВВГ 3х2,5 бухта 200'),
+  1,
+);
+
+// I. Dimension PAIRS are a cross-section (strong, ordered, exact) regardless of
+//    separator. A shared single side must NOT yield a false match.
+check(
+  'I1 radiator 3600 на 1200 vs 3000 на 1200 (pair = cross) -> mismatch',
+  getStructuralScore('Радиатор 3600 на 1200', 'Радиатор 3000 на 1200'),
+  -1,
+);
+check(
+  'I2 radiator 3600x1200 vs 3000x1200 (symbol separator) -> mismatch',
+  getStructuralScore('Радиатор 3600x1200', 'Радиатор 3000x1200'),
+  -1,
+);
+check(
+  'I3 radiator pair «на» === «*» (one entity) -> mismatch too',
+  getStructuralScore('Радиатор 3600 на 1200', 'Радиатор 3000*1200'),
+  -1,
+);
+check('I4 «3600 на 1200» extracts cross 3600x1200', extractMarkingFeatures('Радиатор 3600 на 1200').cross, '3600x1200');
+
+// J. With NO strong feature, a bare number still discriminates (the number IS
+//    the product — radiator height).
+check(
+  'J1 radiator 500 vs 600 (single height, no strong feature) -> mismatch',
+  getStructuralScore('Радиатор 500', 'Радиатор 600'),
+  -1,
+);
+
+// K. Decimal comma hygiene: a «,0 / ,5» tail must not leak as a bare size, and
+//    rounding noise on a nominal DN must not fabricate a conflict.
+check('K1 Дн108,0 -> dn 108', extractMarkingFeatures('Отвод Дн108,0').dn, 108);
+check('K2 Дн108,0 -> no stray bare size', extractMarkingFeatures('Отвод Дн108,0').sizes, []);
+check('K3 extractDnValue("Дн108,0") === 108', extractDnValue('Отвод Дн108,0'), 108);
+check(
+  'K4 Дн57,5 vs Дн57,8 (nominal DN rounding) -> no false conflict',
+  getStructuralScore('Труба Дн57,5', 'Труба Дн57,8'),
+  1,
+);
+check(
+  'K5 Дн108,0х4,0 vs Дн108х4 (trailing-zero section) -> match',
+  getStructuralScore('Труба Дн108,0х4,0', 'Труба Дн108х4'),
+  1,
+);
+check('K6 Дн108,0х4,0 cross is 108x4 (no .0 fork)', extractMarkingFeatures('Труба Дн108,0х4,0').cross, '108x4');
+
+// L. Article / catalog codes are an order reference, not a size — they must not
+//    fabricate a bare-size conflict between two lines of the same product.
+check(
+  'L1 «арт. 123» vs «арт. 456» (catalog codes, not sizes) -> neutral',
+  getStructuralScore('Заглушка арт. 123', 'Заглушка арт. 456'),
+  0,
+);
+check('L2 «арт. 123» is not a bare size', extractMarkingFeatures('Заглушка арт. 123').sizes, []);
+
+// M. Regression guard: letter markings still discriminate (not weakened).
+check('M1 CV vs CVL still distinct', getStructuralScore('Клапан CV', 'Клапан CVL'), -1);
+
 // ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
