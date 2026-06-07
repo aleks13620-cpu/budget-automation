@@ -78,6 +78,16 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
           details: parseResult.errors,
         });
       }
+      // Блокирующий гейт качества: иерархия катастрофически развалена и LLM не помог.
+      // Битые данные НЕ должны течь в матчер/обучение (feedback_no_corrupt_through).
+      if (parseResult.specParseQuality?.hardBlock) {
+        fs.unlink(req.file.path, () => {});
+        const pct = Math.round((parseResult.specParseQuality.bareOrphanFraction ?? 0) * 100);
+        return res.status(422).json({
+          error: `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`,
+          specParseQuality: parseResult.specParseQuality,
+        });
+      }
       rawDataStr = JSON.stringify(
         parseResult.category === 'C'
           ? PDF_SPEC_EMPTY_RAW_DATA
