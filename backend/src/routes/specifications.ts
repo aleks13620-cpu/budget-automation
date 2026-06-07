@@ -299,7 +299,7 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
       fileName: string;
       section: string | null;
       imported: number;
-      status: 'ok' | 'conflict' | 'no_section' | 'parse_error';
+      status: 'ok' | 'conflict' | 'no_section' | 'parse_error' | 'quality_block';
       error?: string;
     }[] = [];
 
@@ -323,6 +323,22 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
               imported: 0,
               status: 'parse_error',
               error: parseResult.errors[0] || 'Не удалось извлечь данные из PDF',
+            });
+            continue;
+          }
+          // Блокирующий гейт качества (зеркало одиночного пути ~:83): иерархия катастрофически
+          // развалена и LLM не помог. Битые данные НЕ пишем в specification_items — они НЕ должны
+          // течь в матчер/обучение (feedback_no_corrupt_through). Прочие файлы bulk идут как обычно
+          // (один битый PDF не валит весь батч).
+          if (parseResult.specParseQuality?.hardBlock) {
+            fs.unlink(file.path, () => {});
+            const pct = Math.round((parseResult.specParseQuality.bareOrphanFraction ?? 0) * 100);
+            results.push({
+              fileName,
+              section: null,
+              imported: 0,
+              status: 'quality_block',
+              error: `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`,
             });
             continue;
           }

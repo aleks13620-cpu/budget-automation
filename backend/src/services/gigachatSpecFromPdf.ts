@@ -517,6 +517,30 @@ export const PDF_SPEC_EMPTY_RAW_DATA: string[][] = [
   ['№', 'Наименование', 'Характеристики', 'Ед.', 'Кол-во'],
 ];
 
+/**
+ * Кеширует результат парса под ключом sha256(файла), КРОМЕ hardBlock-результатов.
+ *
+ * FIX-2 (feedback_no_corrupt_through): когда LLM недоступен и парс свалился в
+ * низкокачественный pdfplumber-фолбэк (иерархия развалена, `hardBlock=true`), писать
+ * его в кеш на 30 дней НЕЛЬЗЯ — иначе повторная загрузка ТОГО ЖЕ PDF (даже когда
+ * GigaChat/Gemini поднялись) отдаст кеш с 422, минуя LLM, а workaround «копия с другим
+ * именем» не спасает (ключ = содержимое). Не закешировав hardBlock, мы гарантируем, что
+ * следующий аплоад снова пройдёт по LLM-пути. Успешные/приемлемые парсы кешируем как раньше.
+ *
+ * Экспортируется для детерминированной проверки инварианта в тестах.
+ */
+export function cacheSpecParseResult(filePath: string, res: ParseResult): void {
+  if (res.specParseQuality?.hardBlock) {
+    console.warn('[parseSpecFromPdf] hardBlock result NOT cached — retry will re-attempt LLM (no_corrupt_through)');
+    return;
+  }
+  try {
+    setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(res));
+  } catch (e) {
+    console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 /** Превратить разобранный LLM-JSON в ParseResult (карта строк + качество + кеш). */
 function finalizeSpecParse(filePath: string, parsed: GigaChatSpecPdfJSON): ParseResult {
   const items = mapPdfItemsToRows(parsed);
@@ -533,11 +557,7 @@ function finalizeSpecParse(filePath: string, parsed: GigaChatSpecPdfJSON): Parse
           specParseQuality,
         }
       : { items, errors: [], totalRows: items.length, skippedRows: 0, specParseQuality };
-  try {
-    setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(res));
-  } catch (e) {
-    console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
-  }
+  cacheSpecParseResult(filePath, res);
   return res;
 }
 
@@ -643,11 +663,7 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
         // Принимаем pdfplumber только если качество приемлемое (иерархия не развалена).
         // Иначе — НЕ возвращаем и НЕ кешируем: пробуем LLM-разметку иерархии ниже.
         if (specParseQuality.noPosFraction <= LOW_QUALITY_NOPOS_FRACTION) {
-          try {
-            setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(okRes));
-          } catch (e) {
-            console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
-          }
+          cacheSpecParseResult(filePath, okRes);
           return okRes;
         }
         console.log(
@@ -719,11 +735,8 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
     // specParseQuality.hardBlock заставит роут отклонить загрузку (no_corrupt_through).
     if (pdfplumberFallback) {
       console.warn('[parseSpecFromPdf] LLM unavailable/failed — returning low-quality pdfplumber result (gate decides)');
-      try {
-        setGigaChatFileCache(sha256File(filePath), `spec_pdf:v${SPEC_PDF_PARSER_VERSION}`, JSON.stringify(pdfplumberFallback));
-      } catch (e) {
-        console.warn(`[parseSpecFromPdf] cache write: ${e instanceof Error ? e.message : e}`);
-      }
+      // FIX-2: hardBlock-результат НЕ кешируется → следующий аплоад снова пойдёт в LLM.
+      cacheSpecParseResult(filePath, pdfplumberFallback);
       return pdfplumberFallback;
     }
 
