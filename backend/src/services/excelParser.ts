@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { SpecificationRow, ParseResult } from '../types/specification';
+import { applyVariantMarkersToItems } from './variantMarkers';
 
 export interface ColumnMapping {
   position_number: number | null;
@@ -441,6 +442,12 @@ function linkDnChildren(items: SpecificationRow[]): void {
       parameterChildrenExpanded,
     },
   });
+
+  // CHOKEPOINT (Excel path): after DN/«То же»/parameter children are linked and
+  // full_name assembled, subtract generic variant markers from the match key
+  // (name + full_name) into characteristics. Same pure transform as the PDF path;
+  // bare-orphan rows are left untouched (no_corrupt_through).
+  applyVariantMarkersToItems(items);
 }
 
 export function parseExcelFile(filePath: string): ParseResult {

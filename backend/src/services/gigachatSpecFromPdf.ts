@@ -17,6 +17,7 @@ import {
   evaluateSpecPdfParseQuality,
   LOW_QUALITY_NOPOS_FRACTION,
 } from './gigachatSpecParseQuality';
+import { applyVariantMarkersToItems } from './variantMarkers';
 import { parseSpecPdfWithGemini } from './geminiSpecFromPdf';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -416,6 +417,13 @@ function linkPdfParentChildren(
     item._parentIndex = null;
     item.full_name = null;
   }
+
+  // CHOKEPOINT: after the hierarchy is linked and full_name assembled, subtract
+  // generic variant markers (исполнение/подключение/dп=N мм/Q=…Вт/N этаж/N Вт)
+  // from the match key (name + full_name) and fold them into characteristics.
+  // Pure, product/supplier-agnostic; bare-orphan rows are left untouched. Runs
+  // BEFORE the parse-quality gate so bareOrphanFraction reflects the final state.
+  applyVariantMarkersToItems(items);
 
   return continuationIndices;
 }
