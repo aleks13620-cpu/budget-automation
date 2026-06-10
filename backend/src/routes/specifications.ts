@@ -10,6 +10,7 @@ import { detectSectionFromFilename, detectSectionFromItems } from '../services/s
 import { enrichSpecItems } from '../services/gigachatSpecParser';
 import type { SpecItemInput } from '../services/gigachatSpecParser';
 import { parseSpecFromPdf, buildRawDataFromPdfItems, PDF_SPEC_EMPTY_RAW_DATA } from '../services/gigachatSpecFromPdf';
+import { applyVariantMarkersToItems } from '../services/variantMarkers';
 
 const upload = createUploadMiddleware({
   allowedExtensions: ['.xlsx', '.xls', '.pdf'],
@@ -570,6 +571,123 @@ function saveSpecSnapshot(specId: number, action: string, db: ReturnType<typeof 
   ).run(specId, nextVersion, JSON.stringify(items), action);
 }
 
+// ---------------------------------------------------------------------------
+// Helper: in-place clean-representation re-split (CASCADE-safe, idempotent)
+//
+// Applies the SAME production variant-marker subtraction the parser chokepoints
+// apply on NEW uploads (variantMarkers.applyVariantMarkersToItems) to rows that
+// were ALREADY stored before that subtraction existed — via UPDATE ... WHERE id=?
+// only. There is NO DELETE/re-insert, so specification_items.id is stable and every
+// dependent link survives: matched_items (FK ON DELETE CASCADE, schema.ts:107) and
+// operator_feedback.spec_item_id (FK ON DELETE SET NULL, schema.ts:228). A re-upload
+// or /reparse would instead delete+reinsert rows → new autoincrement ids → those
+// links (including the operator complaints themselves) would cascade away.
+// Idempotent: a second call finds the rows already clean, changes nothing, and
+// writes no snapshot. General by spec id (no project hardcoded). Matcher untouched.
+// ---------------------------------------------------------------------------
+
+export interface ResplitCleanReport {
+  specId: number;
+  rowsScanned: number;
+  itemsTouched: number;    // rows actually UPDATEd (clean key differed from stored)
+  bareOrphanKept: number;  // rows with marker syntax but no clean head → original kept
+  links: {
+    matchedBefore: number; matchedAfter: number;
+    confirmedBefore: number; confirmedAfter: number;
+    feedbackBefore: number; feedbackAfter: number;
+    orphansAfter: number;  // matched_items whose spec row vanished — must stay 0
+  };
+}
+
+/** Count the FK links a re-upload/reparse would destroy, scoped to one spec. */
+function specLinkCounts(
+  specId: number,
+  db: ReturnType<typeof getDatabase>,
+): { matched: number; confirmed: number; feedback: number } {
+  const one = (sql: string): number => (db.prepare(sql).get(specId) as { c: number }).c;
+  return {
+    matched: one(
+      'SELECT COUNT(*) c FROM matched_items m JOIN specification_items s ON s.id = m.specification_item_id WHERE s.specification_id = ?',
+    ),
+    confirmed: one(
+      'SELECT COUNT(*) c FROM matched_items m JOIN specification_items s ON s.id = m.specification_item_id WHERE s.specification_id = ? AND m.is_confirmed = 1',
+    ),
+    feedback: one(
+      'SELECT COUNT(*) c FROM operator_feedback f JOIN specification_items s ON s.id = f.spec_item_id WHERE s.specification_id = ?',
+    ),
+  };
+}
+
+/**
+ * Clean the stored {name, full_name, characteristics} of every row of a spec by
+ * running the production variant-marker subtraction and writing back ONLY the rows
+ * it changed, BY id, inside one transaction (snapshot first, for rollback).
+ *
+ * no_corrupt_through backstop: a pure UPDATE-by-id can never change a link count; if
+ * one drifts (a row got deleted/cascaded), the transaction aborts (rolls back) and
+ * the call throws, so corrupt state never commits.
+ */
+export function resplitCleanSpec(
+  specId: number,
+  db: ReturnType<typeof getDatabase>,
+): ResplitCleanReport {
+  const before = specLinkCounts(specId, db);
+
+  const rows = db.prepare(
+    'SELECT id, name, full_name, characteristics FROM specification_items WHERE specification_id = ?',
+  ).all(specId) as Array<{ id: number; name: string; full_name: string | null; characteristics: string | null }>;
+
+  // Remember the original text so we UPDATE only genuinely-changed rows.
+  const original = rows.map(r => ({ name: r.name, full_name: r.full_name, characteristics: r.characteristics }));
+
+  // The exact call the Excel/PDF parser chokepoints make (mutates rows in place).
+  const summary = applyVariantMarkersToItems(rows);
+
+  const changed = rows.filter((r, i) =>
+    r.name !== original[i].name ||
+    r.full_name !== original[i].full_name ||
+    r.characteristics !== original[i].characteristics,
+  );
+
+  let after = before;
+  if (changed.length > 0) {
+    const upd = db.prepare(
+      'UPDATE specification_items SET name = ?, full_name = ?, characteristics = ? WHERE id = ?',
+    );
+    db.transaction(() => {
+      saveSpecSnapshot(specId, 'resplit_clean_repr', db);
+      for (const r of changed) upd.run(r.name, r.full_name ?? null, r.characteristics ?? null, r.id);
+      after = specLinkCounts(specId, db);
+      if (
+        after.matched !== before.matched ||
+        after.confirmed !== before.confirmed ||
+        after.feedback !== before.feedback
+      ) {
+        throw new Error(
+          `resplit-clean link drift (aborting): before=${JSON.stringify(before)} after=${JSON.stringify(after)}`,
+        );
+      }
+    })();
+  }
+
+  const orphansAfter = (db.prepare(
+    'SELECT COUNT(*) c FROM matched_items m LEFT JOIN specification_items s ON s.id = m.specification_item_id WHERE s.id IS NULL',
+  ).get() as { c: number }).c;
+
+  return {
+    specId,
+    rowsScanned: rows.length,
+    itemsTouched: changed.length,
+    bareOrphanKept: summary.bareOrphanKept,
+    links: {
+      matchedBefore: before.matched, matchedAfter: after.matched,
+      confirmedBefore: before.confirmed, confirmedAfter: after.confirmed,
+      feedbackBefore: before.feedback, feedbackAfter: after.feedback,
+      orphansAfter,
+    },
+  };
+}
+
 // POST /api/specifications/:id/gigachat-enrich
 router.post('/api/specifications/:id/gigachat-enrich', async (req: Request, res: Response) => {
   try {
@@ -739,6 +857,29 @@ router.post('/api/specifications/:id/rollback', (req: Request, res: Response) =>
   } catch (error) {
     console.error('POST /api/specifications/:id/rollback error:', error);
     res.status(500).json({ error: 'Ошибка при откате', details: error instanceof Error ? error.message : 'Unknown' });
+  }
+});
+
+// POST /api/specifications/:id/resplit-clean
+// Re-apply the production variant-marker subtraction to a spec's ALREADY-STORED
+// rows IN PLACE (UPDATE by id; CASCADE-safe; idempotent). Activates the clean
+// representation on specs uploaded before the forward-fix WITHOUT re-upload/reparse,
+// so confirmed matches, manual links and operator-feedback links are all preserved.
+// General by spec id — no project hardcoded. A snapshot is saved first (rollback via
+// GET /history + POST /rollback). The matcher is not invoked here.
+router.post('/api/specifications/:id/resplit-clean', (req: Request, res: Response) => {
+  try {
+    const specId = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(specId)) return res.status(400).json({ error: 'Некорректный id спецификации' });
+    const db = getDatabase();
+    const spec = db.prepare('SELECT id FROM specifications WHERE id = ?').get(specId);
+    if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
+
+    const report = resplitCleanSpec(specId, db);
+    res.json(report);
+  } catch (error) {
+    console.error('POST /api/specifications/:id/resplit-clean error:', error);
+    res.status(500).json({ error: 'Ошибка при чистке представления спецификации', details: error instanceof Error ? error.message : 'Unknown' });
   }
 });
 
