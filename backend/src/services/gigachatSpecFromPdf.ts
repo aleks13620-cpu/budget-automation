@@ -31,7 +31,7 @@ const PDF_TEXT_HINT_MAX = 40000;
 const SCAN_TEXT_THRESHOLD = 200;
 
 /** Bump when parser logic changes to auto-bypass stale cache. */
-const SPEC_PDF_PARSER_VERSION = 6;
+const SPEC_PDF_PARSER_VERSION = 7;
 
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
@@ -162,15 +162,66 @@ const TO_ZHE_PATTERN = /^то\s+же/i;
 const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
 const VARIANT_CODE_PATTERN = /^[A-Za-zА-Яа-я]{1,3}\s?\d{1,4}([-_]\d{2,4}){1,3}$/;
 
+/**
+ * Matches "bare diameter" child rows — a row whose name is ONLY a diameter spec, e.g.:
+ *   "Ø15"           (U+00D8 = standard Ø glyph from LLM or clean PDF extraction)
+ *   "Ø15х2,8"       (diameter + wall thickness)
+ *   "\udc9815"      (U+DC98 = garbled surrogate artefact from some pdfplumber builds)
+ *   "δ=30мм Ø22"    (insulation spec with embedded diameter)
+ *
+ * Covers two Ø encodings:
+ *   U+00D8 (Ø) — standard Latin Extended-A, used by LLM output and clean pdfplumber
+ *   U+DC98     — surrogate artefact from some pdfplumber builds on certain fonts
+ *
+ * The pattern checks that the FIRST real token is a diameter (no leading word text).
+ */
+const BARE_DIAMETER_CHILD_PATTERN = /^(Ø|\udc98)\d{1,4}|^\udc98\d{1,4}/;
+
+/**
+ * Detects a "parent-header" row in the pdfplumber stream: a real product-group name
+ * (e.g. "Неподвижная опора", "Трубы стальные водогазопроводные") that has no quantity,
+ * no unit, no position number, and does NOT start with a diameter/size token.
+ *
+ * Purpose: prevent these rows from being swallowed as continuations of the preceding
+ * item.  Instead the linking step treats them as a new parent anchor.
+ *
+ * Conservative rule – only promotes to parent-header when ALL of:
+ *   1. No leading diameter/size token (not a child row in disguise).
+ *   2. Contains at least two Cyrillic or Latin word-characters (has a real name).
+ *   3. Total length ≥ 5 (too short = probably a column artefact).
+ * Stops the walk-back at section/page dividers and blank boundaries implicitly,
+ * because those rows would have been filtered out upstream by isSectionHeaderRow.
+ */
+function isParentHeaderRow(name: string): boolean {
+  const t = name.trim();
+  if (!t || t.length < 5) return false;
+  // Must NOT start with a diameter/size token (those are children, not parents).
+  if (BARE_DIAMETER_CHILD_PATTERN.test(t)) return false;
+  if (DN_CHILD_PATTERN.test(t)) return false;
+  if (PARAMETER_CHILD_PATTERN.test(t)) return false;
+  if (/^δ\s*=/i.test(t)) return false;
+  // Must contain actual letters (a product name, not a code or number sequence).
+  const letterCount = (t.match(/[А-Яа-яЁёA-Za-z]/g) || []).length;
+  return letterCount >= 4;
+}
+
 function isSectionHeaderRow(name: string, quantity: number | null, unit: string | null): boolean {
   const normalized = name.trim().toLowerCase();
   if (!normalized) return false;
   if (quantity != null) return false;
   if (unit && unit.trim().length > 0) return false;
   if (TO_ZHE_PATTERN.test(name.trim())) return false;
+  // Roman-numeral section dividers (e.g. "I. Оборудование", "II. Материалы")
   if (/^(i|ii|iii|iv|v|vi|vii|viii|ix|x)\.?\s+/i.test(normalized)) return true;
+  // Explicit section keywords (e.g. "ОТОПЛЕНИЕ", "Вентиляция", "Раздел 2")
   if (SECTION_HEADER_PATTERN.test(normalized)) return true;
-  return /^[а-яa-z\s/-]{3,40}$/.test(normalized) && normalized.split(/\s+/).length <= 3;
+  // All-uppercase short labels (e.g. "ОТОПЛЕНИЕ", "АВТ." — left after known keywords above)
+  if (/^[А-ЯЁA-Z\s]{3,20}$/.test(name.trim()) && name.trim() === name.trim().toUpperCase()) return true;
+  // NOTE: the former broad "≤3 word, pure letters" catch-all is intentionally removed.
+  // Short rows like "Неподвижная опора" or "Трубы стальные водогазопроводные" are
+  // product-group HEADERS that must pass through to linkPdfParentChildren so that their
+  // diameter-only children (Ø15, Ø25, …) can be linked to them structurally.
+  return false;
 }
 
 function splitMonsterRow(name: string): string[] {
@@ -312,6 +363,30 @@ function linkPdfParentChildren(
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
 
+    // Pdfplumber column-misalignment: some spec PDFs lack a real "position" column;
+    // pdfplumber reads the QUANTITY into the position field instead.  The row name is
+    // a bare diameter/size token (e.g. "Ø15", "Ø25х3,2") that belongs to the preceding
+    // parent-header group.  Detect this BEFORE the generic "has position_number" branch
+    // so these rows are linked as children, not promoted to standalone parents.
+    // Guard: only when lastParentIndex is set (a real header preceded) AND the name
+    // matches a bare diameter pattern — never mis-link to an unrelated preceding item.
+    if (
+      item.position_number !== null &&
+      lastParentIndex !== null &&
+      BARE_DIAMETER_CHILD_PATTERN.test(item.name.trim())
+    ) {
+      item._parentIndex = lastParentIndex;
+      item.full_name = `${accumulatedName} ${item.name}`.trim();
+      // Treat position_number as quantity when the column is misaligned (no real pos).
+      // Note: quantity may already be set correctly by LLM; only override if null.
+      if (item.quantity == null) {
+        const parsed = parseFloat(item.position_number);
+        if (!isNaN(parsed) && parsed > 0) item.quantity = parsed;
+        item.position_number = null;
+      }
+      continue;
+    }
+
     // New parent: has position_number
     if (item.position_number !== null) {
       lastParentIndex = i;
@@ -358,6 +433,26 @@ function linkPdfParentChildren(
       continue;
     }
 
+    // Parent-header promotion (pdfplumber path, no-position PDFs):
+    // A row with no qty/unit/position but a real product name (letters-dominant,
+    // no leading diameter token) is a GROUP HEADER that anchors the subsequent
+    // diameter-only children.  Treat it as a NEW parent rather than a continuation
+    // of the preceding item.  Without this check such rows were wrongly swallowed
+    // as continuations, and their children (Ø15…Ø100) were left as bare orphans.
+    if (
+      item.quantity == null &&
+      item.unit == null &&
+      item.manufacturer == null &&
+      item.position_number === null &&
+      isParentHeaderRow(item.name)
+    ) {
+      lastParentIndex = i;
+      accumulatedName = item.name;
+      item._parentIndex = null;
+      item.full_name = null;
+      continue;
+    }
+
     // Continuation: no metadata signaling an independent item, not a child pattern.
     // unit/manufacturer being non-null means it's a real spec line (qty may be missing
     // because pdfplumber didn't extract it) — don't merge into the previous parent.
@@ -382,6 +477,27 @@ function linkPdfParentChildren(
         item._parentIndex = lastParentIndex;
         item.full_name = `${accumulatedName} ${item.name}`.trim();
       } else {
+        item._parentIndex = null;
+        item.full_name = null;
+      }
+      continue;
+    }
+
+    // Bare-diameter child (pdfplumber garbled-Ø encoding):
+    // pdfplumber renders the Ø diameter glyph as a U+DC98 surrogate artefact.
+    // These rows (e.g. "…\udc9815", "…\udc9815х2,8", "δ=30мм …\udc9822") are
+    // children of the preceding parent-header group.  They do NOT match DN_CHILD_PATTERN
+    // or PARAMETER_CHILD_PATTERN because the Ø is garbled, so they need their own branch.
+    // no_corrupt_through: only attach when lastParentIndex is set (a real header preceded).
+    if (
+      item.position_number === null &&
+      BARE_DIAMETER_CHILD_PATTERN.test(item.name)
+    ) {
+      if (lastParentIndex !== null) {
+        item._parentIndex = lastParentIndex;
+        item.full_name = `${accumulatedName} ${item.name}`.trim();
+      } else {
+        // No parent found — leave standalone, do NOT invent a parent.
         item._parentIndex = null;
         item.full_name = null;
       }
