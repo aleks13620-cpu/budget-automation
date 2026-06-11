@@ -81,16 +81,36 @@ function computeNeedsAmountReview(
 //   4. At least 90% of lines with nonzero amount are consistent with the factor (±2%)
 //   5. discount_applied == 0 (idempotency; caller checks this)
 //
+// VAT-awareness (FIX 1): line amounts are scaled by (1 + vatRate/100) when
+// pricesIncludeVat===0 — exactly mirroring computeNeedsAmountReview.  When both
+// documentTotal and lines share the same VAT convention the scaling cancels in the
+// ratio, so a pure-VAT gap does NOT trigger Form D.
+//
+// Delivery exclusion (FIX 3): items with is_delivery===1 are skipped when computing
+// the goods-only factor; their prices must NOT be touched by the apply endpoint.
+//
 // The function does NOT look at supplier name, percentage text, or any hardcoded value;
 // it derives everything from the data.
 function detectDocumentLevelDiscount(
-  items: Array<{ amount: number | null }>,
+  items: Array<{ amount: number | null; is_delivery?: number | null }>,
   documentTotal: number | null,
+  vatRate: number | null = null,
+  pricesIncludeVat: number | null = null,
 ): number | null {
   if (!documentTotal || documentTotal <= 0) return null;
 
-  const nonZeroAmounts = items
-    .map(it => it.amount)
+  // FIX 3: exclude delivery lines from goods-only factor computation
+  const goodsItems = items.filter(it => !it.is_delivery);
+
+  // FIX 1: normalise amounts the same way as computeNeedsAmountReview
+  const nonZeroAmounts = goodsItems
+    .map(it => {
+      const raw = it.amount;
+      if (raw == null || raw <= 0) return null;
+      return pricesIncludeVat === 0 && vatRate != null && vatRate > 0
+        ? raw * (1 + vatRate / 100)
+        : raw;
+    })
     .filter((a): a is number => a != null && a > 0);
 
   if (nonZeroAmounts.length === 0) return null;
@@ -769,7 +789,14 @@ export async function processInvoiceFile(
   const formDApplied = 0; // parse-time never sets this; only the apply endpoint does
   const formDOriginalPrices: Array<number | null> = parseResult.items.map(() => null); // always null at parse time
   if ((parseResult.discountDetected == null || parseResult.discountDetected === 0) && parseResult.totalAmount != null && parseResult.totalAmount > 0) {
-    const formDFactor = detectDocumentLevelDiscount(parseResult.items, parseResult.totalAmount);
+    // FIX 1: pass VAT settings so a pure-VAT gap is not mistaken for a discount
+    // FIX 3: is_delivery field on parseResult.items (set below) lets the helper skip delivery lines;
+    //         pass a projected view with is_delivery derived from the item name (same logic as insertItem)
+    const itemsWithDelivery = parseResult.items.map(it => ({
+      amount: it.amount,
+      is_delivery: isDeliveryItem(it.name) ? 1 : 0,
+    }));
+    const formDFactor = detectDocumentLevelDiscount(itemsWithDelivery, parseResult.totalAmount, parsedVatRate, supplierPricesIncludeVatForReview);
     if (formDFactor != null) {
       // Do NOT mutate prices or amounts — detect and inform only
       needsAmountReview = 1;
@@ -1408,6 +1435,8 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
       const reviewVatRate = priceOverrideVatRate ?? supplierVatRate ?? invoice.vat_rate;
       let newNeedsAmountReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, reviewVatRate, supplierPricesIncludeVat);
       if (priceOverrideNeedsAmountReview) newNeedsAmountReview = 1;
+      // FIX 4: reparse rewrites items, so any previously applied Form D discount is gone —
+      // reset discount_applied so the operator can re-apply if still relevant.
       db.prepare(`
         UPDATE invoices
         SET status = ?,
@@ -1416,7 +1445,8 @@ router.post('/api/invoices/:id/reparse', async (req: Request, res: Response) => 
             parsing_category_reason = ?,
             needs_amount_review = CASE WHEN ? THEN ? ELSE needs_amount_review END,
             vat_amount = CASE WHEN ? THEN ? ELSE vat_amount END,
-            vat_rate = CASE WHEN ? THEN ? ELSE vat_rate END
+            vat_rate = CASE WHEN ? THEN ? ELSE vat_rate END,
+            discount_applied = 0
         WHERE id = ?
       `).run(
         newStatus,
@@ -1544,8 +1574,9 @@ router.post('/api/invoices/:id/reparse-gigachat', async (req: Request, res: Resp
       }
       saveSnapshot(invoiceId, 'before_reparse_gigachat', db);
       db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(invoiceId);
+      // FIX 4: reparse-gigachat rewrites items; reset discount_applied so re-apply is possible
       db.prepare(
-        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, vat_rate=?, parsing_category=?, parsing_category_reason=?, needs_amount_review=? WHERE id=?'
+        'UPDATE invoices SET status=?, supplier_id=?, invoice_number=?, invoice_date=?, total_amount=?, vat_amount=?, vat_rate=?, parsing_category=?, parsing_category_reason=?, needs_amount_review=?, discount_applied=0 WHERE id=?'
       ).run(
         newStatus,
         resolvedSupplierId,
@@ -1927,11 +1958,24 @@ router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) =>
 // Form D backfill for already-loaded invoices: detects and applies document-level discount
 // (total << sum of line amounts) without re-parsing. Idempotent: noop if discount_applied=1.
 // Returns { applied: bool, factor: number, discount_pct: number } or { skipped: reason }.
+// FIX 2: refuses 422 when Form C (discount_detected) was already handled (prevents double-discount).
+// FIX 3: only goods lines participate; delivery lines are untouched.
 router.post('/api/invoices/:id/apply-document-discount', (req: Request, res: Response) => {
   try {
     const invoiceId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
-    const invoice = db.prepare('SELECT id, discount_applied, total_amount FROM invoices WHERE id = ?').get(invoiceId) as { id: number; discount_applied: number; total_amount: number | null } | undefined;
+
+    // FIX 2: also fetch discount_detected and supplier_id (for VAT-awareness in FIX 1)
+    const invoice = db.prepare(
+      'SELECT id, discount_applied, discount_detected, total_amount, supplier_id, vat_rate FROM invoices WHERE id = ?'
+    ).get(invoiceId) as {
+      id: number;
+      discount_applied: number;
+      discount_detected: number | null;
+      total_amount: number | null;
+      supplier_id: number | null;
+      vat_rate: number | null;
+    } | undefined;
     if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
 
     // Idempotency guard
@@ -1939,9 +1983,27 @@ router.post('/api/invoices/:id/apply-document-discount', (req: Request, res: Res
       return res.json({ skipped: 'discount_applied already set — idempotent noop', applied: false });
     }
 
-    const items = db.prepare('SELECT id, price, amount FROM invoice_items WHERE invoice_id = ?').all(invoiceId) as Array<{ id: number; price: number | null; amount: number | null }>;
+    // FIX 2: Form C guard — explicit "скидка X%" was already detected; applying Form D now
+    // would discount prices that may already reflect the Form C reduction (double-discount).
+    if (invoice.discount_detected != null && invoice.discount_detected > 0) {
+      return res.status(422).json({
+        skipped: `Счёт уже содержит явную скидку ${invoice.discount_detected}% (Form C); применение документной скидки Form D приведёт к двойному дисконту — отменено`,
+        applied: false,
+      });
+    }
 
-    const factor = detectDocumentLevelDiscount(items, invoice.total_amount);
+    // FIX 1: load supplier VAT settings so detectDocumentLevelDiscount can normalise correctly
+    const vatSettings = loadSupplierVatSettings(invoice.supplier_id);
+    const effectiveVatRate = vatSettings.vatRate ?? invoice.vat_rate ?? null;
+    const effectivePricesIncludeVat = vatSettings.pricesIncludeVat ?? null;
+
+    // FIX 3: fetch is_delivery so the helper can exclude delivery lines from factor computation
+    const items = db.prepare(
+      'SELECT id, price, amount, is_delivery FROM invoice_items WHERE invoice_id = ?'
+    ).all(invoiceId) as Array<{ id: number; price: number | null; amount: number | null; is_delivery: number | null }>;
+
+    // FIX 1 + FIX 3: pass VAT settings and is_delivery-aware items
+    const factor = detectDocumentLevelDiscount(items, invoice.total_amount, effectiveVatRate, effectivePricesIncludeVat);
     if (factor == null) {
       return res.status(422).json({ skipped: 'No clean document-level discount detected (ambiguous, per-line, or surcharge)', applied: false });
     }
@@ -1949,12 +2011,13 @@ router.post('/api/invoices/:id/apply-document-discount', (req: Request, res: Res
     saveSnapshot(invoiceId, 'before_formd_discount', db);
 
     db.transaction(() => {
+      // FIX 3: only update goods lines (exclude delivery lines; their prices stay unchanged)
       db.prepare(`
         UPDATE invoice_items
         SET original_price = COALESCE(original_price, price),
             price = ROUND(price * ?, 2),
             amount = ROUND(amount * ?, 2)
-        WHERE invoice_id = ?
+        WHERE invoice_id = ? AND (is_delivery = 0 OR is_delivery IS NULL)
       `).run(factor, factor, invoiceId);
 
       db.prepare(`
@@ -2005,6 +2068,9 @@ router.post('/api/invoices/:id/rollback', (req: Request, res: Response) => {
       for (const item of items) {
         ins.run(invoiceId, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, item.is_delivery ?? 0, item.is_manual ?? 0, item.needs_unit_review ?? 0, item.original_price ?? null, item.original_unit ?? null);
       }
+      // FIX 4: rollback rewrites items to a past snapshot; reset discount_applied so
+      // Form D can be re-applied if still relevant after the rollback.
+      db.prepare('UPDATE invoices SET discount_applied = 0 WHERE id = ?').run(invoiceId);
     })();
     res.json({ restored: items.length });
   } catch (error) {
