@@ -131,6 +131,48 @@ Key locations:
 
 ---
 
+## Pre-Deploy Gate Blocker Fixes (2026-06-12, commit d50c657)
+
+Three blockers found during pre-deploy gate review, all closed in one commit.
+
+### FIX-1: SECTION_HEADER_PATTERN — Cyrillic boundary regression
+
+**File:** `backend/src/services/gigachatSpecFromPdf.ts` line 159  
+**Problem:** `\b` is an ASCII-only word boundary; it does NOT match Cyrillic. So standalone section keywords like "Вентиляция", "Материалы", "Оборудование" were NOT detected as section headers by `isSectionHeaderRow`. They fell through to the parent-header promotion branch and became ghost parent-header anchors for any following Ø-child.  
+**Fix:** Replace `\b` with lookahead `(?=\s|$|[^А-Яа-яЁёA-Za-z0-9])`.
+
+### FIX-2: position_number not cleared when quantity already set
+
+**File:** `backend/src/services/gigachatSpecFromPdf.ts` lines 382–386  
+**Problem:** `item.position_number = null` was inside `if (item.quantity == null)`, so when LLM already set quantity the misread position_number from pdfplumber column-misalignment was left in place (the row would keep a false "position number" in prod).  
+**Fix:** Move `item.position_number = null` outside the inner `if` so it always fires in the misalignment branch.
+
+### FIX-3: isParentHeaderRow false-positive — lookahead guard
+
+**File:** `backend/src/services/gigachatSpecFromPdf.ts` lines 443–462  
+**Problem:** A standalone product with null qty/unit/manufacturer (e.g. "Кран шаровой") passed `isParentHeaderRow` and was promoted to parent-header, wrongly anchoring the next unrelated row as its Ø-child.  
+**Fix:** Only promote to parent-header when the NEXT item actually matches `BARE_DIAMETER_CHILD_PATTERN`. The proj.12 cases work because headers are immediately followed by Ø-children.
+
+### FIX-4 (optional cleanup): Dead duplicate in BARE_DIAMETER_CHILD_PATTERN
+
+**File:** `backend/src/services/gigachatSpecFromPdf.ts` line 178  
+Removed `|^\udc98\d{1,4}` — already covered by the first alternative `^(Ø|\udc98)\d{1,4}`.
+
+---
+
+## Closure Re-Verification (post gate-fix, commit d50c657)
+
+| Check | Result |
+|-------|--------|
+| 1. Proj.12 bare orphans still 33 → 0 | PASS (regression suite 01_radiator_variants_no_position PASS; inline sim: 6 Ø-children link to Неподвижная опора, 3 to Сильфонный компенсатор) |
+| 2. Parent assignment ОСТ group (Ø15..Ø100) → Неподвижная опора; Ø20.. → Сильфонный компенсатор | PASS (verified by inline node check) |
+| 3. "Вентиляция"/"Материалы"/"Оборудование" → filtered as section headers | PASS (node inline: filtered out: true) |
+| 4. "Кран шаровой" (null qty, NOT followed by Ø) → NOT promoted to parent | PASS (Задвижка._parentIndex = null) |
+| 5. `npm run build` (backend/) | PASS — zero errors, zero warnings |
+| Regression: 7/7 spec-pdf fixture cases | PASS |
+
+---
+
 ## Status
 
-NO deploy performed. Fix is on branch `feat/clean-read-parent`, worktree `budget-automation-parent-fix`. Ready for pre-deploy gate when orchestrator approves.
+NO deploy performed. Gate blockers closed. Branch `feat/clean-read-parent` (HEAD=d50c657), worktree `budget-automation-parent-fix`. Ready for pre-deploy gate pass when orchestrator approves.
