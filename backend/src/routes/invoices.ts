@@ -412,27 +412,17 @@ export async function processInvoiceFile(
     let imgNeedsReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, imgVatRate, imgPricesIncludeVat);
     if (routerResult.gigachatParseQuality?.suggestElevatedReview) imgNeedsReview = 1;
     if (routerResult.amountReviewRequired || imgVatNormalization?.needsAmountReview) imgNeedsReview = 1;
-    // Form D detection for image path (same logic as PDF/Excel path)
-    let imgFormDApplied = 0;
-    const imgFormDOriginalPrices: Array<number | null> = parseResult.items.map(() => null);
+    // Form D detection for image path (detect+inform only, NOT silent apply)
+    const imgFormDApplied = 0; // parse-time never sets this; only the apply endpoint does
+    const imgFormDOriginalPrices: Array<number | null> = parseResult.items.map(() => null); // always null at parse time
     if (parseResult.totalAmount != null && parseResult.totalAmount > 0) {
       const imgFormDFactor = detectDocumentLevelDiscount(parseResult.items, parseResult.totalAmount);
       if (imgFormDFactor != null) {
-        for (let i = 0; i < parseResult.items.length; i++) {
-          const item = parseResult.items[i];
-          if (item.price != null) {
-            imgFormDOriginalPrices[i] = item.price;
-            item.price = Math.round(item.price * imgFormDFactor * 100) / 100;
-          }
-          if (item.amount != null) {
-            item.amount = Math.round(item.amount * imgFormDFactor * 100) / 100;
-          }
-        }
-        imgFormDApplied = 1;
+        // Do NOT mutate prices or amounts — detect and inform only
+        imgNeedsReview = 1;
         const imgDiscountPct = Math.round((1 - imgFormDFactor) * 10000) / 100;
-        imgReason += ` | Form D: скрытая скидка ${imgDiscountPct}% (factor=${imgFormDFactor.toFixed(4)}) — цены скорректированы`;
-        const imgReviewAfter = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount, imgVatRate, imgPricesIncludeVat);
-        if (imgReviewAfter === 0) imgNeedsReview = 0;
+        imgReason += ` | Form D: вероятная документная скидка ~${imgDiscountPct}% (итог < суммы строк); цена за ед. будет пересчитана при подтверждении (factor=${imgFormDFactor.toFixed(4)})`;
+        console.log(`[Invoice] Form D detected (not applied) image path: factor=${imgFormDFactor.toFixed(4)} (${imgDiscountPct}% off), items=${parseResult.items.length} — awaiting operator confirmation`);
       }
     }
     const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate, discount_applied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -770,39 +760,22 @@ export async function processInvoiceFile(
     parsingCategoryReason += ` | обнаружена скидка ${parseResult.discountDetected}% — проверьте, учтена ли в ценах строк`;
   }
 
-  // Фича Form D (document-level discount auto-apply):
+  // Фича Form D (document-level discount detect+inform, NOT silent apply):
   // Если явная скидка «−X%» не найдена (discount_detected IS NULL) но итог документа
-  // существенно меньше суммы строк (>15%) — это скрытая документальная скидка.
-  // Вычисляем factor = documentTotal / sumLineAmounts, применяем к price и amount
-  // ПЕРЕД вставкой (forward-only, обратимо через original_price).
-  // Граничные случаи безопасности: per-line / per-формат скидка → factor=null → fallback.
-  let formDApplied = 0;
-  // originalPrices[i] = pre-discount price for item i (null if not discounted)
-  const formDOriginalPrices: Array<number | null> = parseResult.items.map(() => null);
+  // существенно меньше суммы строк (>15%) — это вероятная скрытая документальная скидка.
+  // БЕЗОПАСНЫЙ путь: НЕ меняем цены/суммы при парсинге; ставим needs_amount_review=1 и
+  // сообщаем оператору о предполагаемой скидке. Применение — только через явный эндпоинт
+  // POST /api/invoices/:id/apply-document-discount (оператор/владелец подтверждает).
+  const formDApplied = 0; // parse-time never sets this; only the apply endpoint does
+  const formDOriginalPrices: Array<number | null> = parseResult.items.map(() => null); // always null at parse time
   if ((parseResult.discountDetected == null || parseResult.discountDetected === 0) && parseResult.totalAmount != null && parseResult.totalAmount > 0) {
     const formDFactor = detectDocumentLevelDiscount(parseResult.items, parseResult.totalAmount);
     if (formDFactor != null) {
-      // Apply factor to items in-memory before insert (original price tracked separately)
-      for (let i = 0; i < parseResult.items.length; i++) {
-        const item = parseResult.items[i];
-        if (item.price != null) {
-          formDOriginalPrices[i] = item.price;
-          item.price = Math.round(item.price * formDFactor * 100) / 100;
-        }
-        if (item.amount != null) {
-          item.amount = Math.round(item.amount * formDFactor * 100) / 100;
-        }
-      }
-      formDApplied = 1;
+      // Do NOT mutate prices or amounts — detect and inform only
+      needsAmountReview = 1;
       const discountPct = Math.round((1 - formDFactor) * 10000) / 100;
-      parsingCategoryReason += ` | Form D: скрытая скидка ${discountPct}% (итог ${parseResult.totalAmount} << сумма строк, factor=${formDFactor.toFixed(4)}) — цены скорректированы`;
-      console.log(`[Invoice] Form D discount applied: factor=${formDFactor.toFixed(4)} (${discountPct}% off), items=${parseResult.items.length}`);
-      // Recompute needsAmountReview with adjusted items — should now be 0 (totals should reconcile)
-      const reviewAfterAdjust = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount, parsedVatRate, supplierPricesIncludeVatForReview);
-      if (reviewAfterAdjust === 0) {
-        needsAmountReview = 0;
-      }
-      // (if still >0 after adjust — keep needs_amount_review=1 as honest fallback)
+      parsingCategoryReason += ` | Form D: вероятная документная скидка ~${discountPct}% (итог < суммы строк); цена за ед. будет пересчитана при подтверждении (factor=${formDFactor.toFixed(4)})`;
+      console.log(`[Invoice] Form D detected (not applied): factor=${formDFactor.toFixed(4)} (${discountPct}% off), items=${parseResult.items.length} — awaiting operator confirmation`);
     }
   }
 

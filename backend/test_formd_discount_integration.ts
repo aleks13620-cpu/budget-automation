@@ -1,17 +1,18 @@
 /**
- * Offline integration proof: Form D document-level discount auto-detect + apply.
+ * Offline integration proof: Form D document-level discount detect+inform (SAFE design).
  *
  * Runs the REAL processInvoiceFile pipeline via extractedOverride (no PDF font deps).
- * Verifies:
- *   1. Invoice 894066 data (8 lines, ratio 0.6 exactly): prices corrected to post-discount.
- *   2. `discount_applied = 1` set in invoices table.
- *   3. `original_price` populated for all non-null prices.
- *   4. `needs_amount_review = 0` after adjustment (totals reconcile).
- *   5. Specific spot-checks: 16009→9605, 11865→7119, 60761→36457.
- *   6. Document total reconciles: SUM(adjusted amounts) ≈ 648985.8 (±1%).
- *   7. Non-discount invoice (sum matches total): prices unchanged, discount_applied=0.
- *   8. Form C path (explicit discount_detected): NOT overridden by Form D.
- *   9. Idempotency: apply-document-discount endpoint returns skipped on second call.
+ * Verifies parse-time behavior (detect+inform, NOT silent apply):
+ *   1. Invoice 894066 data (8 lines, ratio 0.6): prices UNCHANGED at parse time.
+ *   2. `discount_applied = 0` at parse time (apply endpoint handles confirmation).
+ *   3. `needs_amount_review = 1` set at parse time (awaiting operator confirmation).
+ *   4. `parsing_category_reason` contains "Form D" hint with suggested discount %.
+ *   5. `original_price` is NULL at parse time (prices not mutated).
+ *   6. Non-discount invoice (sum matches total): prices unchanged, discount_applied=0.
+ *   7. Form C path (explicit discount_detected): NOT overridden by Form D.
+ *   8. apply-document-discount endpoint (backfill path): produces 16009→9605, 11865→7119,
+ *      60761→36457 and reconciles SUM(adjusted) ≈ syntheticTotal (factor 0.6 exactly).
+ *   9. Idempotency: discount_applied=1 after apply endpoint runs.
  *
  * Run: cd backend && npx ts-node --transpile-only test_formd_discount_integration.ts
  */
@@ -51,7 +52,7 @@ async function run(): Promise<void> {
   // Test 1: Invoice 894066 — 8-line ventilation invoice, ratio 0.6
   // Raw (pre-discount) data from diagnosis doc
   // ============================================================
-  console.log('\n[Test 1] Form D detection: 8-line ventilation invoice (ratio 0.6 = 40% off)');
+  console.log('\n[Test 1] Form D parse-time: detect+inform only (prices UNCHANGED, awaiting confirmation)');
 
   const inv894Items = [
     // name, qty, price, amount
@@ -107,22 +108,24 @@ async function run(): Promise<void> {
   };
   const items1 = db.prepare('SELECT price, amount, original_price, quantity FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(result1.invoiceId) as Array<{ price: number | null; amount: number | null; original_price: number | null; quantity: number }>;
 
-  check('discount_applied=1', inv1.discount_applied === 1, `got ${inv1.discount_applied}`);
-  check('needs_amount_review=0 after adjustment', inv1.needs_amount_review === 0, `got ${inv1.needs_amount_review}; reason="${inv1.parsing_category_reason}"`);
-  check('reason contains Form D', inv1.parsing_category_reason.includes('Form D'), `reason="${inv1.parsing_category_reason}"`);
+  // Parse-time: detect+inform — prices must be UNCHANGED, discount_applied=0, needs_amount_review=1
+  check('discount_applied=0 at parse time (awaiting confirmation)', inv1.discount_applied === 0, `got ${inv1.discount_applied}`);
+  check('needs_amount_review=1 (Form D detected, pending confirm)', inv1.needs_amount_review === 1, `got ${inv1.needs_amount_review}; reason="${inv1.parsing_category_reason}"`);
+  check('reason contains Form D hint', inv1.parsing_category_reason.includes('Form D'), `reason="${inv1.parsing_category_reason}"`);
+  check('reason mentions suggested discount %', /\d+(\.\d+)?%/.test(inv1.parsing_category_reason), `reason="${inv1.parsing_category_reason}"`);
 
-  // Spot checks: 16009→9605, 11865→7119, 60761→36457
-  check('АВК 600*400: price 16009→9605.4', near(items1[0].price!, 9605.4, 0.002), `got ${items1[0].price}`);
-  check('АЛН 1000*600: price 11865→7119', near(items1[3].price!, 7119.0, 0.002), `got ${items1[3].price}`);
-  check('АРН 1800*1800: price 60761→36456.6', near(items1[7].price!, 36456.6, 0.002), `got ${items1[7].price}`);
+  // Parse-time: prices UNCHANGED (raw PDF values preserved)
+  check('АВК 600*400: price UNCHANGED = 16009', near(items1[0].price!, 16009, 0.001), `got ${items1[0].price}`);
+  check('АЛН 1000*600: price UNCHANGED = 11865', near(items1[3].price!, 11865, 0.001), `got ${items1[3].price}`);
+  check('АРН 1800*1800: price UNCHANGED = 60761', near(items1[7].price!, 60761, 0.001), `got ${items1[7].price}`);
 
-  // original_price populated
-  check('original_price for АВК 600*400 = 16009', near(items1[0].original_price!, 16009, 0.001), `got ${items1[0].original_price}`);
-  check('original_price for АЛН 1000*600 = 11865', near(items1[3].original_price!, 11865, 0.001), `got ${items1[3].original_price}`);
+  // Parse-time: original_price NULL (prices not snapshotted because not mutated)
+  check('original_price NULL for АВК 600*400 (not mutated at parse time)', items1[0].original_price == null, `got ${items1[0].original_price}`);
+  check('original_price NULL for АЛН 1000*600 (not mutated at parse time)', items1[3].original_price == null, `got ${items1[3].original_price}`);
 
-  // Document total reconciles: SUM(adjusted amounts) ≈ syntheticTotal (949807 × 0.6 = 569884.20)
-  const sumAdjusted = items1.reduce((s, it) => s + (it.amount ?? 0), 0);
-  check(`SUM(adjusted amounts)≈${syntheticTotal} (got ${sumAdjusted.toFixed(1)})`, near(sumAdjusted, syntheticTotal, 0.01), `sum=${sumAdjusted}`);
+  // Parse-time: SUM(raw amounts) = 949807 (unchanged)
+  const sumRaw = items1.reduce((s, it) => s + (it.amount ?? 0), 0);
+  check(`SUM(raw amounts)=949807 (got ${sumRaw.toFixed(1)}) — prices not touched at parse`, near(sumRaw, 949807, 0.001), `sum=${sumRaw}`);
 
   // ============================================================
   // Test 2: Non-discount invoice — prices must be UNCHANGED
@@ -186,10 +189,12 @@ async function run(): Promise<void> {
   check('Form C: discount_detected!=null (detected 20%)', inv3.discount_detected != null && inv3.discount_detected > 0, `got ${inv3.discount_detected}`);
 
   // ============================================================
-  // Test 4: apply-document-discount endpoint — backfill for 894066
-  // Simulates re-loading invoice with discount_applied=0 and calling the endpoint
+  // Test 4: apply-document-discount endpoint (CONFIRM action)
+  // Simulates operator clicking "Применить" on an invoice where Form D was detected.
+  // Raw prices (as stored at parse time) → discounted prices after endpoint runs.
+  // Spot-checks: 16009→9605.4, 11865→7119, 60761→36456.6; SUM ≈ syntheticTotal (569884.20).
   // ============================================================
-  console.log('\n[Test 4] apply-document-discount endpoint: idempotency guard');
+  console.log('\n[Test 4] apply-document-discount endpoint: confirm action produces correct discounted prices');
 
   // Create a raw invoice (discount_applied=0) with pre-discount prices.
   // Use same amounts as Test 1 (sum=949807) and set total=syntheticTotal (949807×0.6=569884.20)
@@ -231,8 +236,10 @@ async function run(): Promise<void> {
   }
 
   const bfItemsAfter = db.prepare('SELECT price, amount, original_price FROM invoice_items WHERE invoice_id = ? ORDER BY id').all(backfillInvId) as Array<{ price: number; amount: number; original_price: number }>;
-  check('Backfill: АВК 600*400 price ≈ 9605.4', near(bfItemsAfter[0].price, 9605.4, 0.002), `got ${bfItemsAfter[0].price}`);
-  check('Backfill: original_price=16009 preserved', near(bfItemsAfter[0].original_price, 16009, 0.001), `got ${bfItemsAfter[0].original_price}`);
+  check('Confirm: АВК 600*400 price 16009→9605.4', near(bfItemsAfter[0].price, 9605.4, 0.002), `got ${bfItemsAfter[0].price}`);
+  check('Confirm: АЛН 1000*600 price 11865→7119', near(bfItemsAfter[3].price, 7119.0, 0.002), `got ${bfItemsAfter[3].price}`);
+  check('Confirm: АРН 1800*1800 price 60761→36456.6', near(bfItemsAfter[7].price, 36456.6, 0.002), `got ${bfItemsAfter[7].price}`);
+  check('Confirm: original_price=16009 preserved for АВК 600*400', near(bfItemsAfter[0].original_price, 16009, 0.001), `got ${bfItemsAfter[0].original_price}`);
 
   const bfSumAfter = bfItemsAfter.reduce((s, it) => s + it.amount, 0);
   check(`Backfill: SUM(adjusted)≈${backfillTotal} (got ${bfSumAfter.toFixed(1)})`, near(bfSumAfter, backfillTotal, 0.01));
