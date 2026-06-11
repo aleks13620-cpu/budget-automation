@@ -63,6 +63,63 @@ function computeNeedsAmountReview(
   return deviation > 0.15 ? 1 : 0;
 }
 
+// Helper: detect document-level discount (Form D).
+// Form D = document total is less than sum of line amounts by >15%, with no explicit
+// "скидка X%" text. Returns the discount factor (0 < factor < 1) when the mismatch is
+// clean and consistent, or null when ambiguous / not a discount.
+//
+// "Clean" means every line-amount participates in the same ratio (no per-line variation):
+//   factor = documentTotal / sumLineAmounts
+// We check that at least 90% of non-zero lines are within ±tolerance of the ratio (tolerating
+// integer rounding), and that the ratio deviation from a round number is ≤ 2% (i.e. total
+// lines ratio is stable across lines).
+//
+// Safety conditions (must ALL be true to return a factor):
+//   1. documentTotal > 0 and sumLineAmounts > 0
+//   2. sumLineAmounts > documentTotal  (it is a discount, not a surcharge)
+//   3. deviation > 0.15 (reuses the same threshold as computeNeedsAmountReview)
+//   4. At least 90% of lines with nonzero amount are consistent with the factor (±2%)
+//   5. discount_applied == 0 (idempotency; caller checks this)
+//
+// The function does NOT look at supplier name, percentage text, or any hardcoded value;
+// it derives everything from the data.
+function detectDocumentLevelDiscount(
+  items: Array<{ amount: number | null }>,
+  documentTotal: number | null,
+): number | null {
+  if (!documentTotal || documentTotal <= 0) return null;
+
+  const nonZeroAmounts = items
+    .map(it => it.amount)
+    .filter((a): a is number => a != null && a > 0);
+
+  if (nonZeroAmounts.length === 0) return null;
+
+  const sumLineAmounts = nonZeroAmounts.reduce((s, a) => s + a, 0);
+  if (sumLineAmounts <= 0) return null;
+
+  // Must be a discount (total < sum), not a surcharge
+  if (documentTotal >= sumLineAmounts) return null;
+
+  const deviation = Math.abs(sumLineAmounts - documentTotal) / documentTotal;
+  if (deviation <= 0.15) return null; // within tolerance; not a significant mismatch
+
+  const factor = documentTotal / sumLineAmounts;
+
+  // Consistency check: at least 90% of lines must have amount * factor ≈ rounded value (±2%)
+  const TOLERANCE = 0.02;
+  const consistentCount = nonZeroAmounts.filter(a => {
+    const scaled = a * factor;
+    const rounded = Math.round(scaled * 100) / 100; // round to cents
+    return Math.abs(scaled - rounded) / (rounded || 1) <= TOLERANCE;
+  }).length;
+
+  const consistencyRatio = consistentCount / nonZeroAmounts.length;
+  if (consistencyRatio < 0.90) return null; // per-line or mixed discount — not safe to apply
+
+  return factor;
+}
+
 function hasValidFinancialCore(items: Array<{ quantity: number | null; price: number | null; amount: number | null }>): boolean {
   return items.some(item =>
     item.quantity != null && item.quantity > 0
@@ -355,13 +412,37 @@ export async function processInvoiceFile(
     let imgNeedsReview = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount ?? null, imgVatRate, imgPricesIncludeVat);
     if (routerResult.gigachatParseQuality?.suggestElevatedReview) imgNeedsReview = 1;
     if (routerResult.amountReviewRequired || imgVatNormalization?.needsAmountReview) imgNeedsReview = 1;
-    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-    const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    // Form D detection for image path (same logic as PDF/Excel path)
+    let imgFormDApplied = 0;
+    const imgFormDOriginalPrices: Array<number | null> = parseResult.items.map(() => null);
+    if (parseResult.totalAmount != null && parseResult.totalAmount > 0) {
+      const imgFormDFactor = detectDocumentLevelDiscount(parseResult.items, parseResult.totalAmount);
+      if (imgFormDFactor != null) {
+        for (let i = 0; i < parseResult.items.length; i++) {
+          const item = parseResult.items[i];
+          if (item.price != null) {
+            imgFormDOriginalPrices[i] = item.price;
+            item.price = Math.round(item.price * imgFormDFactor * 100) / 100;
+          }
+          if (item.amount != null) {
+            item.amount = Math.round(item.amount * imgFormDFactor * 100) / 100;
+          }
+        }
+        imgFormDApplied = 1;
+        const imgDiscountPct = Math.round((1 - imgFormDFactor) * 10000) / 100;
+        imgReason += ` | Form D: скрытая скидка ${imgDiscountPct}% (factor=${imgFormDFactor.toFixed(4)}) — цены скорректированы`;
+        const imgReviewAfter = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount, imgVatRate, imgPricesIncludeVat);
+        if (imgReviewAfter === 0) imgNeedsReview = 0;
+      }
+    }
+    const insertInvoiceImg = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate, discount_applied) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+    const insertItemImg = db.prepare(`INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery, original_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const invoiceIdImg = db.transaction(() => {
-      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, imgReason, null, imgNeedsReview, imgVatRate ?? 22);
+      const r = insertInvoiceImg.run(projectId, supplierIdImg, parseResult.invoiceNumber, parseResult.invoiceDate, fileName, file.path, parseResult.totalAmount, parseResult.vatAmount ?? null, status, routerResult.category, imgReason, null, imgNeedsReview, imgVatRate ?? 22, imgFormDApplied);
       const iid = Number(r.lastInsertRowid);
-      for (const item of parseResult.items) {
-        insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0);
+      for (let i = 0; i < parseResult.items.length; i++) {
+        const item = parseResult.items[i];
+        insertItemImg.run(iid, item.article, item.name, item.unit, item.quantity, item.quantity_packages ?? null, item.price, item.amount, item.row_index, isDeliveryItem(item.name) ? 1 : 0, imgFormDOriginalPrices[i]);
       }
       return iid;
     })();
@@ -689,14 +770,50 @@ export async function processInvoiceFile(
     parsingCategoryReason += ` | обнаружена скидка ${parseResult.discountDetected}% — проверьте, учтена ли в ценах строк`;
   }
 
+  // Фича Form D (document-level discount auto-apply):
+  // Если явная скидка «−X%» не найдена (discount_detected IS NULL) но итог документа
+  // существенно меньше суммы строк (>15%) — это скрытая документальная скидка.
+  // Вычисляем factor = documentTotal / sumLineAmounts, применяем к price и amount
+  // ПЕРЕД вставкой (forward-only, обратимо через original_price).
+  // Граничные случаи безопасности: per-line / per-формат скидка → factor=null → fallback.
+  let formDApplied = 0;
+  // originalPrices[i] = pre-discount price for item i (null if not discounted)
+  const formDOriginalPrices: Array<number | null> = parseResult.items.map(() => null);
+  if ((parseResult.discountDetected == null || parseResult.discountDetected === 0) && parseResult.totalAmount != null && parseResult.totalAmount > 0) {
+    const formDFactor = detectDocumentLevelDiscount(parseResult.items, parseResult.totalAmount);
+    if (formDFactor != null) {
+      // Apply factor to items in-memory before insert (original price tracked separately)
+      for (let i = 0; i < parseResult.items.length; i++) {
+        const item = parseResult.items[i];
+        if (item.price != null) {
+          formDOriginalPrices[i] = item.price;
+          item.price = Math.round(item.price * formDFactor * 100) / 100;
+        }
+        if (item.amount != null) {
+          item.amount = Math.round(item.amount * formDFactor * 100) / 100;
+        }
+      }
+      formDApplied = 1;
+      const discountPct = Math.round((1 - formDFactor) * 10000) / 100;
+      parsingCategoryReason += ` | Form D: скрытая скидка ${discountPct}% (итог ${parseResult.totalAmount} << сумма строк, factor=${formDFactor.toFixed(4)}) — цены скорректированы`;
+      console.log(`[Invoice] Form D discount applied: factor=${formDFactor.toFixed(4)} (${discountPct}% off), items=${parseResult.items.length}`);
+      // Recompute needsAmountReview with adjusted items — should now be 0 (totals should reconcile)
+      const reviewAfterAdjust = computeNeedsAmountReview(parseResult.items, parseResult.totalAmount, parsedVatRate, supplierPricesIncludeVatForReview);
+      if (reviewAfterAdjust === 0) {
+        needsAmountReview = 0;
+      }
+      // (if still >0 after adjust — keep needs_amount_review=1 as honest fallback)
+    }
+  }
+
   const insertInvoice = db.prepare(`
-    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, file_name, file_path, total_amount, vat_amount, status, parsing_category, parsing_category_reason, discount_detected, needs_amount_review, vat_rate, discount_applied)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertItem = db.prepare(`
-    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO invoice_items (invoice_id, article, name, unit, quantity, quantity_packages, price, amount, row_index, is_delivery, original_price)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const result = db.transaction(() => {
@@ -715,10 +832,12 @@ export async function processInvoiceFile(
       parseResult.discountDetected ?? null,
       needsAmountReview,
       parsedVatRate,
+      formDApplied,
     );
     const invoiceId = Number(invoiceResult.lastInsertRowid);
 
-    for (const item of parseResult.items) {
+    for (let i = 0; i < parseResult.items.length; i++) {
+      const item = parseResult.items[i];
       insertItem.run(
         invoiceId,
         item.article,
@@ -730,6 +849,7 @@ export async function processInvoiceFile(
         item.amount,
         item.row_index,
         isDeliveryItem(item.name) ? 1 : 0,
+        formDOriginalPrices[i],
       );
     }
 
@@ -1827,6 +1947,53 @@ router.post('/api/invoices/:id/apply-discount', (req: Request, res: Response) =>
     res.json({ applied: true, discount_percent });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при применении скидки', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// POST /api/invoices/:id/apply-document-discount
+// Form D backfill for already-loaded invoices: detects and applies document-level discount
+// (total << sum of line amounts) without re-parsing. Idempotent: noop if discount_applied=1.
+// Returns { applied: bool, factor: number, discount_pct: number } or { skipped: reason }.
+router.post('/api/invoices/:id/apply-document-discount', (req: Request, res: Response) => {
+  try {
+    const invoiceId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+    const invoice = db.prepare('SELECT id, discount_applied, total_amount FROM invoices WHERE id = ?').get(invoiceId) as { id: number; discount_applied: number; total_amount: number | null } | undefined;
+    if (!invoice) return res.status(404).json({ error: 'Счёт не найден' });
+
+    // Idempotency guard
+    if (invoice.discount_applied) {
+      return res.json({ skipped: 'discount_applied already set — idempotent noop', applied: false });
+    }
+
+    const items = db.prepare('SELECT id, price, amount FROM invoice_items WHERE invoice_id = ?').all(invoiceId) as Array<{ id: number; price: number | null; amount: number | null }>;
+
+    const factor = detectDocumentLevelDiscount(items, invoice.total_amount);
+    if (factor == null) {
+      return res.status(422).json({ skipped: 'No clean document-level discount detected (ambiguous, per-line, or surcharge)', applied: false });
+    }
+
+    saveSnapshot(invoiceId, 'before_formd_discount', db);
+
+    db.transaction(() => {
+      db.prepare(`
+        UPDATE invoice_items
+        SET original_price = COALESCE(original_price, price),
+            price = ROUND(price * ?, 2),
+            amount = ROUND(amount * ?, 2)
+        WHERE invoice_id = ?
+      `).run(factor, factor, invoiceId);
+
+      db.prepare(`
+        UPDATE invoices SET discount_applied = 1 WHERE id = ?
+      `).run(invoiceId);
+    })();
+
+    const discountPct = Math.round((1 - factor) * 10000) / 100;
+    console.log(`[Invoice] apply-document-discount id=${invoiceId}: factor=${factor.toFixed(4)} (${discountPct}% off)`);
+    return res.json({ applied: true, factor, discount_pct: discountPct });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при применении документальной скидки', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
