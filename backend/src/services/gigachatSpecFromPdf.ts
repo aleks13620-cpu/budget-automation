@@ -156,7 +156,10 @@ export interface GigaChatSpecPdfJSON {
   }>;
 }
 
-const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)\b/i;
+// FIX-1: \b does NOT work on Cyrillic (ASCII-only word boundary). Use lookahead instead.
+// This ensures standalone keywords like "Вентиляция", "Материалы", "Оборудование" are
+// detected as section headers and NOT promoted to parent-header anchors for Ø-children.
+const SECTION_HEADER_PATTERN = /^(вентиляция|отопление|водоснабжение|канализация|тепломеханика|автоматизация|кондиционирование|электрика|слаботочка|материалы|оборудование|раздел)(?=\s|$|[^А-Яа-яЁёA-Za-z0-9])/i;
 const DN_CHILD_PATTERN = /^(DN|Ду|Дн|d=|D=|du)\s*\d{2,}(\s|$|[xXхХ×\/\-,])/i;
 const TO_ZHE_PATTERN = /^то\s+же/i;
 const PARAMETER_CHILD_PATTERN = /^(δ|d|du|dn|ø|⌀)\s*=?\s*\d{1,4}|\b\d{1,4}\s*[xх×]\s*\d{1,4}\b|^\d{2,4}[xх×]\d{2,4}$/i;
@@ -167,15 +170,15 @@ const VARIANT_CODE_PATTERN = /^[A-Za-zА-Яа-я]{1,3}\s?\d{1,4}([-_]\d{2,4}){1,
  *   "Ø15"           (U+00D8 = standard Ø glyph from LLM or clean PDF extraction)
  *   "Ø15х2,8"       (diameter + wall thickness)
  *   "\udc9815"      (U+DC98 = garbled surrogate artefact from some pdfplumber builds)
- *   "δ=30мм Ø22"    (insulation spec with embedded diameter)
  *
  * Covers two Ø encodings:
  *   U+00D8 (Ø) — standard Latin Extended-A, used by LLM output and clean pdfplumber
  *   U+DC98     — surrogate artefact from some pdfplumber builds on certain fonts
  *
  * The pattern checks that the FIRST real token is a diameter (no leading word text).
+ * FIX-4: removed duplicate alternative `^\udc98\d{1,4}` — already covered by `^(Ø|\udc98)\d{1,4}`.
  */
-const BARE_DIAMETER_CHILD_PATTERN = /^(Ø|\udc98)\d{1,4}|^\udc98\d{1,4}/;
+const BARE_DIAMETER_CHILD_PATTERN = /^(Ø|\udc98)\d{1,4}/;
 
 /**
  * Detects a "parent-header" row in the pdfplumber stream: a real product-group name
@@ -377,13 +380,14 @@ function linkPdfParentChildren(
     ) {
       item._parentIndex = lastParentIndex;
       item.full_name = `${accumulatedName} ${item.name}`.trim();
-      // Treat position_number as quantity when the column is misaligned (no real pos).
-      // Note: quantity may already be set correctly by LLM; only override if null.
+      // FIX-2: position_number ALWAYS cleared in this branch (column-misalignment means
+      // what pdfplumber put in position is NOT a real position number, regardless of
+      // whether quantity was already set by the LLM).  Quantity override only when null.
       if (item.quantity == null) {
         const parsed = parseFloat(item.position_number);
         if (!isNaN(parsed) && parsed > 0) item.quantity = parsed;
-        item.position_number = null;
       }
+      item.position_number = null;
       continue;
     }
 
@@ -439,12 +443,20 @@ function linkPdfParentChildren(
     // diameter-only children.  Treat it as a NEW parent rather than a continuation
     // of the preceding item.  Without this check such rows were wrongly swallowed
     // as continuations, and their children (Ø15…Ø100) were left as bare orphans.
+    //
+    // FIX-3 (LOOKAHEAD GUARD): only promote if the NEXT item is actually a bare-diameter
+    // child.  This prevents standalone products with null qty/unit/manufacturer (e.g.
+    // "Кран шаровой") from being wrongly promoted to parent-headers when not followed
+    // by an Ø-child, which would anchor the next unrelated row as their child.
+    const nextItem = i + 1 < items.length ? items[i + 1] : null;
+    const nextIsBareChild = nextItem !== null && BARE_DIAMETER_CHILD_PATTERN.test(nextItem.name.trim());
     if (
       item.quantity == null &&
       item.unit == null &&
       item.manufacturer == null &&
       item.position_number === null &&
-      isParentHeaderRow(item.name)
+      isParentHeaderRow(item.name) &&
+      nextIsBareChild
     ) {
       lastParentIndex = i;
       accumulatedName = item.name;
