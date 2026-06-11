@@ -11,6 +11,27 @@ import { enrichSpecItems } from '../services/gigachatSpecParser';
 import type { SpecItemInput } from '../services/gigachatSpecParser';
 import { parseSpecFromPdf, buildRawDataFromPdfItems, PDF_SPEC_EMPTY_RAW_DATA } from '../services/gigachatSpecFromPdf';
 import { applyVariantMarkersToItems } from '../services/variantMarkers';
+import type { SpecPdfParseQuality } from '../types/specification';
+
+/**
+ * Текст оператору при hardBlock-гейте качества PDF-спеки. Причина у блока две, и
+ * сообщение должно соответствовать фактической: потеря колонки «Количество»
+ * (сдвиг колонок при пустой «Поз.» — bareOrphanFraction ≈ 0, поэтому старый текст
+ * про «оторванные типоразмеры» был бы бессмыслицей «0% строк…»), либо развал
+ * иерархии (голые сироты). При потере количества берём уже готовое предупреждение
+ * из specParseQuality.warnings (см. gigachatSpecParseQuality), с понятным фолбэком.
+ */
+function hardBlockReason(q: SpecPdfParseQuality): string {
+  if (q.quantityColumnLost) {
+    const qtyWarning = q.warnings.find(w => w.includes('Количество'));
+    return (
+      qtyWarning ||
+      'Потеряна колонка «Количество»: значения количеств уехали в № позиции (сдвиг колонок). Пришлите Excel или проверьте PDF.'
+    );
+  }
+  const pct = Math.round((q.bareOrphanFraction ?? 0) * 100);
+  return `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`;
+}
 
 const upload = createUploadMiddleware({
   allowedExtensions: ['.xlsx', '.xls', '.pdf'],
@@ -83,9 +104,8 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
       // Битые данные НЕ должны течь в матчер/обучение (feedback_no_corrupt_through).
       if (parseResult.specParseQuality?.hardBlock) {
         fs.unlink(req.file.path, () => {});
-        const pct = Math.round((parseResult.specParseQuality.bareOrphanFraction ?? 0) * 100);
         return res.status(422).json({
-          error: `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`,
+          error: hardBlockReason(parseResult.specParseQuality),
           specParseQuality: parseResult.specParseQuality,
         });
       }
@@ -333,13 +353,12 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
           // (один битый PDF не валит весь батч).
           if (parseResult.specParseQuality?.hardBlock) {
             fs.unlink(file.path, () => {});
-            const pct = Math.round((parseResult.specParseQuality.bareOrphanFraction ?? 0) * 100);
             results.push({
               fileName,
               section: null,
               imported: 0,
               status: 'quality_block',
-              error: `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`,
+              error: hardBlockReason(parseResult.specParseQuality),
             });
             continue;
           }

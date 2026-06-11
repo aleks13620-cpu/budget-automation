@@ -32,7 +32,7 @@ HEADER_KEYWORDS = {
     'equipment_code': ['код оборудования', 'код изделия'],
     'manufacturer': ['поставщик', 'производител', 'изготовител', 'завод'],
     'unit': ['единица', 'ед.', 'ед '],
-    'quantity': ['количест', 'кол-во', 'кол.'],
+    'quantity': ['количест', 'кол-во', 'к-во', 'кол.'],
     'mass_per_unit': ['масса един', 'масса ед'],
     'total_mass': ['масса'],
     'note': ['примечание', 'прим.'],
@@ -79,12 +79,15 @@ def norm_header(cell):
     "Код обору- дования". A trailing hyphen splits the word across lines, so a
     plain whitespace-collapse leaves "коли- чество" — and substring keywords like
     "количест"/"единица" no longer match, silently losing the column.
-    Joining hyphen+following-whitespace reconstructs the word: "количество",
-    "единица измерения", "код оборудования". Returns lowercase.
+    Joining ONLY hyphen-followed-by-whitespace reconstructs the word:
+    "количество", "единица измерения", "код оборудования". A mid-word hyphen with
+    NO following whitespace (e.g. "Кол-во", "К-во") is a real Russian abbreviation
+    and must be preserved — stripping it ("колво") would miss the "кол-во" keyword.
+    Returns lowercase.
     """
     if cell is None:
         return ''
-    joined = re.sub(r'-\s*', '', str(cell))      # join hyphen-wrapped words
+    joined = re.sub(r'-\s+', '', str(cell))      # join only soft-wrapped words (hyphen + line break), keep "кол-во"
     return re.sub(r'\s+', ' ', joined).strip().lower()
 
 
