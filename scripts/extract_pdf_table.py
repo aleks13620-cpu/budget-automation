@@ -26,7 +26,7 @@ import fitz
 import pdfplumber
 
 HEADER_KEYWORDS = {
-    'position_number': ['позици', '№ п', 'п/п'],
+    'position_number': ['позици', 'поз', '№ п', 'п/п'],
     'name': ['наименование', 'название'],
     'characteristics': ['тип', 'обозначение', 'характеристик', 'стандарт'],
     'equipment_code': ['код оборудования', 'код изделия'],
@@ -71,6 +71,23 @@ def clean_cell(cell):
     return re.sub(r'\s+', ' ', str(cell)).strip()
 
 
+def norm_header(cell):
+    """Normalize a header cell for keyword matching.
+
+    Multi-line column headers in proj drawings are soft-hyphenated when they
+    wrap inside a narrow cell, e.g. "Коли-\\nчество", "Едини-\\nца изме-\\nрения",
+    "Код обору- дования". A trailing hyphen splits the word across lines, so a
+    plain whitespace-collapse leaves "коли- чество" — and substring keywords like
+    "количест"/"единица" no longer match, silently losing the column.
+    Joining hyphen+following-whitespace reconstructs the word: "количество",
+    "единица измерения", "код оборудования". Returns lowercase.
+    """
+    if cell is None:
+        return ''
+    joined = re.sub(r'-\s*', '', str(cell))      # join hyphen-wrapped words
+    return re.sub(r'\s+', ' ', joined).strip().lower()
+
+
 def parse_float(text):
     if not text:
         return None
@@ -112,7 +129,9 @@ def scan_pages_fast(pdf_path):
 def detect_column_mapping(header_cells):
     mapping = {}
     for col_idx, cell in enumerate(header_cells):
-        text = clean_cell(cell).lower()
+        # De-hyphenate wrapped headers before matching (norm_header), otherwise
+        # "Коли-\nчество"/"Едини-\nца изме-\nрения" miss "количест"/"единица".
+        text = norm_header(cell)
         if not text:
             continue
         for field, keywords in HEADER_KEYWORDS.items():
@@ -233,7 +252,9 @@ def merge_mappings(header_mapping, inferred_mapping):
 # ── Phase 3: Row classification ──
 
 def is_header_row(cells):
-    text = ' '.join(clean_cell(c).lower() for c in cells)
+    # De-hyphenate so wrapped headers ("Коли-\nчество", "Едини-\nца изме-\nрения")
+    # still satisfy the qty/unit keyword test.
+    text = ' '.join(norm_header(c) for c in cells)
     name_kws = ['наименование', 'название', 'описание', 'номенклатура']
     qty_kws = ['количест', 'кол-во', 'кол.', 'к-во']
     unit_kws = ['ед.', 'единиц', 'изм']

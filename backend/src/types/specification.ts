@@ -28,9 +28,22 @@ export interface SpecPdfParseQuality {
    * Длинные самодостаточные имена (плоский список) сюда НЕ попадают.
    */
   bareOrphanFraction: number;
+  /** Доля строк с quantity=null (0..1). Сигнал потери колонки количества. */
+  nullQtyFraction: number;
   /**
-   * Жёсткая блокировка загрузки: иерархия катастрофически развалена
-   * (битые данные НЕ должны течь в матчер/обучение — feedback_no_corrupt_through).
+   * Доля строк (0..1), где position_number — количество-образное целое (1..N).
+   * Высокое значение вместе с nullQtyFraction = сдвиг колонок при пустой «Поз.».
+   */
+  posAsQtyFraction: number;
+  /**
+   * Сигнатура коррупции «потеряна колонка Количество»: почти все quantity=null
+   * И значения уехали в position_number (проект 12 ОВ). Триггерит hardBlock.
+   */
+  quantityColumnLost: boolean;
+  /**
+   * Жёсткая блокировка загрузки: иерархия катастрофически развалена ИЛИ потеряна
+   * колонка количества (битые данные НЕ должны течь в матчер/обучение —
+   * feedback_no_corrupt_through).
    */
   hardBlock: boolean;
 }

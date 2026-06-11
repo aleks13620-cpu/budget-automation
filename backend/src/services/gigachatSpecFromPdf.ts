@@ -15,7 +15,7 @@ import { sha256File, getGigaChatFileCache, setGigaChatFileCache } from './gigach
 import type { ParseResult, SpecificationRow } from '../types/specification';
 import {
   evaluateSpecPdfParseQuality,
-  LOW_QUALITY_NOPOS_FRACTION,
+  HARD_BLOCK_BARE_ORPHAN_FRACTION,
 } from './gigachatSpecParseQuality';
 import { applyVariantMarkersToItems } from './variantMarkers';
 import { parseSpecPdfWithGemini } from './geminiSpecFromPdf';
@@ -668,14 +668,26 @@ export async function parseSpecFromPdf(filePath: string): Promise<ParseResult> {
           skippedRows: 0,
           specParseQuality,
         };
-        // Принимаем pdfplumber только если качество приемлемое (иерархия не развалена).
-        // Иначе — НЕ возвращаем и НЕ кешируем: пробуем LLM-разметку иерархии ниже.
-        if (specParseQuality.noPosFraction <= LOW_QUALITY_NOPOS_FRACTION) {
+        // Принимаем pdfplumber, если иерархия НЕ развалена. Раньше критерием была
+        // noPosFraction ≤ 0.5, но это отвергало валидную ПЛОСКУЮ спеку без колонки
+        // «Поз.» (проект 12 ОВ: «Поз.» пустая → noPos=100%) и гнало её к LLM, который
+        // путал колонки (количество → № позиции, quantity=null). Истинный сигнал
+        // «нужен LLM для иерархии» — доля ГОЛЫХ сирот (типоразмеры/коды без родителя):
+        //   • плоский список самодостаточных имён (Поз. пустая, но имена полные) →
+        //     bareOrphan низок → ПРИНИМАЕМ детерминированный разбор (с количествами);
+        //   • вариант-семья (радиаторы Ласточки: голые DN/коды-дети) → bareOrphan высок
+        //     → шлём в LLM-якорь иерархии, как и раньше.
+        // И никогда не принимаем парс с потерянной колонкой количества (защита от того
+        // же сдвига колонок уже в детерминированном пути) — пусть решает гейт ниже/LLM.
+        const acceptable =
+          specParseQuality.bareOrphanFraction <= HARD_BLOCK_BARE_ORPHAN_FRACTION &&
+          !specParseQuality.quantityColumnLost;
+        if (acceptable) {
           cacheSpecParseResult(filePath, okRes);
           return okRes;
         }
         console.log(
-          `[parseSpecFromPdf] pdfplumber low quality (noPos=${Math.round(specParseQuality.noPosFraction * 100)}%, orphans=${Math.round(specParseQuality.orphanFraction * 100)}%) → trying LLM hierarchy`,
+          `[parseSpecFromPdf] pdfplumber low quality (noPos=${Math.round(specParseQuality.noPosFraction * 100)}%, bareOrphans=${Math.round(specParseQuality.bareOrphanFraction * 100)}%, qtyLost=${specParseQuality.quantityColumnLost}) → trying LLM hierarchy`,
         );
         pdfplumberFallback = okRes;
       }

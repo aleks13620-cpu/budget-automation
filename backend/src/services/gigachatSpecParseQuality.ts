@@ -19,6 +19,25 @@ export const HARD_BLOCK_BARE_ORPHAN_FRACTION = 0.5;
 /** Меньше строк — не блокируем (мелкая/нестандартная спека). */
 export const HARD_BLOCK_MIN_ROWS = 5;
 
+/**
+ * Сигнатура «потери колонки количества» (no_corrupt_through, проект 12 ОВ).
+ * Когда у спеки «Поз.» пустая, парсер (LLM-путь GigaChat ИЛИ детерминированный
+ * до фикса заголовков) сдвигает колонки: число из «Количество» попадает в
+ * `position_number`, а `quantity` обнуляется почти у всех строк. Без количеств
+ * смету нельзя посчитать/сматчить — это битые данные, которые НЕ должны течь в
+ * матчер/обучение. Блокируем, когда ОБА признака выполнены:
+ *  1) доля строк с quantity=null ≥ NULL_QTY_FRACTION (почти всё пусто), И
+ *  2) доля строк, где position_number — это целое количество-образное число
+ *     (1..N), ≥ POS_AS_QTY_FRACTION (значения сдвинулись в номер позиции).
+ * Второй признак отличает коррупцию от валидной спеки, где у части родителей
+ * количество законно пустое (оно на дочерних строках), но position_number там
+ * либо настоящий номер позиции, либо пуст — НЕ количество-образный.
+ */
+export const HARD_BLOCK_NULL_QTY_FRACTION = 0.9;
+export const HARD_BLOCK_POS_AS_QTY_FRACTION = 0.5;
+/** Целое 1..4 знаков без дробной части — «количество-образно» в поле позиции. */
+const QTY_SHAPED_POSITION_RE = /^\d{1,4}$/;
+
 const BARE_PREFIX_RE = /^(dn|ду|дн|d|ø|⌀|pn|ру|f|ф)\s*=?\s*[ø⌀]?\s*\d/i;
 /** Строка из почти одних цифр/размеров/кода: «C11-300-500», «300x200», «1а-2». */
 const BARE_CODE_RE = /^[a-zа-яё]{0,4}\d[\d\s.,xх×*/_+-]*$/i;
@@ -94,14 +113,42 @@ export function evaluateSpecPdfParseQuality(
     }
   }
 
+  // Сигнатура потери колонки количества (проект 12 ОВ): почти все quantity=null
+  // И значения уехали в position_number как количество-образные целые.
+  let nullQtyFraction = 0;
+  let posAsQtyFraction = 0;
+  if (mappedItems.length > 0) {
+    const nullQty = mappedItems.filter(r => r.quantity == null).length;
+    const posAsQty = mappedItems.filter(
+      r => r.position_number != null && QTY_SHAPED_POSITION_RE.test(r.position_number.trim()),
+    ).length;
+    nullQtyFraction = nullQty / mappedItems.length;
+    posAsQtyFraction = posAsQty / mappedItems.length;
+  }
+  const quantityColumnLost =
+    mappedItems.length >= HARD_BLOCK_MIN_ROWS &&
+    nullQtyFraction >= HARD_BLOCK_NULL_QTY_FRACTION &&
+    posAsQtyFraction >= HARD_BLOCK_POS_AS_QTY_FRACTION;
+
   // Жёсткий блок: иерархия катастрофически развалена — больше половины строк это
   // «голые» сироты (бессмысленные без родителя коды/типоразмеры). Плоский список
   // изделий с самодостаточными именами (orphanFraction высок, bareOrphanFraction низок)
-  // НЕ блокируется — это валидная не-иерархическая спека.
+  // НЕ блокируется — это валидная не-иерархическая спека. ЛИБО потеряна колонка
+  // количества (сдвиг колонок при пустой «Поз.») — без количеств данные бесполезны.
   const hardBlock =
+    (mappedItems.length >= HARD_BLOCK_MIN_ROWS &&
+      bareOrphanFraction > HARD_BLOCK_BARE_ORPHAN_FRACTION) ||
+    quantityColumnLost;
+  if (quantityColumnLost) {
+    warnings.push(
+      `Потеряна колонка «Количество»: ${Math.round(nullQtyFraction * 100)}% строк без количества, ` +
+        `${Math.round(posAsQtyFraction * 100)}% — число количества попало в № позиции (сдвиг колонок). Пришлите Excel или проверьте PDF.`,
+    );
+    suggestElevatedReview = true;
+  } else if (
     mappedItems.length >= HARD_BLOCK_MIN_ROWS &&
-    bareOrphanFraction > HARD_BLOCK_BARE_ORPHAN_FRACTION;
-  if (hardBlock) {
+    bareOrphanFraction > HARD_BLOCK_BARE_ORPHAN_FRACTION
+  ) {
     warnings.push(
       `Иерархия не восстановлена: ${Math.round(bareOrphanFraction * 100)}% строк — оторванные от родителя типоразмеры/коды`,
     );
@@ -114,6 +161,9 @@ export function evaluateSpecPdfParseQuality(
     noPosFraction,
     orphanFraction,
     bareOrphanFraction,
+    nullQtyFraction,
+    posAsQtyFraction,
+    quantityColumnLost,
     hardBlock,
   };
 }
