@@ -31,7 +31,7 @@ const PDF_TEXT_HINT_MAX = 40000;
 const SCAN_TEXT_THRESHOLD = 200;
 
 /** Bump when parser logic changes to auto-bypass stale cache. */
-const SPEC_PDF_PARSER_VERSION = 5;
+const SPEC_PDF_PARSER_VERSION = 6;
 
 // ---------------------------------------------------------------------------
 // Промпт (формат как INVOICE_PROMPT: JSON, self-check)
