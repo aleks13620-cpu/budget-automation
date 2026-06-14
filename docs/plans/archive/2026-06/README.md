@@ -34,6 +34,7 @@
 - `next_chat_prompt_predeploy_gate.md` — предеплой-гейт. Сделан, живёт в скилле `pre-deploy-check`.
 - `next_chat_prompt_roven_form_b_finish.md` — финиш «Ровень/Форма Б». Закрыт.
 - `next_chat_prompt_gigachat_model_fix.md` — фикс модели GigaChat. Сделан (deploy 06-15, `8e8dbe1` в проде).
+- `next_chat_prompt_2026-06-15_wiki_tier1_audit.md` — Tier-1 wiki-аудит 06-15 (`architecture/INDEX.md`, освежение README по pdfplumber-first и Gemini-tier, врезка в 01-обзор/06-стек). Закрыт.
 
 ### Завершённые worker_brief_* и парные result.md
 - `worker_brief_2026-06-13_potok_b1_load_27_pairs_to_memory.md` — загрузка 27 эталонных пар (Поток B1, приземлён 06-13).

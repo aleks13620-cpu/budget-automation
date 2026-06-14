@@ -84,3 +84,15 @@
   - В `docs/plans/archive/2026-06/README.md` — групповая опись по категориям (перекрытые планы, завершённые next_chat_prompt_*, worker briefs, canonical KB поток в парке, B1-замеры, discount/VAT, email loop, parent-child, operator feedback, прочее).
   - Сверка `plans:check:strict` — пройдена.
   - Tier-1 wiki-аудит (architecture/INDEX.md, освежение README.md по pdfplumber-first и Gemini-tier) вынесен в отдельный чат.
+
+## 2026-06-15 — Tier-1 wiki audit
+- Статус: completed
+- План: `docs/plans/archive/2026-06/next_chat_prompt_2026-06-15_wiki_tier1_audit.md`
+- Коммиты: см. push на ветке fix/gigachat-model-tier (doc-only)
+- Итог:
+  - Создан `architecture/INDEX.md` — единый навигационный лист по 9 разделам архитектуры + маршрут «start here» (README → architecture/INDEX → docs/plans/active/PLAN_track_A_B → .business/INDEX). `research/` не существует — пропущен.
+  - `README.md` освежён по двум устаревшим строкам: парсинг — `pdfplumber` (Python, слой 0 PDF-спецификаций, с 2026-05-14) + `pdf-parse` (TS, PDF-счета); сопоставление — 5 уровней (добавлен `llm_suggestion`/Gemini-tier поверх Dice и правил, фаза 8.1 от 2026-05-10). Сверено с кодом: `backend/src/services/gigachatSpecFromPdf.ts`, `pdfParser.ts`, `matcher.ts` (вызов `matchWithGemini` из `llmMatcher.ts`).
+  - `architecture/01-обзор/README.md` — врезан pdfplumber как боковой Python-процесс в слое Services + добавлены `geminiSpecFromPdf.ts`/`llmMatcher.ts`; обновлены принципы «Fallback-цепочка» и «Сопоставление в 5 уровней».
+  - `architecture/06-стек/технологии.md` — добавлена строка про pdfplumber; уточнена роль pdf-parse (PDF-счета, TS-путь); в AI добавлен Gemini.
+  - Промт чата (`docs/plans/active/next_chat_prompt_2026-06-15_wiki_tier1_audit.md`) перенесён в `docs/plans/archive/2026-06/`.
+  - НЕ трогали: датированные снапшоты `backend/docs/`, ретроспективы, прод-параметры (5.42.103.63/порт/путь-БД), стратегический план и материалы текущей фазы.
