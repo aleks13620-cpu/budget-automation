@@ -14,10 +14,10 @@
 ```
 GIGACHAT_AUTH_KEY=<base64-encoded OAuth key>
 GIGACHAT_SCOPE=GIGACHAT_API_PERS
-GIGACHAT_MODELS_FILES=GigaChat-2-Lite,GigaChat-2-Pro,GigaChat-2-Max
+GIGACHAT_MODELS_FILES=GigaChat,GigaChat-2
 ```
 
-**Стратегия:** lite-first с эскалацией качества — сначала пробует Lite, при низком качестве результата повторяет с Pro/Max.
+**Стратегия:** перебор по списку до первого успеха — сначала базовая `GigaChat`, при ошибке `GigaChat-2`, затем Gemini-фолбэк. Старшие `Pro`/`Max` на тарифе PERS/Lite недоступны (402), поэтому в список не входят. (Проверено invocation-пробником 2026-06-15.)
 
 **Кэш:** результаты сохраняются в `gigachat_file_cache` по SHA256-хэшу файла. Повторная загрузка того же файла не делает API-запрос.
 

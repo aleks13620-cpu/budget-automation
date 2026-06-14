@@ -55,7 +55,7 @@ DATABASE_PATH=../database/budget_automation.db
 UPLOAD_PATH=../data/uploads
 GIGACHAT_AUTH_KEY=<base64>
 GIGACHAT_SCOPE=GIGACHAT_API_PERS
-GIGACHAT_MODELS_FILES=GigaChat-2-Lite,GigaChat-2-Pro,GigaChat-2-Max
+GIGACHAT_MODELS_FILES=GigaChat,GigaChat-2
 ```
 
 ## Инициализация базы
