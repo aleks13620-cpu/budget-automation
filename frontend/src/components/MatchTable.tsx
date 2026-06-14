@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { api } from '../api';
 
 interface MatchItem {
@@ -80,12 +80,42 @@ const QUICK_TAGS: Array<{ id: string; icon: string; label: string }> = [
 const ALT_CONFIDENCE_THRESHOLD = 0.5;
 const ALT_MAX = 2; // show 2 alternatives below the best (top-3 total visible)
 
+// Threshold for the «Выбрать уверенные» quick-selection: pre-select only top-1
+// matches whose confidence is at least this (operator still reviews before confirm).
+const CONFIDENCE_SELECT_THRESHOLD = 0.8;
+
+// The displayed top-1 for a row: the selected price, else the first candidate.
+function getBestMatchOf(row: MatchRow): MatchItem | null {
+  return row.matches.find(m => m.isSelected) || row.matches[0] || null;
+}
+
+// The rows actually rendered (with a checkbox) for a section group: dup-group
+// leaders + standalone rows, plus orphan followers whose leader was filtered out.
+// Mirrors the per-group visibility logic in the render loop so quick-selection
+// covers exactly the rows the operator can see/check.
+function getVisibleRows(group: SectionGroup): MatchRow[] {
+  const visibleLeaderIds = new Set<number>();
+  for (const r of group.rows) {
+    if (r.dupGroup?.role === 'leader') visibleLeaderIds.add(r.specItem.id);
+  }
+  const orphanFollowers = group.rows.filter(r =>
+    r.dupGroup?.role === 'follower' && !visibleLeaderIds.has(r.dupGroup.leaderSpecItemId)
+  );
+  return [
+    ...group.rows.filter(r => !r.dupGroup || r.dupGroup.role === 'leader'),
+    ...orphanFollowers,
+  ];
+}
+
 export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [loading, setLoading] = useState<number | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [selectedMatchIds, setSelectedMatchIds] = useState<Set<number>>(new Set());
+  // Master "select all visible" checkbox: React has no `indeterminate` prop, so
+  // we drive it imperatively via a ref (see effect below).
+  const selectAllRef = useRef<HTMLInputElement>(null);
   // Local visual state: which (specItemId, tagId) pairs have been clicked.
   // Reset on page reload — backend persists the actual feedback row.
   const [appliedTags, setAppliedTags] = useState<Set<string>>(new Set());
@@ -221,9 +251,58 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
     return 'match-row-unmatched';
   };
 
-  const getBestMatch = (row: MatchRow): MatchItem | null => {
-    return row.matches.find(m => m.isSelected) || row.matches[0] || null;
+  const getBestMatch = (row: MatchRow): MatchItem | null => getBestMatchOf(row);
+
+  // Top-1 matches across all currently-VISIBLE rows that have a match and are
+  // not already confirmed — the candidates for quick mass-selection.
+  const selectableBestMatches: MatchItem[] = groupedItems
+    .flatMap(getVisibleRows)
+    .map(getBestMatchOf)
+    .filter((m): m is MatchItem => m != null && !m.isConfirmed);
+
+  const allVisibleSelected =
+    selectableBestMatches.length > 0 &&
+    selectableBestMatches.every(m => selectedMatchIds.has(m.id));
+
+  // «Выбрать все видимые / снять всё»: a true select-all/clear-all master.
+  // Any active selection (including non-best candidates picked inside expanded
+  // rows) → one click clears EVERYTHING. Empty selection → select every visible
+  // top-1. This avoids orphaning non-best ids when the master is turned off.
+  const toggleSelectAllVisible = () => {
+    if (selectedMatchIds.size > 0) {
+      clearSelected();
+      return;
+    }
+    setSelectedMatchIds(() => {
+      const next = new Set<number>();
+      for (const m of selectableBestMatches) next.add(m.id);
+      return next;
+    });
   };
+
+  // «Выбрать уверенные»: add top-1 matches at/above the confidence threshold.
+  const selectConfident = () => {
+    setSelectedMatchIds(prev => {
+      const next = new Set(prev);
+      for (const m of selectableBestMatches) {
+        if (m.confidence >= CONFIDENCE_SELECT_THRESHOLD) next.add(m.id);
+      }
+      return next;
+    });
+  };
+
+  const confidentCount = selectableBestMatches.filter(
+    m => m.confidence >= CONFIDENCE_SELECT_THRESHOLD,
+  ).length;
+
+  // Indeterminate when there is a partial selection (something selected, but not
+  // all visible bests). `checked` still reflects the full-selection state.
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        selectedMatchIds.size > 0 && !allVisibleSelected;
+    }
+  }, [selectedMatchIds, allVisibleSelected]);
 
   return (
     <>
@@ -253,6 +332,30 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
         </button>
       </p>
     )}
+    {/* Quick mass-selection (operator pre-selects, then reviews before confirming). */}
+    {selectableBestMatches.length > 0 && (
+      <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.85rem', cursor: 'pointer' }}>
+          <input
+            ref={selectAllRef}
+            type="checkbox"
+            checked={allVisibleSelected}
+            onChange={toggleSelectAllVisible}
+            disabled={bulkLoading}
+            title="Выбрать все видимые позиции с матчем"
+          />
+          Выбрать все видимые ({selectableBestMatches.length})
+        </label>
+        <button
+          className="btn btn-secondary btn-sm"
+          onClick={selectConfident}
+          disabled={bulkLoading || confidentCount === 0}
+          title={`Выбрать позиции с точностью ≥ ${Math.round(CONFIDENCE_SELECT_THRESHOLD * 100)}%`}
+        >
+          Выбрать уверенные (≥{Math.round(CONFIDENCE_SELECT_THRESHOLD * 100)}%) · {confidentCount}
+        </button>
+      </div>
+    )}
     {selectedMatchIds.size > 0 && (
       <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
         <span className="muted">Выбрано: {selectedMatchIds.size}</span>
@@ -279,10 +382,6 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
       {groupedItems.map(group => {
         // #15: separate dup-group leaders from followers so followers render only inside expand.
         const followersByLeader = new Map<number, MatchRow[]>();
-        const visibleLeaderIds = new Set<number>();
-        for (const r of group.rows) {
-          if (r.dupGroup?.role === 'leader') visibleLeaderIds.add(r.specItem.id);
-        }
         for (const r of group.rows) {
           if (r.dupGroup?.role === 'follower') {
             const list = followersByLeader.get(r.dupGroup.leaderSpecItemId) ?? [];
@@ -290,15 +389,9 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
             followersByLeader.set(r.dupGroup.leaderSpecItemId, list);
           }
         }
-        // Promote orphan followers (whose leader was filtered out by status/section/search
-        // in MatchingView) to the main render so they don't silently disappear from the table.
-        const orphanFollowers = group.rows.filter(r =>
-          r.dupGroup?.role === 'follower' && !visibleLeaderIds.has(r.dupGroup.leaderSpecItemId)
-        );
-        const visibleRows = [
-          ...group.rows.filter(r => !r.dupGroup || r.dupGroup.role === 'leader'),
-          ...orphanFollowers,
-        ];
+        // Leaders + standalone rows + promoted orphan followers (shared helper, so
+        // quick-selection above covers exactly these rendered/checkable rows).
+        const visibleRows = getVisibleRows(group);
         return (
         <tbody key={group.section}>
           {groupedItems.length > 1 && (
