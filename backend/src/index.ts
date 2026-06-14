@@ -16,7 +16,7 @@ import exportRoutes from './routes/export';
 import unitTriggerRoutes from './routes/unitTriggers';
 import priceListRoutes from './routes/priceLists';
 import gigachatRoutes from './routes/gigachat';
-import metricsDashboardRoutes from './routes/metricsDashboard';
+import metricsDashboardRoutes, { invalidateDashboardCache } from './routes/metricsDashboard';
 
 dotenv.config();
 
@@ -187,6 +187,42 @@ app.put('/api/projects/:id', (req, res) => {
   } catch (error) {
     console.error('PUT /api/projects/:id error:', error);
     res.status(500).json({ error: 'Ошибка при обновлении проекта' });
+  }
+});
+
+// POST /api/projects/:id/dashboard-visibility — toggle "показывать на главных
+// показателях" flag (worker_brief_2026-06-14_dashboard_visibility_flag §3.2).
+// Body: { show: true|false }. Lets the owner hide test projects from the
+// dashboard without deleting any data and without a hard-coded id list.
+app.post('/api/projects/:id/dashboard-visibility', (req, res) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    if (!Number.isInteger(projectId) || projectId <= 0) {
+      return res.status(400).json({ error: 'Некорректный id проекта' });
+    }
+    const { show } = req.body ?? {};
+    if (typeof show !== 'boolean') {
+      return res.status(400).json({ error: 'Поле show должно быть true или false' });
+    }
+
+    const db = getDatabase();
+    const existing = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!existing) {
+      return res.status(404).json({ error: 'Проект не найден' });
+    }
+
+    db.prepare('UPDATE projects SET show_on_dashboard = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .run(show ? 1 : 0, projectId);
+
+    // Drop the cached dashboard so the change is visible immediately, not after
+    // the 60-second TTL.
+    invalidateDashboardCache();
+
+    const row = db.prepare('SELECT id, show_on_dashboard FROM projects WHERE id = ?').get(projectId);
+    res.json(row);
+  } catch (error) {
+    console.error('POST /api/projects/:id/dashboard-visibility error:', error);
+    res.status(500).json({ error: 'Ошибка при изменении видимости проекта' });
   }
 });
 

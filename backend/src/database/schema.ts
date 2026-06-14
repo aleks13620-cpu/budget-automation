@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS projects (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
   description TEXT,
+  -- 1 = показывать на главных показателях (дашборде), 0 = скрыт владельцем.
+  -- DEFAULT 1 => новые/существующие проекты видны, пока владелец не скроет.
+  show_on_dashboard INTEGER NOT NULL DEFAULT 1,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

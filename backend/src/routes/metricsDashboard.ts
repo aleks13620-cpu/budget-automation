@@ -24,14 +24,21 @@ import { getDatabase } from '../database';
  * measurement returns 100%. An honest measurement is a separate ticket (В1.2 in
  * the plan). The card on the frontend shows "честное число позже" for now.
  *
- * Filtering: only projects with spec_total > 100 AND some sign of life
- * (with_any_candidate > 0 OR operator_confirmed > 50) count as "live" — the
- * brief asks for the dashboard to surface the 4 real projects (6/11/12/13)
- * and skip empty test sandboxes.
+ * Filtering (worker_brief_2026-06-14_dashboard_visibility_flag §3.3):
+ * a project shows on the dashboard when it is flagged
+ * `show_on_dashboard = 1` AND has at least one spec row (`spec_total > 0`).
+ * This replaced the earlier fragile heuristic (spec_total > 100 AND signal),
+ * which let test projects leak in. The flag is owner-controlled per project
+ * (NO hard-coded id list — feedback_no_hardcode); DEFAULT 1 means everything
+ * stays visible until the owner hides a project with the toggle button.
+ * `?includeHidden=1` returns all projects with spec_total > 0 (hidden ones
+ * too) so the owner can un-hide them.
  *
  * 60-second TTL cache keeps the page responsive when reloaded in quick
  * succession (a single SQL pass for all 4 projects already runs well under 2s,
- * so this is a safety net rather than a necessity).
+ * so this is a safety net rather than a necessity). The cache is keyed by the
+ * includeHidden flag and is invalidated by invalidateDashboardCache() when a
+ * project's visibility is toggled, so the change is visible immediately.
  */
 
 const router = Router();
@@ -51,34 +58,27 @@ interface ProjectMetrics {
   operator_confirmed: number;
   accuracy_at_1_status: 'tautology' | 'honest' | 'n/a';
   accuracy_at_1_value: number | null;
+  show_on_dashboard: number;
 }
 
 const TTL_MS = 60_000;
-let cache: { at: number; data: ProjectMetrics[] } | null = null;
+// Cache is keyed by the includeHidden flag — the two views return different
+// row sets, so they must not share one cache slot.
+const cache: Record<'default' | 'all', { at: number; data: ProjectMetrics[] } | null> = {
+  default: null,
+  all: null,
+};
 
-// Filter: keep only "live" projects. Brief §2.1 says the dashboard should show
-// the 4 boevye projects (6/11/12/13) and skip empty test sandboxes. Two-part
-// rule, data-driven (NOT a name whitelist — feedback_no_hardcode):
-//   live = spec_total > 100 AND has_any_real_signal,
-//   has_any_real_signal = with_any_candidate > 0 OR operator_confirmed > 50.
-// The second clause is what filters out test E2E projects that have a 700-item
-// spec uploaded but never had matching run against them (with_any_candidate=0
-// AND confirmed=0). On prod this matches the 4 expected projects exactly; on
-// the worker's stale local DB it correctly hides #10/12/13/14/26-31 etc.
-const LIVE_MIN_SPEC = 100;
-const LIVE_MIN_CONFIRMED = 50;
-
-function computeMetrics(): ProjectMetrics[] {
+function computeMetrics(includeHidden: boolean): ProjectMetrics[] {
   const db = getDatabase();
 
-  // One pass per project so we can apply the live-filter at the end without
-  // having to re-scan. Inside each project we use a single query to compute
-  // the top-1 match_type per spec_item — top-1 is "highest confidence match",
-  // matching the existing /matching endpoint's ORDER BY m.confidence DESC.
-  const projects = db.prepare('SELECT id, name FROM projects ORDER BY id').all() as Array<{
-    id: number;
-    name: string;
-  }>;
+  // One pass per project so we can apply the visibility filter at the end
+  // without having to re-scan. Inside each project we use a single query to
+  // compute the top-1 match_type per spec_item (top-1 = is_selected=1, fallback
+  // by confidence — see the top1Stmt comment below).
+  const projects = db
+    .prepare('SELECT id, name, show_on_dashboard FROM projects ORDER BY id')
+    .all() as Array<{ id: number; name: string; show_on_dashboard: number }>;
 
   const out: ProjectMetrics[] = [];
 
@@ -144,12 +144,13 @@ function computeMetrics(): ProjectMetrics[] {
     const withCand = Number(cov.with_any_candidate ?? 0);
     const confirmed = Number(cov.operator_confirmed ?? 0);
 
-    // live-filter (see LIVE_MIN_* comment above): big spec AND some sign of
-    // life (matches exist OR operator confirmed enough). Either gate alone is
-    // not enough — a 700-row spec without any matches is a stale test upload.
-    const bigEnough = specTotal > LIVE_MIN_SPEC;
-    const hasSignal = withCand > 0 || confirmed > LIVE_MIN_CONFIRMED;
-    if (!bigEnough || !hasSignal) continue;
+    // Visibility filter (brief §3.3): show a project when it is flagged
+    // show_on_dashboard=1 AND has at least one spec row (already guaranteed
+    // by the specTotal===0 skip above). With ?includeHidden=1 we keep hidden
+    // projects too (so the owner can un-hide them) — they still must have a
+    // spec. No hard-coded id list: the only gate is the owner-set flag.
+    const isVisible = Number(p.show_on_dashboard ?? 1) === 1;
+    if (!includeHidden && !isVisible) continue;
 
     const top1Rows = top1Stmt.all(p.id) as Array<{ match_type: string; cnt: number }>;
     const top1Counts: Record<string, number> = {};
@@ -175,21 +176,28 @@ function computeMetrics(): ProjectMetrics[] {
       // candidates regardless of confirmation status (separate ticket В1.2).
       accuracy_at_1_status: 'tautology',
       accuracy_at_1_value: null,
+      show_on_dashboard: isVisible ? 1 : 0,
     });
   }
 
   return out;
 }
 
-router.get('/api/metrics/dashboard', (_req: Request, res: Response) => {
+router.get('/api/metrics/dashboard', (req: Request, res: Response) => {
   try {
+    // ?includeHidden=1 (also accepts true) — return hidden projects too so the
+    // owner can un-hide them. Default view shows only show_on_dashboard=1.
+    const includeHidden = req.query.includeHidden === '1' || req.query.includeHidden === 'true';
+    const key: 'default' | 'all' = includeHidden ? 'all' : 'default';
+
     const now = Date.now();
-    if (cache && now - cache.at < TTL_MS) {
-      return res.json(cache.data);
+    const slot = cache[key];
+    if (slot && now - slot.at < TTL_MS) {
+      return res.json(slot.data);
     }
 
-    const data = computeMetrics();
-    cache = { at: now, data };
+    const data = computeMetrics(includeHidden);
+    cache[key] = { at: now, data };
     res.json(data);
   } catch (error) {
     res.status(500).json({
@@ -199,10 +207,16 @@ router.get('/api/metrics/dashboard', (_req: Request, res: Response) => {
   }
 });
 
-// Test-only: invalidate the cache (used by integration tests that mutate the
-// DB between requests). Not exposed in production routing.
-export function _invalidateDashboardCacheForTests(): void {
-  cache = null;
+// Invalidate every cached dashboard view. Called when a project's visibility
+// is toggled (POST /api/projects/:id/dashboard-visibility) so the change shows
+// up immediately instead of after the 60s TTL.
+export function invalidateDashboardCache(): void {
+  cache.default = null;
+  cache.all = null;
 }
+
+// Back-compat alias kept for the existing integration test, which mutates the
+// DB between requests and clears the cache by this name.
+export const _invalidateDashboardCacheForTests = invalidateDashboardCache;
 
 export default router;

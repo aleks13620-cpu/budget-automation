@@ -100,6 +100,17 @@ function initializeDatabase(): void {
       try { db.exec(sql); } catch { /* column already exists */ }
     }
 
+    // "Показывать на главных показателях" flag (worker_brief_2026-06-14_dashboard_visibility_flag).
+    // DEFAULT 1 => after deploy ALL projects stay visible (nothing disappears
+    // suddenly); the owner hides test projects one-by-one via the toggle button.
+    // Explicit idempotency guard (PRAGMA table_info) on top of the surrounding
+    // try-catch, so a second server start neither fails nor adds a duplicate
+    // column — and we don't silently swallow a real error on the live prod DB.
+    const projectColumns = db.prepare('PRAGMA table_info(projects)').all() as Array<{ name: string }>;
+    if (!projectColumns.some(c => c.name === 'show_on_dashboard')) {
+      db.exec('ALTER TABLE projects ADD COLUMN show_on_dashboard INTEGER NOT NULL DEFAULT 1');
+    }
+
     const matchedItemColumns = db.prepare('PRAGMA table_info(matched_items)').all() as Array<{ name: string; notnull: number }>;
     const hasPriceListItemId = matchedItemColumns.some(column => column.name === 'price_list_item_id');
     const invoiceItemColumn = matchedItemColumns.find(column => column.name === 'invoice_item_id');

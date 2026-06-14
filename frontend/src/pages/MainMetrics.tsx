@@ -22,6 +22,13 @@ import { api } from '../api';
  * Сознательно НЕ делаем (см. §5 брифа): ленту событий, ИИ-комментатор,
  * телеграм-сводку, графики, иконки, анимацию. Это всё отдельные итерации
  * после доказательства, что таблица сама по себе помогает решениям.
+ *
+ * Видимость проектов (worker_brief_2026-06-14_dashboard_visibility_flag):
+ * у каждого проекта есть кнопка «Скрыть» / «Показать». По умолчанию таблица
+ * показывает только видимые проекты. Чекбокс «Показать скрытые» в шапке
+ * запрашивает дашборд с ?includeHidden=1 — тогда видны и скрытые (с пометкой),
+ * чтобы можно было вернуть их кнопкой «Показать». Владелец так сам разово
+ * убирает тестовые проекты — без удаления данных и без жёстких списков id.
  */
 
 interface MetricRow {
@@ -39,6 +46,7 @@ interface MetricRow {
   operator_confirmed: number;
   accuracy_at_1_status: 'tautology' | 'honest' | 'n/a';
   accuracy_at_1_value: number | null;
+  show_on_dashboard: number;
 }
 
 interface Props {
@@ -121,22 +129,60 @@ const HINTS = {
             'Карточка пустая.',
 } as const;
 
-function renderRow(row: MetricRow): ReactNode {
+function ProjectRow({
+  row, onToggle, busy,
+}: {
+  row: MetricRow;
+  onToggle: (row: MetricRow, show: boolean) => void;
+  busy: boolean;
+}): ReactNode {
   const covPct = row.spec_total > 0 ? Math.round((row.with_any_candidate / row.spec_total) * 100) : 0;
   const memPct = row.with_any_candidate > 0
     ? Math.round((row.memory_top1 / row.with_any_candidate) * 100)
     : 0;
 
+  const isHidden = row.show_on_dashboard === 0;
+
   return (
     <div
-      key={row.project_id}
-      style={{ borderTop: '1px solid #e5e7eb', padding: '0.9rem 0' }}
+      style={{
+        borderTop: '1px solid #e5e7eb',
+        padding: '0.9rem 0',
+        // Скрытые проекты (видны только при «Показать скрытые») приглушаем,
+        // чтобы взгляд сразу отличал их от обычных.
+        opacity: isHidden ? 0.6 : 1,
+      }}
     >
-      <div style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.55rem' }}>
-        {row.project_name}{' '}
-        <span style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 400 }}>
-          (id {row.project_id}, всего строк: {row.spec_total})
-        </span>
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: '0.75rem', marginBottom: '0.55rem',
+      }}>
+        <div style={{ fontWeight: 600, fontSize: '1rem' }}>
+          {row.project_name}{' '}
+          <span style={{ fontSize: '0.78rem', color: '#6b7280', fontWeight: 400 }}>
+            (id {row.project_id}, всего строк: {row.spec_total})
+          </span>
+          {isHidden && (
+            <span style={{
+              fontSize: '0.72rem', color: '#b45309', fontWeight: 600,
+              marginLeft: '0.5rem', background: '#fef3c7', borderRadius: 4,
+              padding: '0.05rem 0.4rem',
+            }}>
+              скрыт
+            </span>
+          )}
+        </div>
+        <button
+          className="btn btn-secondary btn-sm"
+          disabled={busy}
+          onClick={() => onToggle(row, isHidden)}
+          title={isHidden
+            ? 'Снова показывать этот проект на главных показателях'
+            : 'Убрать этот проект из главных показателей (данные не удаляются)'}
+          style={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}
+        >
+          {isHidden ? 'Показать' : 'Скрыть'}
+        </button>
       </div>
 
       <div style={{ display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
@@ -249,17 +295,32 @@ export function MainMetrics({ onBack }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // «Показать скрытые» — когда включён, просим дашборд с ?includeHidden=1,
+  // тогда сервер вернёт и скрытые проекты (с show_on_dashboard=0).
+  const [includeHidden, setIncludeHidden] = useState(false);
+  // id проекта, у которого сейчас идёт переключение видимости (блокируем кнопку).
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
   useEffect(() => {
     let stale = false;
     setLoading(true);
     setError(null);
-    api.get('/metrics/dashboard')
+    api.get('/metrics/dashboard', { params: includeHidden ? { includeHidden: 1 } : {} })
       .then(({ data }) => { if (!stale) setRows(Array.isArray(data) ? data : []); })
       .catch(() => { if (!stale) setError('Не удалось загрузить главные показатели'); })
       .finally(() => { if (!stale) setLoading(false); });
     return () => { stale = true; };
-  }, [reloadKey]);
+  }, [reloadKey, includeHidden]);
+
+  // Скрыть/показать проект: шлём POST, затем перезагружаем список. Скрытый
+  // проект исчезнет из обычного вида; чтобы вернуть — включи «Показать скрытые».
+  const handleToggle = (row: MetricRow, show: boolean) => {
+    setTogglingId(row.project_id);
+    api.post(`/projects/${row.project_id}/dashboard-visibility`, { show })
+      .then(() => { setReloadKey(k => k + 1); })
+      .catch(() => { setError('Не удалось изменить видимость проекта'); })
+      .finally(() => { setTogglingId(null); });
+  };
 
   const avgCoverage = useMemo(() => {
     if (rows.length === 0) return null;
@@ -274,12 +335,22 @@ export function MainMetrics({ onBack }: Props) {
         marginBottom: '1rem',
       }}>
         <h2 style={{ margin: 0 }}>Главные показатели проектов</h2>
-        <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+          <label
+            style={{ fontSize: '0.82rem', color: '#374151', display: 'flex', alignItems: 'center', gap: '0.3rem', cursor: 'pointer' }}
+            title="Показать также скрытые проекты, чтобы их можно было вернуть"
+          >
+            <input
+              type="checkbox"
+              checked={includeHidden}
+              onChange={e => setIncludeHidden(e.target.checked)}
+            />
+            Показать скрытые
+          </label>
           <button
             className="btn btn-secondary"
             onClick={() => setReloadKey(k => k + 1)}
             disabled={loading}
-            style={{ marginRight: '0.5rem' }}
           >
             Обновить
           </button>
@@ -312,8 +383,19 @@ export function MainMetrics({ onBack }: Props) {
       {loading
         ? <p className="loading">Загрузка</p>
         : rows.length === 0
-          ? <p className="muted">Нет живых проектов для показа.</p>
-          : <div>{rows.map(renderRow)}</div>}
+          ? <p className="muted">
+              {includeHidden
+                ? 'Нет проектов для показа.'
+                : 'Нет видимых проектов. Включите «Показать скрытые», чтобы вернуть скрытые.'}
+            </p>
+          : <div>{rows.map(row => (
+              <ProjectRow
+                key={row.project_id}
+                row={row}
+                onToggle={handleToggle}
+                busy={togglingId === row.project_id}
+              />
+            ))}</div>}
     </div>
   );
 }

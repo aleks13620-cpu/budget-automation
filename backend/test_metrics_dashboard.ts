@@ -1,17 +1,22 @@
 /**
- * Integration test for GET /api/metrics/dashboard.
+ * Integration test for GET /api/metrics/dashboard + the show_on_dashboard
+ * visibility flag (worker_brief_2026-06-14_dashboard_visibility_flag).
  *
- * Strategy: build an isolated SQLite DB with a known set of spec_items and
- * matched_items, point getDatabase() at it, then directly drive the route
- * handler via a fake express req/res. Verifies the contract from
- * worker_brief_2026-06-14_metrics_dashboard_v1.md §2.1 + fixes §2.2-2.3:
- *   - returns one object per live project (spec_total > 100 AND has signal)
- *   - the 10 numeric fields are computed correctly
- *   - accuracy_at_1_status === 'tautology' and value === null (V1 contract)
- *   - empty / tiny / stale-big projects are filtered out
+ * Strategy: build an isolated SQLite DB with a known set of projects /
+ * spec_items / matched_items, point getDatabase() at it, then drive the route
+ * handler via a real (ephemeral-port) express app. Verifies:
+ *   - the 11 fields (10 numeric + project_name + show_on_dashboard) per project
  *   - top-1 is is_selected=1 (fallback by confidence DESC, id ASC), matching
  *     the tier breakdown query in /matching (matching.ts:741-747)
  *   - is_selected=1 takes priority even when a rival has higher confidence
+ *   - NEW filter (brief §3.3): show only show_on_dashboard=1 AND spec_total>0.
+ *     An empty project (spec_total=0) is always dropped; a project with
+ *     show_on_dashboard=0 is dropped from the default view.
+ *   - NEW ?includeHidden=1: hidden projects (with a spec) come back too, each
+ *     carrying show_on_dashboard so the UI can label / un-hide them.
+ *   - NEW toggle effect: flipping show_on_dashboard + invalidating the cache
+ *     (the contract of POST /api/projects/:id/dashboard-visibility) moves a
+ *     project between the default and includeHidden views.
  *
  * Run: ts-node test_metrics_dashboard.ts (no jest/mocha; same shape as the
  * other test_*.ts scripts in this folder).
@@ -30,16 +35,18 @@ const tmpDbPath = path.join(os.tmpdir(), `metrics-dashboard-test-${Date.now()}.d
 process.env.DATABASE_PATH = tmpDbPath;
 
 import { getDatabase } from './src/database';
-import metricsDashboardRoutes, { _invalidateDashboardCacheForTests } from './src/routes/metricsDashboard';
+import metricsDashboardRoutes, { invalidateDashboardCache } from './src/routes/metricsDashboard';
 
 function setupSchema(db: Database.Database) {
   // Minimal schema mirroring the columns metricsDashboard reads. We do NOT
   // import the real init.ts because that runs migrations and seeders that the
-  // test doesn't need.
+  // test doesn't need. The projects table includes show_on_dashboard with the
+  // same NOT NULL DEFAULT 1 the migration adds, so we test the live shape.
   db.exec(`
     CREATE TABLE projects (
       id INTEGER PRIMARY KEY,
       name TEXT NOT NULL,
+      show_on_dashboard INTEGER NOT NULL DEFAULT 1,
       created_at TEXT DEFAULT CURRENT_TIMESTAMP
     );
     CREATE TABLE specification_items (
@@ -61,20 +68,19 @@ function setupSchema(db: Database.Database) {
 }
 
 function seedScenarioA(db: Database.Database) {
-  // Project 100: "live" via spec_total > 100 (107 items).
-  // - 60 with a learned_rule top-1 (memory_top1 = 60), is_selected=1
-  // - 20 with a llm_suggestion top-1 (llm_top1 = 20), is_selected=1
-  // - 10 with a name_similarity top-1, is_selected=1
-  // - 2 with NO matches (without_candidate = 2)
+  // Project 100: visible (show_on_dashboard defaults to 1), 107 spec items.
+  // - 60 with a learned_rule top-1 (is_selected=1)
+  // - 20 with a llm_suggestion top-1 (is_selected=1)
+  // - 10 with a name_similarity top-1 (is_selected=1)
   // - 10 with two rivals: learned_rule (low conf, is_selected=1) vs
-  //   exact_article (higher conf, is_selected=0). With the new is_selected-first
-  //   tie-break, learned_rule wins (memory_top1). These 10 are confirmed too.
-  // - 5 NEW: manual match (is_selected=1, confirmed=1) → manual_top1 = 5
-  // Expected:
-  //   spec_total = 107, with_any_candidate = 105, without_candidate = 2,
-  //   memory_top1 = 70 (60 + 10 with rival), llm_top1 = 20, name_sim_top1 = 10,
-  //   manual_top1 = 5, exact_article_top1 = 0, name_characteristics_top1 = 0,
-  //   operator_confirmed = 15 (10 rival rows + 5 manual)
+  //   exact_article (higher conf, is_selected=0). is_selected wins → memory.
+  //   These 10 are confirmed too.
+  // - 5 manual (is_selected=1, confirmed=1)
+  // - 2 with NO matches (without_candidate = 2)
+  // Expected: spec_total=107, with_any_candidate=105, without_candidate=2,
+  //   memory_top1=70, llm_top1=20, name_sim_top1=10, manual_top1=5,
+  //   exact_article_top1=0, name_characteristics_top1=0, operator_confirmed=15,
+  //   show_on_dashboard=1.
   db.exec("INSERT INTO projects (id, name) VALUES (100, 'Live Project A')");
   const insSpec = db.prepare('INSERT INTO specification_items (id, project_id, name) VALUES (?, 100, ?)');
   const insMatch = db.prepare(
@@ -82,85 +88,41 @@ function seedScenarioA(db: Database.Database) {
   );
 
   let specId = 1000;
-  // 60 learned_rule
-  for (let i = 0; i < 60; i++) {
-    specId++;
-    insSpec.run(specId, `Item LR ${i}`);
-    insMatch.run(specId, 'learned_rule', 0.9, 0, 1);
-  }
-  // 20 llm
-  for (let i = 0; i < 20; i++) {
-    specId++;
-    insSpec.run(specId, `Item LLM ${i}`);
-    insMatch.run(specId, 'llm_suggestion', 0.85, 0, 1);
-  }
-  // 10 name_similarity
-  for (let i = 0; i < 10; i++) {
-    specId++;
-    insSpec.run(specId, `Item NS ${i}`);
-    insMatch.run(specId, 'name_similarity', 0.7, 0, 1);
-  }
-  // 10 with two rivals — learned_rule is_selected=1 wins top-1 even though
-  // exact_article has higher confidence. Proves is_selected takes priority.
-  // (Also confirmed=1 on the selected one.)
+  for (let i = 0; i < 60; i++) { specId++; insSpec.run(specId, `Item LR ${i}`); insMatch.run(specId, 'learned_rule', 0.9, 0, 1); }
+  for (let i = 0; i < 20; i++) { specId++; insSpec.run(specId, `Item LLM ${i}`); insMatch.run(specId, 'llm_suggestion', 0.85, 0, 1); }
+  for (let i = 0; i < 10; i++) { specId++; insSpec.run(specId, `Item NS ${i}`); insMatch.run(specId, 'name_similarity', 0.7, 0, 1); }
+  // 10 rivals — learned_rule is_selected=1 wins top-1 even though exact_article
+  // has higher confidence. Proves is_selected takes priority. (confirmed=1 too.)
   for (let i = 0; i < 10; i++) {
     specId++;
     insSpec.run(specId, `Item LR+EA ${i}`);
     insMatch.run(specId, 'learned_rule', 0.6, 1, 1);
     insMatch.run(specId, 'exact_article', 0.95, 0, 0);
   }
-  // 5 manual (new in fixes §2.3 — exercises manual_top1 field)
-  for (let i = 0; i < 5; i++) {
-    specId++;
-    insSpec.run(specId, `Item MAN ${i}`);
-    insMatch.run(specId, 'manual', 1.0, 1, 1);
-  }
-  // 2 with no matches at all
-  for (let i = 0; i < 2; i++) {
-    specId++;
-    insSpec.run(specId, `Item NONE ${i}`);
-  }
+  for (let i = 0; i < 5; i++) { specId++; insSpec.run(specId, `Item MAN ${i}`); insMatch.run(specId, 'manual', 1.0, 1, 1); }
+  for (let i = 0; i < 2; i++) { specId++; insSpec.run(specId, `Item NONE ${i}`); }
 }
 
-function seedScenarioB(db: Database.Database) {
-  // Project 200: tiny (5 items, 0 confirmed) — must be FILTERED OUT.
-  db.exec("INSERT INTO projects (id, name) VALUES (200, 'Tiny Sandbox')");
+function seedScenarioHidden(db: Database.Database) {
+  // Project 200: a real project the OWNER hid (show_on_dashboard=0). It has a
+  // spec, so it is NOT empty — under the new filter it is hidden from the
+  // default view but returned by ?includeHidden=1, carrying show_on_dashboard=0.
+  db.exec("INSERT INTO projects (id, name, show_on_dashboard) VALUES (200, 'Hidden Test Project', 0)");
   const insSpec = db.prepare('INSERT INTO specification_items (id, project_id, name) VALUES (?, 200, ?)');
-  for (let i = 0; i < 5; i++) {
-    insSpec.run(2000 + i, `Tiny ${i}`);
-  }
-}
-
-function seedScenarioC(db: Database.Database) {
-  // Project 300: live — bigEnough (110 spec items > 100) AND has signal
-  // (60 operator_confirmed > 50). Mirrors a mature project like Сокольи ВК.
-  db.exec("INSERT INTO projects (id, name) VALUES (300, 'Live Project C')");
-  const insSpec = db.prepare('INSERT INTO specification_items (id, project_id, name) VALUES (?, 300, ?)');
   const insMatch = db.prepare(
     'INSERT INTO matched_items (specification_item_id, match_type, confidence, is_confirmed, is_selected) VALUES (?, ?, ?, ?, ?)'
   );
-  // 110 spec items, 60 of them confirmed → live via both gates.
-  for (let i = 0; i < 110; i++) {
-    const sid = 3000 + i;
-    insSpec.run(sid, `C ${i}`);
-    if (i < 60) {
-      insMatch.run(sid, 'learned_rule', 0.9, 1, 1);
-    } else {
-      // The rest have no matches at all — they push spec_total above 100 but
-      // don't change memory_top1; confirmed remains 60.
-    }
+  for (let i = 0; i < 30; i++) {
+    const sid = 2000 + i;
+    insSpec.run(sid, `H ${i}`);
+    insMatch.run(sid, 'learned_rule', 0.9, 0, 1);
   }
 }
 
-function seedScenarioD(db: Database.Database) {
-  // Project 400: BIG (200 items) but NO matches anywhere → mimics a stale
-  // E2E sandbox uploaded but never matched. Must be FILTERED OUT under the
-  // new hasSignal gate (with_any_candidate=0 AND confirmed=0).
-  db.exec("INSERT INTO projects (id, name) VALUES (400, 'Big Stale Sandbox')");
-  const insSpec = db.prepare('INSERT INTO specification_items (id, project_id, name) VALUES (?, 400, ?)');
-  for (let i = 0; i < 200; i++) {
-    insSpec.run(4000 + i, `Stale ${i}`);
-  }
+function seedScenarioEmpty(db: Database.Database) {
+  // Project 300: visible flag default=1 but ZERO spec items → must be dropped
+  // from BOTH views (the spec_total>0 half of the filter, brief §3.3).
+  db.exec("INSERT INTO projects (id, name) VALUES (300, 'Empty Project')");
 }
 
 interface MetricRow {
@@ -178,13 +140,15 @@ interface MetricRow {
   operator_confirmed: number;
   accuracy_at_1_status: string;
   accuracy_at_1_value: number | null;
+  show_on_dashboard: number;
 }
 
-async function callDashboard(): Promise<MetricRow[]> {
+async function callDashboard(includeHidden = false): Promise<MetricRow[]> {
   // Spin up a real express app on an ephemeral port, hit it with http.get.
   // Cheaper than supertest, doesn't add a dep.
   const app = express();
   app.use(metricsDashboardRoutes);
+  const qs = includeHidden ? '?includeHidden=1' : '';
   return new Promise((resolve, reject) => {
     const server = app.listen(0, () => {
       const addr = server.address();
@@ -194,7 +158,7 @@ async function callDashboard(): Promise<MetricRow[]> {
         return;
       }
       http
-        .get(`http://127.0.0.1:${addr.port}/api/metrics/dashboard`, (res) => {
+        .get(`http://127.0.0.1:${addr.port}/api/metrics/dashboard${qs}`, (res) => {
           let body = '';
           res.on('data', (c) => (body += c.toString()));
           res.on('end', () => {
@@ -234,21 +198,19 @@ async function main() {
   setupSchema(db);
 
   seedScenarioA(db);
-  seedScenarioB(db);
-  seedScenarioC(db);
-  seedScenarioD(db);
+  seedScenarioHidden(db);
+  seedScenarioEmpty(db);
 
-  _invalidateDashboardCacheForTests();
+  invalidateDashboardCache();
   const rows = await callDashboard();
 
-  console.log('Response:', JSON.stringify(rows, null, 2));
+  console.log('Default view response:', JSON.stringify(rows, null, 2));
   console.log();
 
-  // Scenarios B (tiny) and D (big but stale, no matches) must be filtered out.
-  console.log('Filtering:');
-  assertEq('total rows', rows.length, 2);
-  const ids = rows.map((r) => r.project_id).sort((a, b) => a - b);
-  assertEq('project ids', JSON.stringify(ids), JSON.stringify([100, 300]));
+  // Default view: only project 100. 200 is hidden (show=0), 300 is empty.
+  console.log('Filtering (default view = show_on_dashboard=1 AND spec_total>0):');
+  assertEq('total rows', rows.length, 1);
+  assertEq('only project 100', rows[0]?.project_id, 100);
 
   console.log('\nProject 100 (Live A):');
   const a = rows.find((r) => r.project_id === 100)!;
@@ -264,24 +226,48 @@ async function main() {
   assertEq('manual_top1', a.manual_top1, 5);
   assertEq('exact_article_top1', a.exact_article_top1, 0);
   assertEq('name_characteristics_top1', a.name_characteristics_top1, 0);
-  // 10 rival rows have confirmed=1 on the selected LR + 5 manual rows confirmed
   assertEq('operator_confirmed', a.operator_confirmed, 15);
   assertEq('accuracy_at_1_status', a.accuracy_at_1_status, 'tautology');
   assertEq('accuracy_at_1_value', a.accuracy_at_1_value, null);
+  assertEq('show_on_dashboard', a.show_on_dashboard, 1);
 
-  console.log('\nProject 300 (Live C — 110 items, 60 confirmed):');
-  const c = rows.find((r) => r.project_id === 300)!;
-  assertEq('spec_total', c.spec_total, 110);
-  assertEq('with_any_candidate', c.with_any_candidate, 60);
-  assertEq('without_candidate', c.without_candidate, 50);
-  assertEq('memory_top1', c.memory_top1, 60);
-  assertEq('operator_confirmed', c.operator_confirmed, 60);
+  // includeHidden view: project 100 AND the hidden 200 (with show=0). Still NOT
+  // the empty project 300 (the spec_total>0 half of the filter always applies).
+  console.log('\nincludeHidden view (= all projects with spec_total>0):');
+  invalidateDashboardCache();
+  const all = await callDashboard(true);
+  const allIds = all.map((r) => r.project_id).sort((x, y) => x - y);
+  assertEq('rows count', all.length, 2);
+  assertEq('ids', JSON.stringify(allIds), JSON.stringify([100, 200]));
+  const hidden = all.find((r) => r.project_id === 200)!;
+  assertEq('hidden project show_on_dashboard', hidden.show_on_dashboard, 0);
+  assertEq('hidden project spec_total', hidden.spec_total, 30);
+  assertEq('empty project absent in includeHidden', all.some(r => r.project_id === 300), false);
 
-  // Caching sanity: second call should be instant — just verify it returns
-  // the same shape.
-  console.log('\nCache hit:');
+  // Toggle effect (the contract of POST /api/projects/:id/dashboard-visibility):
+  // hide project 100, invalidate cache, and confirm it leaves the default view
+  // but is still reachable via includeHidden with show_on_dashboard=0.
+  console.log('\nToggle: hide project 100 (UPDATE + invalidate cache):');
+  db.prepare('UPDATE projects SET show_on_dashboard = 0 WHERE id = ?').run(100);
+  invalidateDashboardCache();
+  const afterHide = await callDashboard();
+  assertEq('default view now empty', afterHide.length, 0);
+  const afterHideAll = await callDashboard(true);
+  const p100 = afterHideAll.find((r) => r.project_id === 100);
+  assertEq('project 100 still in includeHidden', !!p100, true);
+  assertEq('project 100 now show_on_dashboard=0', p100?.show_on_dashboard, 0);
+
+  // Toggle back: show project 100 again → reappears in default view.
+  console.log('\nToggle: show project 100 again:');
+  db.prepare('UPDATE projects SET show_on_dashboard = 1 WHERE id = ?').run(100);
+  invalidateDashboardCache();
+  const afterShow = await callDashboard();
+  assertEq('project 100 back in default view', afterShow.some(r => r.project_id === 100), true);
+
+  // Caching sanity: a second call without invalidation returns the same shape.
+  console.log('\nCache hit (no invalidation between calls):');
   const rows2 = await callDashboard();
-  assertEq('cached rows count', rows2.length, 2);
+  assertEq('cached rows count', rows2.length, afterShow.length);
 
   // cleanup
   db.close();
