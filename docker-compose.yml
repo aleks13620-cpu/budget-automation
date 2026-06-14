@@ -16,7 +16,7 @@ services:
       # GigaChat — задать на сервере в .env рядом с docker-compose.yml
       GIGACHAT_AUTH_KEY: ${GIGACHAT_AUTH_KEY:-}
       GIGACHAT_SCOPE: ${GIGACHAT_SCOPE:-GIGACHAT_API_PERS}
-      # Список моделей для PDF/вложений (через запятую). Пусто = GigaChat-2-Lite,GigaChat-2-Pro,GigaChat-2-Max
+      # Список моделей для PDF/вложений (через запятую). Пусто = дефолт кода GigaChat,GigaChat-2 (тариф PERS/Lite; Pro/Max=402)
       GIGACHAT_MODELS_FILES: ${GIGACHAT_MODELS_FILES:-}
       # OpenRouter — для Gemini Flash matching (фаза 8.1)
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}

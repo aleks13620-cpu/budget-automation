@@ -356,13 +356,15 @@ export function isGigaChatConfigured(): boolean {
  * - GIGACHAT_MODELS_FILES — основной список
  * - GIGACHAT_MODEL_INVOICE — алиас для обратной совместимости
  *
- * По умолчанию: GigaChat → GigaChat-Pro → GigaChat-Max.
- * Сначала дешёвая модель (базовая Lite-уровня), затем эскалация на более сильные.
- * Старые имена GigaChat-2-* удалены из дефолтов: после обновления API часть из них
- * возвращает 404 "No such model" (зафиксировано на проде 2026-05-16, Том 6).
- * Если ваш ключ поддерживает только legacy-имена — задайте их через env.
+ * По умолчанию: GigaChat → GigaChat-2 (обе базовые, доступны на тарифе PERS/Lite).
+ * Pro/Max убраны из дефолта: на персональном тарифе (scope GIGACHAT_API_PERS) они
+ * возвращают 402 Payment Required — это тариф-гейт (не баланс и не 404). В каталоге
+ * /models они ВИДНЫ, но ключ Lite вызвать их не может (проверено invocation-пробником
+ * 2026-06-15: GigaChat/GigaChat-2 → 200; *-Pro/*-Max → 402). GigaChat-2 — живой второй
+ * шанс перед Gemini-фолбэком.
+ * Если ваш ключ на старшем тарифе — добавьте Pro/Max через env GIGACHAT_MODELS_FILES.
  */
-const DEFAULT_FILE_JSON_MODELS = ['GigaChat', 'GigaChat-Pro', 'GigaChat-Max'];
+const DEFAULT_FILE_JSON_MODELS = ['GigaChat', 'GigaChat-2'];
 
 export function getGigaChatFileJsonModelCandidates(): string[] {
   const raw =
