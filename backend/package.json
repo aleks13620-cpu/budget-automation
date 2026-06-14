@@ -21,7 +21,7 @@
     "problem-registry:report": "node ../scripts/problem-registry.mjs report",
     "problem-registry:db:snapshot": "node ../scripts/problem-registry.mjs db:snapshot",
     "plans:check": "node ../scripts/plan-guard.mjs check",
-    "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict",
+    "plans:check:strict": "node ../scripts/plan-guard.mjs check --strict --max-active 15 --stale-days 30",
     "test:spec-pdf": "node ../scripts/test-spec-parent-child.mjs",
     "test:matcher": "node ../scripts/test-matcher-marking-discriminator.mjs"
   },

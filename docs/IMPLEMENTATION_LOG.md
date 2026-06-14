@@ -73,3 +73,14 @@
   - `docs/plans/active/plan_stabilization_2026-04-22.md` оставлен единственным active master-plan.
   - В архив перенесены устаревшие active-планы: `plan_matching_improvement_2026-03-25.md`, `plan_budget_automation_v3.md`, `plan_issues_fix_phased_4h.md`, `2025-01-20-architecture-fixes.md`, `plan_pdf_quality_stabilization_2026-04-22.md`.
   - Архивные планы сохранены с исходными именами и описаны в `docs/plans/archive/2026-05/README.md`, чтобы их можно было найти по названию или смыслу.
+
+## 2026-06-15 — Групповая чистка docs/plans/active/
+- Статус: completed
+- План: `docs/plans/archive/2026-06/cleanup_brief_plans_wiki_2026-06-15.md`
+- Коммиты: см. push на ветке fix/gigachat-model-tier (doc-only)
+- Итог:
+  - Из `docs/plans/active/` перенесено 80 файлов в `docs/plans/archive/2026-06/` (включая сам бриф чистки).
+  - В active/ оставлены 14 файлов: действующий стратегический план `PLAN_track_A_B_metric_gated_2026-06-11.md`, бэклог хвостов `carry_tasks_backlog_2026-06-15.md`, материалы текущей фазы B1/B1.2/семантика (worker briefs + next_chat_prompts 06-14/06-15) и методология (learning/semantic engine proofs).
+  - В `docs/plans/archive/2026-06/README.md` — групповая опись по категориям (перекрытые планы, завершённые next_chat_prompt_*, worker briefs, canonical KB поток в парке, B1-замеры, discount/VAT, email loop, parent-child, operator feedback, прочее).
+  - Сверка `plans:check:strict` — пройдена.
+  - Tier-1 wiki-аудит (architecture/INDEX.md, освежение README.md по pdfplumber-first и Gemini-tier) вынесен в отдельный чат.

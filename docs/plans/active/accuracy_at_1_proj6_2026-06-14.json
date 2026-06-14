@@ -1,0 +1,36 @@
+﻿{
+    "project":  6,
+    "timestamp":  "2026-06-14T11:38:05+04:00",
+    "N":  268,
+    "hits":  268,
+    "accuracyAt1Pct":  100,
+    "hitsByMatchType":  {
+                            "manual":  71,
+                            "learned_rule":  19,
+                            "name_similarity":  11,
+                            "llm_suggestion":  167
+                        },
+    "weirdCount":  0,
+    "missingGtCount":  0,
+    "summaryFromApi":  {
+                           "total":  377,
+                           "matched":  333,
+                           "confirmed":  268,
+                           "unmatched":  44,
+                           "tierBreakdown":  {
+                                                 "learned_rule":  47,
+                                                 "llm_suggestion":  204,
+                                                 "manual":  71,
+                                                 "name_similarity":  11
+                                             }
+                       },
+    "misses":  [
+
+               ],
+    "weird":  [
+
+              ],
+    "missingGt":  [
+
+                  ]
+}

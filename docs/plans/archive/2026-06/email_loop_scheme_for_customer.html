@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Как работает автоматизация: смета → запросы → счета</title>
+<style>
+  :root{
+    --blue-bg:#eaf2ff; --blue-bd:#b9d4ff; --blue:#2f6fed;
+    --green-bg:#e9f9ee; --green-bd:#b6e7c5; --green:#1faa54;
+    --orange-bg:#fff6e8; --orange-bd:#f0c074; --orange:#e0890f;
+    --grey-bg:#f1f1f4; --grey-bd:#d9d9e0; --grey:#666;
+    --ink:#1c2330; --muted:#5b6472;
+  }
+  *{box-sizing:border-box}
+  body{
+    font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+    background:#f7f8fb; color:var(--ink); margin:0; padding:32px 16px;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:760px; margin:0 auto}
+  header{text-align:center; margin-bottom:8px}
+  h1{font-size:24px; margin:0 0 6px}
+  .sub{color:var(--muted); font-size:15px; margin:0 auto 20px; max-width:560px}
+  .legend{display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:24px}
+  .chip{font-size:13px; padding:6px 12px; border-radius:999px; border:1px solid; font-weight:600}
+  .chip.b{background:var(--blue-bg); border-color:var(--blue-bd); color:var(--blue)}
+  .chip.g{background:var(--green-bg); border-color:var(--green-bd); color:var(--green)}
+  .chip.o{background:var(--orange-bg); border-color:var(--orange-bd); color:var(--orange)}
+
+  .card{
+    display:flex; align-items:flex-start; gap:14px;
+    border:1px solid; border-radius:14px; padding:16px 18px; background:#fff;
+    box-shadow:0 1px 2px rgba(20,30,60,.04);
+  }
+  .card.b{background:var(--blue-bg); border-color:var(--blue-bd)}
+  .card.g{background:var(--green-bg); border-color:var(--green-bd)}
+  .card.o{background:var(--orange-bg); border-color:var(--orange-bd); border-style:dashed}
+  .num{
+    flex:0 0 auto; width:30px; height:30px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; color:#fff; font-size:15px;
+  }
+  .b .num{background:var(--blue)} .g .num{background:var(--green)} .o .num{background:var(--orange)}
+  .emoji{font-size:26px; line-height:1; flex:0 0 auto}
+  .txt h3{margin:0 0 3px; font-size:16px}
+  .txt p{margin:0; font-size:14px; color:var(--muted); line-height:1.45}
+  .tag{display:inline-block; font-size:12px; font-weight:700; margin-top:6px; padding:2px 8px; border-radius:6px}
+  .tag.g{background:#cdeed8; color:#137c3c}
+  .tag.o{background:#ffe6bf; color:#b56b06}
+
+  .arrow{text-align:center; color:#9aa3b2; font-size:20px; line-height:1; margin:6px 0}
+
+  .supplier{
+    display:flex; align-items:center; gap:10px; justify-content:center;
+    background:var(--grey-bg); border:1px solid var(--grey-bd); color:var(--grey);
+    border-radius:12px; padding:12px 16px; font-weight:600; font-size:15px;
+  }
+  .foot{
+    margin-top:26px; padding:16px 18px; background:#fff; border:1px solid #e6e9f0;
+    border-radius:14px; font-size:14px; color:var(--muted)
+  }
+  .foot b{color:var(--ink)}
+  .foot .row{display:flex; gap:10px; align-items:flex-start; margin:6px 0}
+  .loop{text-align:center; font-size:15px; font-weight:700; color:var(--blue); margin:18px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Как это будет работать</h1>
+    <p class="sub">Один круг: загрузили смету → система сама зовёт поставщиков → счета сами возвращаются на свои места.</p>
+  </header>
+
+  <div class="legend">
+    <span class="chip b">🔵 Система делает сама</span>
+    <span class="chip g">🟢 Ваша кнопка / действие</span>
+    <span class="chip o">🟠 Пока обсуждаем</span>
+  </div>
+
+  <!-- 1 -->
+  <div class="card g">
+    <div class="num">1</div><div class="emoji">📄</div>
+    <div class="txt"><h3>Вы загружаете смету</h3>
+      <p>Закидываете файл сметы (спецификации) в систему — как обычно, Excel или PDF.</p>
+      <span class="tag g">ваше действие</span></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 2 -->
+  <div class="card b">
+    <div class="num">2</div><div class="emoji">🔎</div>
+    <div class="txt"><h3>Система читает смету</h3>
+      <p>Сама распознаёт, какие материалы и в каком количестве нужны. <i>Это она уже умеет сегодня.</i></p></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 3 -->
+  <div class="card b">
+    <div class="num">3</div><div class="emoji">🧩</div>
+    <div class="txt"><h3>Подбирает поставщиков</h3>
+      <p>Смотрит ваш список поставщиков и решает, кому какой запрос отправить.</p></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 4 -->
+  <div class="card b">
+    <div class="num">4</div><div class="emoji">✉️</div>
+    <div class="txt"><h3>Готовит письма-запросы</h3>
+      <p>Сама пишет письма поставщикам: что нужно, сколько, по какому объекту.</p></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 5 -->
+  <div class="card g">
+    <div class="num">5</div><div class="emoji">✅</div>
+    <div class="txt"><h3>Вы проверяете и жмёте «Отправить»</h3>
+      <p><b>Без вашей кнопки письма не уходят.</b> Вы видите, кому и что отправляется, и подтверждаете.</p>
+      <span class="tag g">ваше действие</span></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 6 -->
+  <div class="card b">
+    <div class="num">6</div><div class="emoji">📤</div>
+    <div class="txt"><h3>Письма уходят поставщикам</h3>
+      <p>В каждом письме — невидимая метка объекта (как штрихкод), чтобы потом ответ вернулся на своё место.</p></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <div class="supplier">🏭 Поставщики получают запрос и присылают счета</div>
+  <div class="arrow">↓</div>
+
+  <!-- 7 -->
+  <div class="card o">
+    <div class="num">7</div><div class="emoji">⏳</div>
+    <div class="txt"><h3>Ждём ответы</h3>
+      <p>Если поставщик молчит, отвечает не вовремя или прислал не то — нужны напоминания и уведомления.
+         <b>Как именно напоминать — пока обсуждаем.</b></p>
+      <span class="tag o">открытый вопрос</span></div>
+  </div>
+  <div class="arrow">↓</div>
+
+  <!-- 8 -->
+  <div class="card b">
+    <div class="num">8</div><div class="emoji">📥</div>
+    <div class="txt"><h3>Счета сами возвращаются в нужный проект</h3>
+      <p>Система забирает счета с почты (или из amoCRM) и по метке сама кладёт их в правильный объект.
+         Вы видите счета рядом со сметой — с ценами и итогом.</p></div>
+  </div>
+
+  <p class="loop">🔄 Круг замкнулся — всё в одном месте</p>
+
+  <div class="foot">
+    <div class="row"><span>🔒</span><div><b>Безопасно:</b> письма не уходят без вашего подтверждения, данные остаются на ваших серверах в РФ.</div></div>
+    <div class="row"><span>🧱</span><div><b>Делаем по частям:</b> сначала обкатаем круг на одном объекте, потом расширим на всё.</div></div>
+  </div>
+</div>
+</body>
+</html>
