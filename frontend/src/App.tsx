@@ -10,8 +10,9 @@ import { SpecificationEditor } from './pages/SpecificationEditor';
 import { FeedbackPage } from './pages/FeedbackPage';
 import { GlobalFeedbackPage } from './pages/GlobalFeedbackPage';
 import { MetricsDashboard } from './pages/MetricsDashboard';
+import { MainMetrics } from './pages/MainMetrics';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all' | 'metrics';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all' | 'metrics' | 'main-metrics';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -65,6 +66,10 @@ function App() {
     setPage('metrics');
   };
 
+  const goToMainMetrics = () => {
+    setPage('main-metrics');
+  };
+
   if (noAccess) {
     return (
       <div style={{ maxWidth: 460, margin: '4rem auto', textAlign: 'center', padding: '2rem' }}>
@@ -85,6 +90,9 @@ function App() {
           </button>
           <button className="btn btn-secondary btn-sm" onClick={goToFeedbackAll} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
             ⚠ Замечания
+          </button>
+          <button className="btn btn-secondary btn-sm" onClick={goToMainMetrics} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
+            Главные показатели
           </button>
           <button className="btn btn-secondary btn-sm" onClick={goToMetrics} style={{ fontSize: '0.75rem', marginLeft: '0.25rem' }}>
             📈 Метрики
@@ -172,6 +180,10 @@ function App() {
           onBack={goToProjects}
           initialProjectId={projectId}
         />
+      )}
+
+      {page === 'main-metrics' && (
+        <MainMetrics onBack={goToProjects} />
       )}
 
       {page === 'spec-editor' && specId && (

@@ -16,6 +16,7 @@ import exportRoutes from './routes/export';
 import unitTriggerRoutes from './routes/unitTriggers';
 import priceListRoutes from './routes/priceLists';
 import gigachatRoutes from './routes/gigachat';
+import metricsDashboardRoutes from './routes/metricsDashboard';
 
 dotenv.config();
 
@@ -93,6 +94,7 @@ app.use(exportRoutes);
 app.use(unitTriggerRoutes);
 app.use(priceListRoutes);
 app.use(gigachatRoutes);
+app.use(metricsDashboardRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
