@@ -14,8 +14,16 @@
 from __future__ import annotations
 
 import html
+import sys
 
 import yaml
+
+# Локальный запуск может быть в консоли cp1251 (Windows) — печать кириллицы и «→»
+# тогда падает. Переводим вывод в UTF-8, не роняя скрипт, если это недоступно.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
 
 import common
 import db
@@ -23,11 +31,26 @@ import db
 BAND = 0.15
 CONFIDENT = 0.6
 
+# Статус позиции: внутренний ключ → (подпись для человека, цвет плашки).
+STATUS_VIEW = {
+    "точное": ("совпадает", "background:#e1f5ee;color:#0f6e56"),
+    "проверить": ("похоже, сверьте по ссылке", "background:#faeeda;color:#854f0b"),
+}
+
+
+def _sources_cfg() -> list[dict]:
+    cfg = yaml.safe_load((common.ROOT / "config" / "sources.yaml").read_text(encoding="utf-8"))
+    return cfg.get("sources") or []
+
 
 def _enabled_real_sources() -> list[str]:
-    cfg = yaml.safe_load((common.ROOT / "config" / "sources.yaml").read_text(encoding="utf-8"))
-    return [s["key"] for s in (cfg.get("sources") or [])
+    return [s["key"] for s in _sources_cfg()
             if s.get("enabled") and s.get("recipe") != "offline"]
+
+
+def _source_names() -> dict:
+    # Человеческое имя источника берём из конфига (brand/title) — не хардкодим.
+    return {s["key"]: (s.get("brand") or s.get("title") or s["key"]) for s in _sources_cfg()}
 
 
 def comparable(price, vat_included, vat_rate) -> float | None:
@@ -95,36 +118,59 @@ def _gather() -> dict:
             "delta": delta, "status": status,
         })
     items.sort(key=lambda i: (i["delta"] is None, -(i["delta"] or 0), i["name"]))
-    return {"project_id": project_id, "snapshot": snap, "sources": srcs, "items": items}
+    return {"project_id": project_id, "snapshot": snap, "sources": srcs,
+            "src_names": _source_names(), "items": items}
 
 
 def _render(data: dict) -> str:
     e = html.escape
-    n = len(data["items"])
-    n_eco = sum(1 for i in data["items"] if i["delta"] and i["delta"] > 0)
+    items = data["items"]
+    names = data["src_names"]
+    n = len(items)
+    # «Цену счёта»/«Экономию» показываем, только если есть с чем сравнивать (база из счёта).
+    has_base = any(i["invoice_price"] is not None for i in items)
+    n_eco = sum(1 for i in items if i["delta"] and i["delta"] > 0)
+
+    # Заголовки колонок — без пустых, если базы из счёта нет.
+    heads = ["<th>Позиция</th>"]
+    if has_base:
+        heads.append('<th style="text-align:right">Цена счёта</th>')
+    heads.append('<th style="text-align:right">Дешевле всего</th>')
+    heads.append("<th>Источник · что нашли</th>")
+    if has_base:
+        heads.append('<th style="text-align:right">Экономия</th>')
+    heads.append("<th>Статус</th>")
+    head_html = "".join(heads)
+
     rows = []
-    for i in data["items"]:
-        badge = ("background:#e1f5ee;color:#0f6e56" if i["status"] == "точное"
-                 else "background:#faeeda;color:#854f0b")
-        delta = (f"<span style='color:#0f6e56;font-weight:500'>−{i['delta']}%</span>"
-                 if i["delta"] and i["delta"] > 0 else
-                 (f"<span style='color:#a32d2d'>+{abs(i['delta'])}%</span>" if i["delta"] else "—"))
-        rng = "" if i["pmin"] == i["pmax"] else f"<div style='font-size:11px;color:#888'>рынок {_rub(i['pmin'])}–{_rub(i['pmax'])}</div>"
-        link = (f"<a href='{e(i['best_url'])}' target='_blank' rel='noopener' style='color:#185fa5;text-decoration:none'>↗</a>"
+    for i in items:
+        label, badge = STATUS_VIEW.get(i["status"], (i["status"], "background:#eee;color:#444"))
+        rng = ("" if i["pmin"] == i["pmax"]
+               else f"<div class='dim'>рынок {_rub(i['pmin'])}–{_rub(i['pmax'])}</div>")
+        link = (f"<a href='{e(i['best_url'])}' target='_blank' rel='noopener' class='lnk'>↗ сверить</a>"
                 if i["best_url"] and str(i["best_url"]).startswith("http") else "")
-        rows.append(
-            f"<tr>"
-            f"<td>{e(i['name'])}<div style='font-size:11px;color:#888'>{e(i['unit'] or '')}</div></td>"
-            f"<td style='text-align:right'>{_rub(i['invoice_price'])}<div style='font-size:11px;color:#888'>{e(i['invoice_supplier'] or '')[:22]}</div></td>"
-            f"<td style='text-align:right'>{_rub(i['best_price'])} {link}{rng}</td>"
-            f"<td>{e(i['best_source'])}<div style='font-size:11px;color:#888'>{e(i['best_name'])[:40]}</div></td>"
-            f"<td style='text-align:right'>{delta}</td>"
-            f"<td><span style='font-size:12px;padding:2px 8px;border-radius:6px;{badge}'>{i['status']}</span>"
-            f"<div style='font-size:11px;color:#888'>точн {i['score']}</div></td>"
-            f"</tr>"
-        )
-    rows_html = "\n".join(rows) or "<tr><td colspan='6'>Нет данных — запусти сбор (run.py)</td></tr>"
-    sources = ", ".join(data["sources"]) or "—"
+        cells = [f"<td>{e(i['name'])}<div class='dim'>{e(i['unit'] or '')}</div></td>"]
+        if has_base:
+            delta = (f"<span style='color:#0f6e56;font-weight:500'>−{i['delta']}%</span>"
+                     if i["delta"] and i["delta"] > 0 else
+                     (f"<span style='color:#a32d2d'>+{abs(i['delta'])}%</span>" if i["delta"] else "—"))
+            cells.append(f"<td style='text-align:right'>{_rub(i['invoice_price'])}"
+                         f"<div class='dim'>{e(i['invoice_supplier'] or '')}</div></td>")
+        cells.append(f"<td style='text-align:right'>{_rub(i['best_price'])} {link}{rng}</td>")
+        cells.append(f"<td>{e(names.get(i['best_source'], i['best_source']))}<div class='dim'>{e(i['best_name'] or '')}</div></td>")
+        if has_base:
+            cells.append(f"<td style='text-align:right'>{delta}</td>")
+        cells.append(f"<td><span class='badge' style='{badge}'>{label}</span></td>")
+        rows.append("<tr>" + "".join(cells) + "</tr>")
+    rows_html = "\n".join(rows) or f"<tr><td colspan='{len(heads)}'>Нет данных — запусти сбор (run.py)</td></tr>"
+
+    cards = [f"<div class='card'><div class='l'>Позиций с ценой</div><div class='v'>{n}</div></div>"]
+    if has_base:
+        cards.append(f"<div class='card'><div class='l'>Где есть экономия</div><div class='v'>{n_eco}</div></div>")
+    cards.append(f"<div class='card'><div class='l'>Источников</div><div class='v'>{len(data['sources'])}</div></div>")
+    cards_html = "".join(cards)
+
+    sources = ", ".join(names.get(s, s) for s in data["sources"]) or "—"
     return f"""<!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -132,30 +178,37 @@ def _render(data: dict) -> str:
 <style>
  body{{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1a1a;margin:0;background:#fff;padding:24px;max-width:1000px}}
  h1{{font-size:22px;font-weight:500;margin:0 0 4px}}
- .sub{{color:#666;font-size:14px;margin-bottom:16px}}
+ .sub{{color:#666;font-size:14px;margin-bottom:14px}}
+ .intro{{background:#f7f6f2;border:1px solid #eceae3;border-radius:8px;padding:12px 16px;font-size:13px;line-height:1.6;margin-bottom:18px}}
+ .intro b{{font-weight:600}}
  .cards{{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}}
  .card{{background:#f1efe8;border-radius:8px;padding:12px 16px}}
  .card .l{{font-size:13px;color:#666}} .card .v{{font-size:22px;font-weight:500}}
  table{{width:100%;border-collapse:collapse;font-size:13px}}
  th{{text-align:left;color:#666;font-weight:500;font-size:12px;border-bottom:1px solid #ddd;padding:8px 10px}}
  td{{border-bottom:1px solid #f0f0f0;padding:9px 10px;vertical-align:top}}
+ .dim{{font-size:11px;color:#888}}
+ .badge{{font-size:12px;padding:2px 8px;border-radius:6px;white-space:nowrap}}
+ .lnk{{color:#185fa5;text-decoration:none;white-space:nowrap}}
  .note{{margin-top:16px;font-size:12px;color:#888;line-height:1.6}}
 </style></head><body>
-<h1>Где дешевле — внешние цены поставщиков</h1>
+<h1>Где дешевле — цены поставщиков из открытых источников</h1>
 <div class="sub">Проект #{data['project_id']} · срез {e(data['snapshot'])} · источники: {e(sources)}</div>
+<div class="intro">
+ <b>Что это.</b> Снимок публичных цен поставщиков по позициям проекта — видно рыночную цену каждой вещи и у кого она дешевле всего сегодня. Цены берём с официальных сайтов и прайсов, без скидок личного кабинета.<br>
+ <b>Как проверить.</b> В колонке «Источник · что нашли» — что именно подобрала система. Нажмите <b>↗ сверить</b> — откроется карточка или прайс поставщика, убедитесь, что это тот самый товар. «рынок …–…» — разброс цен по этому типу и размеру.
+</div>
 <div class="cards">
-  <div class="card"><div class="l">Позиций с ценой</div><div class="v">{n}</div></div>
-  <div class="card"><div class="l">Где есть экономия</div><div class="v">{n_eco}</div></div>
-  <div class="card"><div class="l">Источников</div><div class="v">{len(data['sources'])}</div></div>
+  {cards_html}
 </div>
 <table>
-<thead><tr><th>Позиция</th><th style="text-align:right">Цена счёта</th><th style="text-align:right">Дешевле всего</th><th>Источник</th><th style="text-align:right">Экономия</th><th>Статус</th></tr></thead>
+<thead><tr>{head_html}</tr></thead>
 <tbody>
 {rows_html}
 </tbody></table>
 <div class="note">
  Снимок публичных базовых цен (без индивидуальных скидок личного кабинета — их при необходимости добавляем как % на поставщика).<br>
- «точное» — уверенное совпадение; «проверить» — тот же тип и размер, вариант стоит сверить. У каждой цены есть ссылка на источник (↗).
+ Ярлык <b>совпадает</b> — система уверена в подборе; <b>похоже, сверьте по ссылке</b> — тот же тип и размер, но конкретный вариант стоит сверить вручную по ссылке ↗.
 </div>
 </body></html>"""
 
