@@ -28,6 +28,7 @@ except Exception:
 
 import common
 import db
+import normalize as nz
 
 BAND = 0.15
 CONFIDENT = 0.6
@@ -129,8 +130,14 @@ def _gather() -> dict:
         pmax = max(c["_cmp"] for c in band)
         base = base_by_id.get(sid)
         base_cmp = comparable(base["price"], True, 22) if base else None
-        delta = round(100 * (base_cmp - best["_cmp"]) / base_cmp, 1) if (base_cmp and top >= CONFIDENT) else None
         pos = pos_by_id.get(sid, {})
+        qname = pos.get("name") or best["query_name"]
+        # «Экономию %» заявляем ТОЛЬКО при уверенном совпадении ТИПА (опознан и совпал
+        # у запроса и кандидата). Иначе матч держится на случайном общем слове —
+        # и «−78%» выходит ложной (напр. «Фланец обратный» ↔ «Обратный клапан»).
+        qt, ct = nz.product_type(qname), nz.product_type(best["name"])
+        type_ok = qt is not None and qt == ct
+        delta = round(100 * (base_cmp - best["_cmp"]) / base_cmp, 1) if (base_cmp and top >= CONFIDENT and type_ok) else None
         status = "точное" if top >= 0.66 else "проверить"
         # Фильтр слоя ОТЧЁТА (не матчинг): прячем матчи другого типа товара
         # (изоляция→кронштейн, тройник→ниппель) — они противоречат подписи «тот же тип».
@@ -160,9 +167,11 @@ def _render(data: dict) -> str:
     items = data["items"]
     names = data["src_names"]
     n = len(items)
-    # «Цену счёта»/«Экономию» показываем, только если есть с чем сравнивать (база из счёта).
-    has_base = any(i["invoice_price"] is not None for i in items)
     n_eco = sum(1 for i in items if i["delta"] and i["delta"] > 0)
+    # Блок «Цена счёта / Экономия» показываем ТОЛЬКО при наличии уверенной экономии:
+    # иначе (как при одной случайной базе) колонки сплошь «—» и лишь путают — а цель
+    # этой страницы — понятность. has_base = «есть что показать в блоке экономии».
+    has_base = n_eco > 0
 
     # Заголовки колонок — без пустых, если базы из счёта нет.
     heads = ["<th>Позиция</th>"]

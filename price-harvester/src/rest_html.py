@@ -21,6 +21,7 @@ from bs4 import BeautifulSoup
 
 import common  # noqa: F401  (путь к harvester + .env до импорта rest_client)
 import normalize as nz
+import price_xlsx  # переиспользуем INCH_TO_DN (дюймы→DN) — единый словарь с Valtec
 import rest_client
 
 
@@ -75,21 +76,61 @@ def _to_float(v) -> float | None:
         return None
 
 
+def _css_text(node, sel: str | None) -> str | None:
+    if not sel:
+        return None
+    el = node.select_one(sel)
+    return el.get_text(" ", strip=True) if el else None
+
+
+def _css_href(node, sel: str | None) -> str | None:
+    if not sel:
+        return None
+    el = node.select_one(sel)
+    if el is None:
+        return None
+    if el.has_attr("href"):
+        return el["href"]
+    a = el.find("a", href=True)
+    return a["href"] if a else None
+
+
+_INCH_RE = re.compile(r'(\d+(?:[.\s]\d+/\d+|/\d+|\s+\d+/\d+)?)\s*["”″]')
+
+
+def _inch_dn(name: str) -> int | None:
+    """Дюймовый размер из имени (1/2", 1.1/2") → DN через общий INCH_TO_DN (как Valtec)."""
+    m = _INCH_RE.search(name or "")
+    if not m:
+        return None
+    tok = re.sub(r"\s+", " ", m.group(1).replace(".", " ")).strip()
+    return price_xlsx.INCH_TO_DN.get(tok)
+
+
 def parse_listing(html: str, page_url: str, label: str, cfg: dict) -> list[dict]:
     soup = BeautifulSoup(html, "html.parser")
-    blocks = soup.find_all(attrs={"itemtype": lambda v: v and "Product" in v})
+    css = cfg.get("css") or {}                 # CSS-режим для сайтов БЕЗ schema.org
+    if css.get("product"):
+        blocks = soup.select(css["product"])
+    else:
+        blocks = soup.find_all(attrs={"itemtype": lambda v: v and "Product" in v})
     dn_re = cfg.get("dn_regex")
     art_re = cfg.get("article_regex")
     out = []
     for b in blocks:
-        name = _itemprop(b, "name")
-        price = _to_float(_itemprop(b, "price"))
+        if css.get("product"):
+            name = _css_text(b, css.get("name"))
+            price = _to_float(_css_text(b, css.get("price")))
+            href = _css_href(b, css.get("link") or css.get("name"))
+            article = None
+        else:
+            name = _itemprop(b, "name")
+            price = _to_float(_itemprop(b, "price"))
+            href = _product_link(b)
+            article = _itemprop(b, "sku") or _itemprop(b, "mpn")
         if not name or price is None:        # «по запросу» / нет цены — пропускаем
             continue
-        href = _product_link(b)
         url = _abs_url(href, page_url) if href else page_url
-
-        article = _itemprop(b, "sku") or _itemprop(b, "mpn")
         if not article and art_re:
             m = re.search(art_re, name)
             article = m.group(1) if m else None
@@ -100,6 +141,8 @@ def parse_listing(html: str, page_url: str, label: str, cfg: dict) -> list[dict]
             dn = int(m.group(1)) if m else None
         if dn is None:
             dn = nz.extract_dn(name)
+        if dn is None and cfg.get("inch_dn"):
+            dn = _inch_dn(name)
 
         rec = {
             "natural_key": article or url,

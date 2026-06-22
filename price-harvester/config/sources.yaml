@@ -84,6 +84,38 @@ sources:
     match:
       categories: [счетчики]
 
+  # --- РЕАЛЬНЫЙ источник: АС ГРУПП / ТД АСГ — мультибренд сантехника (карточки HTML, CSS-режим) ---
+  # сантехник-а.рф (Bitrix): цены server-rendered в HTML БЕЗ schema.org → rest_html + css-селекторы.
+  # robots: /catalog/ открыт; пагинация (*pagen / *?) ЗАПРЕЩЕНА → max_pages:1 (только стр.1 разделов).
+  # Размеры арматуры в дюймах → inch_dn:true (общий INCH_TO_DN с Valtec). Разведано+проверено 22.06.
+  - key: santehnika_asg
+    title: "АС ГРУПП / ТД АСГ — сантехника (сантехник-а.рф, карточки)"
+    kind: dealer
+    recipe: rest_html
+    list_urls:
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/krany-dlya-vody-sharovye/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/obratnye-klapana-1/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/regulyatory-davleniya/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/kosye-filtry/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/schetchiki-dlya-vody/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/teploizolyatsiya-dlya-trub/"
+    max_pages: 1
+    inch_dn: true
+    css:
+      product: "div.item_info"
+      name: ".item-title a"
+      price: ".price .values_wrapper"
+      link: ".item-title a"
+    brand: "АС ГРУПП"
+    supplier_name: "ТД АСГ (сантехник-а.рф)"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: true
+    match:
+      categories: [арматура, счетчики, изоляция, отопление, трубы]
+
   # --- ОБРАЗЕЦ: офлайн-проверка конвейера без сети (включить при отладке) ---
   - key: sample_engineering
     title: "Образец YML-фида (инженерка) — офлайн-проверка"
