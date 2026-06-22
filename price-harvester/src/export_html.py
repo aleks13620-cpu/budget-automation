@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import html
+import re
 import sys
 
 import yaml
@@ -51,6 +52,30 @@ def _enabled_real_sources() -> list[str]:
 def _source_names() -> dict:
     # Человеческое имя источника берём из конфига (brand/title) — не хардкодим.
     return {s["key"]: (s.get("brand") or s.get("title") or s["key"]) for s in _sources_cfg()}
+
+
+_WORD_RE = re.compile(r"[а-яёa-z]+", re.I)
+
+
+def _norm(s) -> str:
+    return str(s or "").lower().replace("ё", "е")
+
+
+def _type_tokens(name, k: int = 2) -> list[str]:
+    # Ведущие значимые слова (≥4 букв) имени — обычно это ТИП товара (кран/отвод/изоляция).
+    sig = [w for w in _WORD_RE.findall(_norm(name)) if len(w) >= 4]
+    return sig[:k]
+
+
+def _type_consistent(query_name, matched_name) -> bool:
+    """Фильтр СЛОЯ ОТЧЁТА (НЕ матчинг): матч «того же типа», если хотя бы одно ведущее
+    тип-слово позиции есть в подобранном названии. Отсекает изоляция→кронштейн,
+    тройник→ниппель, отвод→переходник; сохраняет переход→переходник, труба→труба."""
+    toks = _type_tokens(query_name)
+    if not toks:
+        return True  # тип не опознали — не прячем (не наша вина)
+    mn = _norm(matched_name)
+    return any(t in mn for t in toks)
 
 
 def comparable(price, vat_included, vat_rate) -> float | None:
@@ -94,6 +119,7 @@ def _gather() -> dict:
             by_spec.setdefault(r["spec_item_id"], []).append(r)
 
     items = []
+    dropped_type = 0
     for sid, cands in by_spec.items():
         cands.sort(key=lambda c: (c["match_score"] or 0), reverse=True)
         top = cands[0]["match_score"] or 0
@@ -106,6 +132,11 @@ def _gather() -> dict:
         delta = round(100 * (base_cmp - best["_cmp"]) / base_cmp, 1) if (base_cmp and top >= CONFIDENT) else None
         pos = pos_by_id.get(sid, {})
         status = "точное" if top >= 0.66 else "проверить"
+        # Фильтр слоя ОТЧЁТА (не матчинг): прячем матчи другого типа товара
+        # (изоляция→кронштейн, тройник→ниппель) — они противоречат подписи «тот же тип».
+        if not _type_consistent(pos.get("name") or best["query_name"], best["name"]):
+            dropped_type += 1
+            continue
         items.append({
             "name": pos.get("name") or best["query_name"],
             "unit": pos.get("unit") or best.get("unit"),
@@ -117,6 +148,8 @@ def _gather() -> dict:
             "pmin": pmin, "pmax": pmax, "n": len(cands), "score": round(top, 2),
             "delta": delta, "status": status,
         })
+    if dropped_type:
+        print(f"  фильтр отчёта: скрыто матчей другого типа — {dropped_type}")
     items.sort(key=lambda i: (i["delta"] is None, -(i["delta"] or 0), i["name"]))
     return {"project_id": project_id, "snapshot": snap, "sources": srcs,
             "src_names": _source_names(), "items": items}
