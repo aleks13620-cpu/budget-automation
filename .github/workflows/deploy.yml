@@ -1,8 +1,9 @@
 name: Deploy to server
 
+# ВРЕМЕННО переведено на ручной запуск (workflow_dispatch) на время восстановления
+# сервера после смены IP. Вернуть `on: push: branches: [main]` после стабилизации.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -15,11 +16,11 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d ' \n\r' | base64 -d > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H 5.42.103.63 >> ~/.ssh/known_hosts
+          ssh-keyscan -H 109.73.206.178 >> ~/.ssh/known_hosts
 
       - name: Deploy
         run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@5.42.103.63 << 'ENDSSH'
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no root@109.73.206.178 << 'ENDSSH'
             set -e
             REPO_DIR=/root/budget-automation
             REPO_URL=https://github.com/aleks13620-cpu/budget-automation.git

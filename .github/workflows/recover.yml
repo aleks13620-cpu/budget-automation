@@ -1,0 +1,53 @@
+name: Recover (backup DB + diagnose)
+
+# Ручной запуск. Заходит на сервер с раннера GitHub (его IP сервер пускал при деплое),
+# снимает копию базы и диагностику сети/файрвола, отдаёт всё артефактом.
+# НИЧЕГО НА СЕРВЕРЕ НЕ МЕНЯЕТ (read-only).
+on:
+  workflow_dispatch:
+    inputs:
+      host:
+        description: "IP сервера"
+        required: true
+        default: "109.73.206.178"
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | tr -d ' \n\r' | base64 -d > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H -T 20 "${{ github.event.inputs.host }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Backup DB + diagnostics
+        run: |
+          mkdir -p out
+          HOST="${{ github.event.inputs.host }}"
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@"$HOST" bash -s > out/session.log 2>&1 << 'ENDSSH'
+            set -x
+            echo "=== HOSTNAME ==="; hostname; uptime
+            echo "=== FIREWALL: ufw ==="; ufw status verbose 2>&1 || echo "no ufw"
+            echo "=== FIREWALL: iptables ==="; iptables -S 2>&1 | head -60 || echo "no iptables"
+            echo "=== LISTENING PORTS ==="; ss -tlnp 2>&1 | head -40
+            echo "=== DOCKER ==="; docker ps -a --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>&1 || echo "no docker"
+            echo "=== DB FILES ==="; ls -la /root/budget-automation/database/ 2>&1
+            echo "=== MAKE BACKUP ==="
+            cd /root/budget-automation
+            tar czf /tmp/db_backup.tgz -C /root/budget-automation database data/uploads 2>/dev/null && echo "TAR_OK $(ls -la /tmp/db_backup.tgz)"
+          ENDSSH
+          echo "----- session.log -----"; cat out/session.log
+          echo "===== pulling backup tar ====="
+          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o ConnectTimeout=30 root@"$HOST":/tmp/db_backup.tgz out/db_backup.tgz || echo "SCP FAILED"
+          ls -la out/
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prod-recovery
+          path: out/
+          retention-days: 7
