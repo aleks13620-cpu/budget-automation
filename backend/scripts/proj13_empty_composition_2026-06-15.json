@@ -1,0 +1,200 @@
+{
+  "project": 13,
+  "project_name": "ЖК БКК ВК",
+  "date": "2026-06-15",
+  "mode": "READ-ONLY prod GET; offline classification; Mistral sanity only",
+  "endpoint": "GET http://5.42.103.63:3001/api/projects/13/matching",
+  "summary_from_prod": {
+    "total": 281,
+    "matched": 106,
+    "confirmed": 0,
+    "unmatched": 175,
+    "tierBreakdown": {
+      "learned_rule": 5,
+      "llm_suggestion": 101
+    }
+  },
+  "total_spec_items": 281,
+  "total_empty": 175,
+  "families": {
+    "CATALOGABLE": {
+      "count": 76,
+      "pct": "43.4%",
+      "with_matched_twin_this_run": 34,
+      "subfamilies": {
+        "труба/трубы": 15,
+        "клапан запорный": 12,
+        "кран спускной": 8,
+        "фланец": 7,
+        "водомерный узел(компл)": 4,
+        "манометр": 4,
+        "сальник набивной": 4,
+        "фильтр магнитный": 3,
+        "задвижка": 2,
+        "муфта переходная": 2,
+        "смеситель": 2,
+        "кассета пож.рукав": 2,
+        "фильтр": 2,
+        "насос/станция": 1,
+        "кран поливочный": 1,
+        "поддон душевой": 1,
+        "унитаз": 1,
+        "комп.патрубок": 1,
+        "противопожарная муфта": 1,
+        "кран пожарный": 1,
+        "клапан пожарный": 1,
+        "огнетушитель": 1
+      },
+      "examples": [
+        "Водомерный узел на вводе №1 ,компл.:",
+        "Манометр показывающий обыкновенного исполнения с трехходовым краном со шкалой до 10кгс/см2",
+        "Фильтр магнитный фланцевый Тдо150 С, Р=16 кгс/см2 ФМФ-80",
+        "Фланец плоский 1-80-16 ст.20",
+        "Фланец плоский 1-150-16 ст.20",
+        "Кран спускной d25 Ру=16кгс/см Трубы стальные электросварные оцинкованные",
+        "Водомерный узел N2 перед теплообменником , компл. :",
+        "Манометр показывающий обыкновенного исполнения с трехходовым краном со шкалой до 10кгс/см2",
+        "Фильтр магнитный фланцевый Тдо150 С, Р=16 кгс/см2 ФМФ-50",
+        "Кранспускной d25 Ру=16кгс/см",
+        "Фланец плоский 1-50-16 ст.20",
+        "Трубы стальные водогазопроводные оцинкованные",
+        "Гибкие вставки к насосам виброизолирующие l=1.0м dy80",
+        "Задвижка чугунная фланцевая с обрезиненным клином PN10",
+        "Фланец плоский 1-80-16 ст.20",
+        "Трубы стальные водогазопроводные оцинкованные",
+        "Кран поливочный наружный, компл.:",
+        "Клапан запорный муфтовый Ру=16кгс/см d25",
+        "Трубы стальные водогазопроводные оцинкованные d25(33.5x2.8)",
+        "Фланец плоский 1-80-16 ст.20"
+      ]
+    },
+    "BY_WEIGHT_MOUNT": {
+      "count": 32,
+      "pct": "18.3%",
+      "note": "real items spec'd by weight (kg): крепление/хомуты, гильзы, теплоизоляция — catalog-adjacent, often by-weight not unit",
+      "subfamilies": {
+        "креплениедля труб(кг)": 19,
+        "гильзы(прокладка труб)": 10,
+        "теплоизоляция": 3
+      },
+      "examples": [
+        "Крепление для труб Гильзы для прокладки труб в пеpекpытияx длиной 400мм",
+        "Крепление для труб",
+        "Гильзы для прокладки труб в перекрытиях длиной 400мм",
+        "Крепление для труб",
+        "Гильзыдляпрокладкитрубвперекрытиях длиной400мм d108x3,2",
+        "Крепление для труб",
+        "Крепление для труб",
+        "Гильзы для прокладки труб в перекрытиях длиной 400мм",
+        "Крепление для труб",
+        "Гильзы для прокладки труб в перекрытиях длиной 400мм",
+        "Крепление для труб",
+        "Тепловая изоляция трубками из полиэтиленовой пены класс горючести Г1, толщ.9 мм",
+        "Крепление для стальных труб",
+        "Гильзы для прокладки труб в перекрытиях длиной 300мм d48x2,0",
+        "d89x2,5 Тепловая изоляция трубками из полиэтиленовой пены класс горючести Г1, толщ.13 мм",
+        "Крепление для труб",
+        "Гильзыдляпрокладкитрубвперекрытиях длиной 300мм d108x3,0",
+        "Крепление для труб Гильзы для прокладки труб в перекрытиях длиной 300мм",
+        "Противопожарная муфта Дн 110 Трубная теплоизоляция с закрытой поровой структурой",
+        "Крепление для труб"
+      ]
+    },
+    "CUSTOM_FAB": {
+      "count": 2,
+      "pct": "1.1%",
+      "subfamilies": {
+        "fab_obvyazka": 1,
+        "fab_by_place": 1
+      },
+      "examples": [
+        "Обвязка насосной станции, компл.",
+        "Ревизия стальная сварная (изготавливается по месту) dy100 Водопровод хозяйственно-питьевой В1.'ниже отм.0,000"
+      ]
+    },
+    "FRAGMENT": {
+      "count": 65,
+      "pct": "37.1%",
+      "note": "bare dimension sub-rows (dy150, d80x3.5), attribute continuations (для стальных труб dyXX), coating/labour lines, section headers — NOT products",
+      "subfamilies": {
+        "dim": 41,
+        "attr_for_pipe": 14,
+        "coating_labour": 4,
+        "other_header": 2,
+        "attr_misc": 2,
+        "attr_class": 1,
+        "attr_with": 1
+      },
+      "examples": [
+        "— Водопровод хозяйственно-питьевой В1,В1.1 ниже отм.0,000",
+        "t до 225гр dy80",
+        "dy150",
+        "d80(88.5х3.5)",
+        "dу150(159.0х4.5)",
+        "dy50(60.0х3.0)",
+        "1до225 о dy80",
+        "d80(88.5х3.5)",
+        "d25",
+        "d50",
+        "dy25(33.5x2.8)",
+        "dy50(60.0x3.0)",
+        "dy65(77.5x3.5)",
+        "dy80(88.5x3.5)",
+        "d48x2,0",
+        "d89x2,5 Тепловая изоляция минераловатными цилиндрами класс горючести НГ, толщиной 20 мм",
+        "для стальныx труб dy20",
+        "для стальныx труб dy25",
+        "для стальныx труб dy50",
+        "для стальныx труб dy65"
+      ]
+    }
+  },
+  "catalogable_share_strict": "43.4%",
+  "catalogable_share_incl_by_weight": "61.7%",
+  "mistral_sanity": {
+    "note": "catalogable empty rows vs plausible catalog product names, cosine",
+    "pairs": [
+      [
+        "Манометр показывающий ~ Манометр МП3-У",
+        0.84
+      ],
+      [
+        "Фильтр магнитный ФМФ-80 ~ Фильтр магнитный Ду80",
+        0.922
+      ],
+      [
+        "Унитаз ~ Унитаз-компакт",
+        0.844
+      ],
+      [
+        "Трубы ВГП оцинк ~ Труба ВГП Ду25",
+        0.859
+      ],
+      [
+        "Огнетушитель ручной ~ ОП-4",
+        0.862
+      ],
+      [
+        "Поддон душевой ~ Поддон 90x90",
+        0.896
+      ],
+      [
+        "NEG: Манометр ~ Унитаз",
+        0.712
+      ]
+    ]
+  },
+  "decision_signal": {
+    "threshold": "CATALOGABLE >= 40% of empty => viable semantic-layer target",
+    "catalogable_pct": 43.4,
+    "viable_semantic_target": true,
+    "verdict": "GO — project 13 IS a viable semantic-layer target",
+    "contrast_proj12": "proj.12 empty pop was ~74% custom-fab sheet-metal ductwork, ~3% catalogable, semantic recovered 1/301. proj.13 is the OPPOSITE: a catalogable ВК (plumbing) population."
+  },
+  "honest_caveats": [
+    "The real ceiling on proj.13 empty rows is NOT \"no product exists\" (as on proj.12). It is two RECOVERABLE parser/structure issues: (a) 41 bare-dimension sub-rows whose size lives on a child row, and (b) concatenation artifacts where two products merged into one cell (e.g. \"Кранспускной d15 ... Трубы стальные ...\").",
+    "34 of 76 catalogable empty rows have a product TWIN that the matcher DID match elsewhere in this same run — direct proof these are catalogable and were merely missed by the LLM pass, not structurally unmatchable.",
+    "BY_WEIGHT_MOUNT (32) are real items but spec'd by weight (kg); whether a unit-priced catalog analog exists is supplier-dependent — reported separately to avoid inflating the catalogable number.",
+    "No эталон was used (not needed for composition). Accuracy@1 vs эталон was NOT measured here; this is a composition/viability diagnostic only."
+  ]
+}
