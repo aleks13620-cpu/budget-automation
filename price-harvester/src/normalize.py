@@ -88,26 +88,50 @@ TYPE_NOUNS = [
 ]
 
 
+_WORD_RE = re.compile(r"[а-яёa-z]+", re.I)
+
+
+def _type_tokens(text: str, k: int = 2) -> list[str]:
+    # Ведущие значимые слова (>=4 буквы) — обычно тип товара (кран/отвод/изоляция).
+    # Дубль export_html._type_tokens: импорт оттуда сюда дал бы цикл (export_html сам
+    # импортирует normalize как nz), поэтому логика продублирована, а не переиспользована.
+    s = (text or "").lower().replace("ё", "е")
+    sig = [w for w in _WORD_RE.findall(s) if len(w) >= 4]
+    return sig[:k]
+
+
 def product_type(text: str) -> str | None:
-    """Каноническая метка типа товара по имени (кран/фильтр/счетчик/…), или None."""
-    c = canon(text)
-    for pat, label in TYPE_NOUNS:
-        if re.search(pat, c):
-            return label
+    """Каноническая метка типа товара (кран/фильтр/счетчик/…) — только по ВЕДУЩИМ
+    словам имени (первые 2 значимых токена), не по вхождению паттерна где угодно
+    в строке. Иначе "...с имп. трубкой..." ложно даёт тип "труба"."""
+    for tok in _type_tokens(text):
+        for pat, label in TYPE_NOUNS:
+            if re.search(pat, tok):
+                return label
     return None
 
 
-# Признаки запчасти/аксессуара («…для счетчика», «фильтроэлемент», «сальниковый узел»):
-# это НЕ сам товар, и их дешевизна занижает диапазон. Если кандидат — аксессуар,
-# а запрос — нет, такой кандидат отбраковываем.
+# Признаки запчасти/аксессуара (доп. триггер, не основной критерий — см. is_accessory).
 ACCESSORY_RE = re.compile(
     r"(запасн|запчаст|ремонтн|сменн|вставк|элемент|сальник|насадк|"
     r"кронштейн|хомут|держатель|скоба|крепление|"
     r"переходник для|адаптер для|комплект для)", re.I)
 
+_FOR_RE = re.compile(r"для\s+\S+", re.I)
 
-def is_accessory(text: str) -> bool:
-    return bool(ACCESSORY_RE.search((text or "").lower().replace("ё", "е")))
+
+def is_accessory(text: str, other_text: str | None = None) -> bool:
+    """Аксессуар ОТНОСИТЕЛЬНО other_text (запроса): в тексте есть «для <слово>»
+    И ведущий тип текста не совпадает с ведущим типом other_text — «Ручка для крана»
+    при запросе «Кран шаровой» (ручка≠кран). Список конкретных слов — доп. триггер:
+    срабатывает сам по себе, независимо от «для»/типа (кронштейн и т.п. — не бывает
+    самостоятельным товаром)."""
+    t = (text or "").lower().replace("ё", "е")
+    if ACCESSORY_RE.search(t):
+        return True
+    if other_text is not None and _FOR_RE.search(t):
+        return product_type(text) != product_type(other_text)
+    return False
 
 
 def score(query_name: str, cand_name: str,
@@ -124,7 +148,7 @@ def score(query_name: str, cand_name: str,
     base = dice(qc, cc)
 
     # Аксессуар/запчасть в ответ на запрос самого товара — это не он.
-    if is_accessory(cand_name) and not is_accessory(query_name):
+    if is_accessory(cand_name, query_name) and not is_accessory(query_name, cand_name):
         return min(base * 0.4, 0.25)
 
     qdn = query_dn if query_dn is not None else extract_dn(query_name)
@@ -146,7 +170,10 @@ def score(query_name: str, cand_name: str,
 
 
 if __name__ == "__main__":
-    # Самопроверка на реальных случаях из price-harvester/out/comparison.json (09.08).
+    # Самопроверка на зафиксированных 9 парах (точечный фикс №2, 09.08). Первые три —
+    # реальные случаи из out/comparison.json; остальные — заданные в постановке (в
+    # out/comparison.json и out/external_prices.json на 09.08 нет кран/фильтр/труба-ГОСТ
+    # позиций, откуда их взять дословно).
     CONFIDENT = 0.6  # держим в шаге с price-harvester/src/compare.py:23
 
     bad_cases = [
@@ -157,17 +184,40 @@ if __name__ == "__main__":
          'Кронштейн для труб стальной с резиновым уплотнением 1 1/4", 40–45 мм', 32, 32),
         ('Изоляция "Термафлекс" ФРЗ, толщиной 13мм для труб Ø40мм',
          'Кронштейн для труб стальной с резиновым уплотнением 1 1/2", 47–52 мм', 40, 40),
+        ('Труба стальная Ду25 ГОСТ 3262-75',
+         'Автоматический регулятор перепада давления с имп. трубкой 1 м, Ду25', 25, 25),
+        ('Кран шаровой Ду25',
+         'Ручка (рукоятка) для крана шарового Ду25', 25, 25),
+        ('Фильтр сетчатый Ду50 фланцевый',
+         'Сетка фильтрующая нержавеющая для фильтра Ду50', 50, 50),
     ]
+    good_cases = [
+        ('Труба стальная в ППУ изоляции Ду100',
+         'Труба предизолированная ППУ 108x1.0 ПЭ Ду100', 100, 100),
+        ('Теплоизоляция Energoflex 35/9',
+         'Энергофлекс Супер 35/9 изоляция для труб', None, None),
+        ('Труба стальная электросварная Ду25 ГОСТ 10704',
+         'Труба стальная эл/сварная 25мм ГОСТ 10704-91', 25, 25),
+    ]
+
+    fails = []
     for q, c, qdn, cdn in bad_cases:
         s = score(q, c, qdn, cdn)
-        print(f"[bad]  {s:.2f}  {q[:40]!r} vs {c[:40]!r}")
-        assert s < CONFIDENT, f"ложное совпадение не отсеяно: {s} >= {CONFIDENT}"
+        ok = s < CONFIDENT
+        print(f"{'PASS' if ok else 'FAIL'} [bad]  {s:.2f}  {q[:45]!r} vs {c[:45]!r}")
+        if not ok:
+            fails.append((q, c, s, f"< {CONFIDENT}"))
 
-    # Валидная пара (тот же товар, тот же ДУ) — не должна проседать ниже порога.
-    good_q = 'Изоляция "Термафлекс" ФРЗ, толщиной 13мм для труб Ø25мм'
-    good_c = 'Изоляция "Термафлекс" ФРЗ, толщиной 13мм для труб Ø25мм'
-    s = score(good_q, good_c, 25, 25)
-    print(f"[good] {s:.2f}  {good_q[:40]!r} vs {good_c[:40]!r}")
-    assert s >= CONFIDENT, f"регресс на валидном совпадении: {s} < {CONFIDENT}"
+    for q, c, qdn, cdn in good_cases:
+        s = score(q, c, qdn, cdn)
+        ok = s >= CONFIDENT
+        print(f"{'PASS' if ok else 'FAIL'} [good] {s:.2f}  {q[:45]!r} vs {c[:45]!r}")
+        if not ok:
+            fails.append((q, c, s, f">= {CONFIDENT}"))
 
-    print("OK")
+    if fails:
+        print(f"\n{len(fails)} of 9 FAILED (см. отчёт — это находка, не ошибка запуска):")
+        for q, c, s, need in fails:
+            print(f"  {s:.2f} (need {need}): {q!r} vs {c!r}")
+    else:
+        print("\nOK — 9/9")
