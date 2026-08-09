@@ -1,0 +1,13 @@
+# price-harvester — зависимости (Python 3.10+)
+# Сбор цен поставщиков из внешних источников. Укладка — в общую SQLite бэкенда
+# через стандартный модуль sqlite3 (psycopg НЕ нужен — БД не Postgres).
+
+httpx>=0.27        # HTTP-ядро (вендорный rest_client): таймауты, ретраи, кэш сырья
+lxml>=5.2          # разбор XML/YML-фидов (рецепт feed_xml)
+beautifulsoup4>=4.12  # разбор HTML-карточек (рецепт rest_html)
+PyYAML>=6.0        # чтение config/sources.yaml
+openpyxl>=3.1      # выгрузка отчёта сравнения в .xlsx
+
+# Необязательно — только если реальный источник за антиботом (рецепт stealth_browser):
+# playwright>=1.44       # затем: python -m playwright install chromium
+# playwright-stealth>=1.0.6

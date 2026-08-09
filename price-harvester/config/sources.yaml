@@ -1,0 +1,146 @@
+# Справочник источников цен для модуля price-harvester (ШАГ 2).
+#
+# ПЕРЕД включением реального источника (enabled: true) пройди чек-лист этики
+# (см. open-data-harvester/references/ethics_checklist.md):
+#   1) открой https://<домен>/robots.txt — убедись, что путь к фиду/каталогу не запрещён;
+#   2) прочитай ToS — нет ли прямого запрета на автоматический сбор;
+#   3) проставь robots_checked: true и tos_ok: true (иначе сбор будет ЗАБЛОКИРОВАН кодом).
+#
+# recipe:
+#   offline   — локальный файл-образец (без сети, для проверки конвейера);
+#   feed_xml  — YML/XML-фид (ПРЕДПОЧТИТЕЛЬНО: один файл, парсим офлайн, вежливо к источнику);
+#   rest_html — карточки на сайте (требует индивидуального парсера; на пилоте не используем).
+#
+# match.categories / match.keywords — по чему источник привязывается к позициям.
+# vat_included / vat_rate — как трактовать цену источника (для приведения к сопоставимому виду).
+
+defaults:
+  min_delay_sec: 2.0
+
+sources:
+  # --- РЕАЛЬНЫЙ источник: VALTEC — официальный прайс XLSX (парадная дверь) ---
+  # robots.txt valtec.ru: /document/ не запрещён, *?* запрещён (у файла нет query) — проверено 2026-06-21.
+  # ToS: прайс официально публикуется для скачивания; явных запретов нет (только копирайт ВЕСТА).
+  # price_page — страница прайса; ссылка на .xlsx датирована и меняется, поэтому берём её оттуда автоматически.
+  - key: valtec
+    title: "VALTEC — официальный прайс (XLSX, РРЦ)"
+    kind: manufacturer
+    recipe: price_xlsx
+    price_page: "https://valtec.ru/document/price.html"
+    price_url: "https://valtec.ru/document/valtec-full-price-2026-06-15.xlsx"   # запасной, если page не отдаст ссылку
+    supplier_name: "VALTEC (РРЦ, valtec.ru)"
+    brand: "VALTEC"
+    vat_included: true         # РРЦ Valtec — с НДС
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: true
+    # sheets: [Трубопроводная арматура, Фильтры]   # пусто = все листы прайса
+    match:
+      categories: [арматура, счетчики, отопление, трубы, изоляция]
+
+  # --- РЕАЛЬНЫЙ источник: DUX (Дюкс) — счётчики воды, карточки сайта (schema.org) ---
+  # robots.txt duxm.ru разрешает раздел; цены в карточках (часть «по запросу» → пропускаем).
+  - key: dux
+    title: "DUX (Дюкс) — счётчики воды (карточки сайта)"
+    kind: manufacturer
+    recipe: rest_html
+    list_urls:
+      - "https://duxm.ru/produkcziya/schyotchiki-vodyi"
+      - "https://duxm.ru/produkcziya/schyotchiki-vodyi/obshhedomovyie-schyotchiki"
+      - "https://duxm.ru/produkcziya/schyotchiki-vodyi/kvartirnyie-schyotchiki/byitovyie-schyotchiki"
+      - "https://duxm.ru/produkcziya/schyotchiki-vodyi/mokroxodnyie-schyotchiki"
+    max_pages: 2
+    brand: "DUX"
+    dn_regex: "\\b(15|20|25|32|40|50|65|80|100)\\b"
+    supplier_name: "DUX (duxm.ru)"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: true
+    match:
+      categories: [счетчики]
+
+  # --- РЕАЛЬНЫЙ источник: Пульсар (НПП Тепловодохран) — счётчики воды, карточки ---
+  # pulsarm.ru: schema.org-разметка с ценами (как DUX) → второй источник в счётчиках
+  # для сравнения «где дешевле» между поставщиками. robots раздел разрешает.
+  - key: pulsar
+    title: "Пульсар (Тепловодохран) — счётчики воды (карточки сайта)"
+    kind: manufacturer
+    recipe: rest_html
+    list_urls:
+      - "https://pulsarm.ru/products/schetchik-vody/kvartirnyy-schyetchik-vody-du-15-du-20/"
+      - "https://pulsarm.ru/products/schetchik-vody/"
+    max_pages: 2
+    brand: "Пульсар"
+    dn_regex: "\\b(15|20|25|32|40|50|65|80|100)\\b"
+    supplier_name: "Пульсар (pulsarm.ru)"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: true
+    match:
+      categories: [счетчики]
+
+  # --- РЕАЛЬНЫЙ источник: АС ГРУПП / ТД АСГ — мультибренд сантехника (карточки HTML, CSS-режим) ---
+  # сантехник-а.рф (Bitrix): цены server-rendered в HTML БЕЗ schema.org → rest_html + css-селекторы.
+  # robots: /catalog/ открыт; пагинация (*pagen / *?) ЗАПРЕЩЕНА → max_pages:1 (только стр.1 разделов).
+  # Размеры арматуры в дюймах → inch_dn:true (общий INCH_TO_DN с Valtec). Разведано+проверено 22.06.
+  - key: santehnika_asg
+    title: "АС ГРУПП / ТД АСГ — сантехника (сантехник-а.рф, карточки)"
+    kind: dealer
+    recipe: rest_html
+    list_urls:
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/krany-dlya-vody-sharovye/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/obratnye-klapana-1/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/regulyatory-davleniya/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/kosye-filtry/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/schetchiki-dlya-vody/"
+      - "https://xn----7sbbspmsb6am8a.xn--p1ai/catalog/teploizolyatsiya-dlya-trub/"
+    max_pages: 1
+    inch_dn: true
+    css:
+      product: "div.item_info"
+      name: ".item-title a"
+      price: ".price .values_wrapper"
+      link: ".item-title a"
+    brand: "АС ГРУПП"
+    supplier_name: "ТД АСГ (сантехник-а.рф)"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: true
+    match:
+      categories: [арматура, счетчики, изоляция, отопление, трубы]
+
+  # --- ОБРАЗЕЦ: офлайн-проверка конвейера без сети (включить при отладке) ---
+  - key: sample_engineering
+    title: "Образец YML-фида (инженерка) — офлайн-проверка"
+    kind: sample
+    recipe: offline
+    local_feed: samples/sample_feed.xml
+    supplier_name: "Образец-Поставщик"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: true
+    tos_ok: true
+    enabled: false
+    match:
+      categories: [счетчики, арматура, отопление, трубы]
+
+  - key: manufacturer_site_example
+    title: "Сайт производителя — карточки товара (ЗАПОЛНИТЬ)"
+    kind: manufacturer
+    recipe: rest_html
+    search_url: "https://EXAMPLE-MFR/search?q={query}"
+    supplier_name: "EXAMPLE-MFR"
+    vat_included: true
+    vat_rate: 22
+    robots_checked: false
+    tos_ok: false
+    enabled: false
+    match:
+      categories: [отопление, изоляция]

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ОБРАЗЕЦ YML-фида (Yandex Market Language) для офлайн-проверки конвейера.
+  Это НЕ реальные цены — синтетика, повторяющая структуру реальных прайсов
+  инженерки, чтобы прогнать parse → match → load → QA → compare без сети.
+  Структура стандартная: yml_catalog/shop/offers/offer (+ vendor, vendorCode, param).
+-->
+<yml_catalog date="2026-06-21 09:00">
+  <shop>
+    <name>Образец-Поставщик</name>
+    <currencies><currency id="RUB" rate="1"/></currencies>
+    <categories>
+      <category id="1">Водосчётчики</category>
+      <category id="2">Трубопроводная арматура</category>
+      <category id="3">Отопление</category>
+    </categories>
+    <offers>
+      <offer id="PUL-25" available="true">
+        <name>Счётчик холодной воды Пульсар Ду25</name>
+        <vendor>Пульсар</vendor>
+        <vendorCode>ПУЛ-25</vendorCode>
+        <price>1850</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>1</categoryId>
+        <url>https://example-supplier/catalog/pulsar-25</url>
+        <param name="DN">25</param>
+        <param name="Единица измерения">шт</param>
+        <param name="Минимальная партия">1</param>
+        <param name="Срок поставки, дн">3</param>
+      </offer>
+      <offer id="PUL-20" available="true">
+        <name>Счётчик холодной воды Пульсар Ду20</name>
+        <vendor>Пульсар</vendor>
+        <vendorCode>ПУЛ-20</vendorCode>
+        <price>1490</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>1</categoryId>
+        <url>https://example-supplier/catalog/pulsar-20</url>
+        <param name="DN">20</param>
+        <param name="Единица измерения">шт</param>
+      </offer>
+      <offer id="FMM-32" available="true">
+        <name>Фильтр магнитный муфтовый ФММ Ду32</name>
+        <vendor>ФММ</vendor>
+        <vendorCode>ФММ-32</vendorCode>
+        <price>980</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/fmm-32</url>
+        <param name="DN">32</param>
+        <param name="Единица измерения">шт</param>
+      </offer>
+      <offer id="FMM-25" available="true">
+        <name>Фильтр магнитный муфтовый ФММ Ду25</name>
+        <vendor>ФММ</vendor>
+        <vendorCode>ФММ-25</vendorCode>
+        <price>760</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/fmm-25</url>
+        <param name="DN">25</param>
+      </offer>
+      <offer id="KOM-25" available="true">
+        <name>Клапан обратный муфтовый Ду25</name>
+        <vendor>Genebre</vendor>
+        <vendorCode>КОМ-25</vendorCode>
+        <price>540</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/kom-25</url>
+        <param name="DN">25</param>
+      </offer>
+      <offer id="KSH-15" available="true">
+        <name>Кран шаровой латунный Ду15 муфтовый</name>
+        <vendor>Valtec</vendor>
+        <vendorCode>КШ-15</vendorCode>
+        <price>310</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/ksh-15</url>
+        <param name="DN">15</param>
+      </offer>
+      <offer id="KSH-32" available="true">
+        <name>Кран шаровой стальной Ду32 запорный</name>
+        <vendor>Valtec</vendor>
+        <vendorCode>КШ-32</vendorCode>
+        <price>690</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/ksh-32</url>
+        <param name="DN">32</param>
+      </offer>
+      <offer id="RD-32" available="true">
+        <name>Редуктор давления Ду32 муфтовый</name>
+        <vendor>Honeywell</vendor>
+        <vendorCode>РД-32</vendorCode>
+        <price>2450</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/rd-32</url>
+        <param name="DN">32</param>
+      </offer>
+      <offer id="MP-100" available="true">
+        <name>Манометр общего назначения МП-100 0-1.0МПа</name>
+        <vendor>Росма</vendor>
+        <vendorCode>МП-100</vendorCode>
+        <price>420</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>2</categoryId>
+        <url>https://example-supplier/catalog/mp-100</url>
+      </offer>
+      <offer id="KV-700-400" available="true">
+        <name>Воздушный клапан КВ 700x400 утеплённый</name>
+        <vendor>Веза</vendor>
+        <vendorCode>КВ-700-400</vendorCode>
+        <price>12500</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3</categoryId>
+        <url>https://example-supplier/catalog/kv-700-400</url>
+        <param name="Сечение">700x400</param>
+      </offer>
+      <!-- «шумовые» предложения — проверяют, что скоринг не привязывает не то -->
+      <offer id="RAD-500" available="true">
+        <name>Радиатор стальной панельный 500х1000 тип 22</name>
+        <vendor>Kermi</vendor>
+        <vendorCode>RAD-500-1000</vendorCode>
+        <price>5400</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3</categoryId>
+        <url>https://example-supplier/catalog/rad-500</url>
+      </offer>
+      <offer id="FAN-100" available="false">
+        <name>Вентилятор канальный VENTS 100</name>
+        <vendor>VENTS</vendor>
+        <vendorCode>FAN-100</vendorCode>
+        <price>2100</price>
+        <currencyId>RUB</currencyId>
+        <categoryId>3</categoryId>
+        <url>https://example-supplier/catalog/fan-100</url>
+      </offer>
+    </offers>
+  </shop>
+</yml_catalog>
