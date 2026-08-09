@@ -54,3 +54,21 @@ AI_WORKSPACE/
 # Temporary benchmark split reports
 scripts/ocr-benchmark/results/field_quality_report_train.md
 scripts/ocr-benchmark/results/field_quality_report_holdout.md
+
+# One-off probes and debug scripts (evaluated, not product code — see
+# tehnicheskiy-otsenshchik audit 2026-08-09, clusters C/F/G)
+backend/scripts/_gigachat_*probe*.ts
+backend/scripts/b1_tripwire_risk*.ts
+backend/scripts/b1_tripwire_risk*.json
+backend/scripts/dashboard_*_2026-06-14.ts
+backend/scripts/check_local_db_for_dashboard.ts
+backend/scripts/inspect_local_db_for_top1_check.ts
+backend/scripts/b1_1_accuracy_at_1_proj12_2026-06-14.*
+backend/scripts/b1_high_conf_27_2026-06-13.*
+backend/scripts/coverage_layer1_experiment_2026-06-14.ts
+backend/scripts/*_tmp.db
+backend/scripts/_proj1*.json
+scripts/_investigate_*.py
+scripts/_test_invoice_summary.py
+scripts/analyze_invoice_pdf.py
+scripts/inspect_invoice_pdf.py
