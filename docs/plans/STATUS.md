@@ -16,6 +16,7 @@
 - [Handoff continuation bug 2026-05-16](references/2026-05-16_handoff_continuation_bug.md)
 - [Handoff post-deploy 2026-05-16](references/2026-05-16_handoff_post_deploy.md) — **актуальная точка старта**
 - [Предыдущий план (архив)](archive/2026-05/plan_stabilization_v2_2026-05-03.md)
+- [Ретро 17.08.26 — GigaChat «oauth 400»](../../retrospectives/17.08.26_gigachat-oauth-diagnoz-i-nastroyki.md) — диагноз не подтвердился, починены настройки; 5 открытых хвостов (ключ на сервере, пустой `API_SECRET`)
 
 ## Текущая фаза: Стабилизация прода и carry-tasks
 
