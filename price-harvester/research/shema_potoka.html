@@ -1,0 +1,110 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 22px 18px; width: 980px; background: #fff;
+         font-family: Calibri, "Segoe UI", Arial, sans-serif; color: #16263f; }
+  h1 { font-size: 26px; margin: 0 0 3px; color: #1f3864; }
+  .sub { font-size: 14.5px; color: #5d6b80; margin-bottom: 20px; }
+
+  .inbox { background: #1f3864; color: #fff; border-radius: 8px; padding: 11px 18px;
+           display: inline-block; font-size: 18px; font-weight: 700; }
+  .inbox span { font-weight: 400; opacity: .85; font-size: 14px; }
+
+  .arrowdown { text-align: center; font-size: 20px; color: #8fa0bb; margin: 6px 0 4px; }
+
+  .qbox { border: 2px dashed #8fa0bb; border-radius: 8px; padding: 9px 16px; font-size: 16px;
+          display: inline-block; background: #f7f9fc; }
+  .qbox b { color: #1f3864; }
+
+  .cols { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 12px; }
+  .col { border-radius: 8px; overflow: hidden; border: 1px solid #c8d3e4; display: flex; flex-direction: column; }
+  .col > .head { padding: 9px 11px; color: #fff; font-weight: 700; font-size: 15.5px; line-height: 1.25; }
+  .c1 .head { background: #2e6f3e; } .c2 .head { background: #b06a12; }
+  .c3 .head { background: #5b6b82; } .c4 .head { background: #8a3b3b; }
+  .col .why { background: #eef2f8; padding: 8px 11px; font-size: 13.5px; color: #3c4a60;
+              border-bottom: 1px solid #d7dfec; min-height: 66px; }
+  .col .why b { color: #16263f; }
+  .col .body { padding: 9px 11px; font-size: 13.8px; line-height: 1.42; flex: 1; }
+  .col .body ol { margin: 0; padding-left: 16px; }
+  .col .body li { margin-bottom: 4px; }
+  .col .out { padding: 9px 11px; font-size: 14px; font-weight: 700; border-top: 2px solid #d7dfec; }
+  .c1 .out { background: #eaf4ec; color: #1f5c2e; }
+  .c2 .out { background: #fdf3e5; color: #8a5209; }
+  .c3 .out { background: #eef1f5; color: #48586e; }
+  .c4 .out { background: #fbeded; color: #7a2f2f; }
+  .cnt { float: right; background: rgba(255,255,255,.22); border-radius: 10px;
+         padding: 0 8px; font-size: 13px; }
+
+  .filters { margin-top: 20px; border: 1px solid #c8d3e4; border-radius: 8px; overflow: hidden; }
+  .filters .t { background: #1f3864; color: #fff; padding: 8px 13px; font-size: 16px; font-weight: 700; }
+  .filters .row { display: grid; grid-template-columns: 190px 1fr; border-top: 1px solid #dde4ef;
+                  font-size: 14px; }
+  .filters .row > div { padding: 7px 13px; }
+  .filters .row > div:first-child { background: #f4f7fb; font-weight: 700; color: #1f3864; }
+  .note { margin-top: 14px; font-size: 13.5px; color: #5d6b80; }
+</style>
+
+<h1>Как программа разбирает спецификацию</h1>
+<div class="sub">Один и тот же путь для каждой позиции · на примере проекта 19_8-24-ОВ, 175 позиций</div>
+
+<div class="inbox">Позиция из спецификации <span>— название, марка, характеристики, производитель</span></div>
+<div class="arrowdown">▼</div>
+<div class="qbox">Программа смотрит: <b>откуда у этой позиции вообще может взяться цена?</b></div>
+
+<div class="cols">
+  <div class="col c1">
+    <div class="head">С заводской маркой <span class="cnt">54</span></div>
+    <div class="why">Признак: в позиции есть код модели — <b>CV11-400-1000</b>, <b>SonoSelect 10</b>.<br>
+      Ду 15 и Ру 40 марками не считаются — это размеры.</div>
+    <div class="body"><ol>
+      <li>Ищет по марке у всех продавцов</li>
+      <li>Открывает карточку товара</li>
+      <li>Марка есть на странице? Нет — мимо</li>
+      <li>Берёт цену со страницы</li>
+    </ol></div>
+    <div class="out">Цена стоит сама<br><span style="font-weight:400">вы не участвуете</span></div>
+  </div>
+
+  <div class="col c2">
+    <div class="head">Описаны словами <span class="cnt">75</span></div>
+    <div class="why">Признак: марки нет — <b>«кран шаровый Н-образный»</b>, <b>«сгон разъёмный 3/4"»</b>.</div>
+    <div class="body"><ol>
+      <li>Ищет по описанию</li>
+      <li>Читает характеристики карточки</li>
+      <li>Сверяет размеры, длину, давление</li>
+      <li>Не сходится — не показывает</li>
+    </ol></div>
+    <div class="out">Список подходящих<br><span style="font-weight:400">вы ставите галочку</span></div>
+  </div>
+
+  <div class="col c3">
+    <div class="head">По чертежу <span class="cnt">34</span></div>
+    <div class="why">Признак: <b>ГОСТ 14918</b>, «из оцинк. стали толщиной S=…» — воздуховоды, отводы, кожухи.</div>
+    <div class="body">Как товар не продаются — их изготавливают. Программа их <b>не ищет вообще</b>, чтобы не подсунуть чужую цену.</div>
+    <div class="out">Отложены<br><span style="font-weight:400">расчёт по площади металла</span></div>
+  </div>
+
+  <div class="col c4">
+    <div class="head">Цена по запросу <span class="cnt">12</span></div>
+    <div class="why">Признак: <b>КПУ, КЛАД, ПРОК</b>, этажные узлы, вентиляторы дымоудаления.</div>
+    <div class="body">У производителя и дилеров цены нет — везде «рассчитать». Проверено вручную.</div>
+    <div class="out">Отложены<br><span style="font-weight:400">запрос счёта, как сейчас</span></div>
+  </div>
+</div>
+
+<div class="filters">
+  <div class="t">Что программа отбрасывает по дороге — чтобы в смету не попала чужая цена</div>
+  <div class="row"><div>Не карточка товара</div>
+    <div>Каталог или подборка: если товаров больше трёх, цена может быть от соседнего. Такие страницы не берём.</div></div>
+  <div class="row"><div>Марка не совпала</div>
+    <div>Марки нет на странице — цена не ставится вообще. Лучше промолчать, чем поставить похожее.</div></div>
+  <div class="row"><div>Размер не тот</div>
+    <div>Термометр L=100 мм против карточки L=80 мм — отклоняется. Сверяем длину, диаметр, давление, класс точности, стенку.</div></div>
+  <div class="row"><div>Нечем проверить</div>
+    <div>На странице нет характеристик, по которым можно убедиться — позиция не показывается.</div></div>
+  <div class="row"><div>Площадка не пустила</div>
+    <div>Лунда, Озон, ВсеИнструменты отвечают отказом или капчей. В отчёте строка: «товар есть, цену получить не удалось».</div></div>
+</div>
+
+<div class="note">У каждой найденной цены сохраняются ссылка на страницу и название карточки у продавца — можно открыть и проверить.</div>
