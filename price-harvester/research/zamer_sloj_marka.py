@@ -4,19 +4,22 @@
 Прошлый прогон был собран наспех: в него протекли проектные позиции (узлы TDU.5R),
 а запрос строился без производителя. Здесь и то и другое исправлено.
 """
-import base64, csv, io, json, re, sqlite3, time, urllib.request
+import base64, csv, io, json, re, sqlite3, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from bs4 import BeautifulSoup
 
 ROOT = r"C:\Users\home\vscode101\budget-automation"
-SCRATCH = r"C:\Users\home\AppData\Local\Temp\claude\C--Users-home-vscode101\294d7754-6bc7-400f-8df5-525f115a26cf\scratchpad"
 CRED = json.load(io.open(ROOT + r"\price-harvester\secrets\yandex_search.json", encoding="utf-8"))
 RESULT = ROOT + r"\price-harvester\out\zamer_layerC_clean.csv"
+RESULT_XLSX = ROOT + r"\price-harvester\out\Арта_цены_по-артикулам.xlsx"
+KLASS = ROOT + r"\price-harvester\research\klassifikator_pozicij.py"
+HITS_JSON = ROOT + r"\price-harvester\out\zamer_layerC_hits.json"
+SPEC_ID = 34
 
 # классификатор берём как есть, чтобы состав слоя совпал с документом
 ns = {"__name__": "k"}
-exec(compile(io.open(SCRATCH + r"\klass.py", encoding="utf-8").read().replace("\nrun()\n", "\n"),
+exec(compile(io.open(KLASS, encoding="utf-8").read().replace("\nrun()\n", "\n"),
              "klass", "exec"), ns)
 classify, find_mark = ns["classify"], ns["find_mark"]
 
@@ -91,8 +94,15 @@ def product_page(html):
     og = soup.find("meta", attrs={"property": "og:type"})
     scope = soup.find(attrs={"itemtype": re.compile(r"schema.org/Product", re.I)})
     if (og and "product" in (og.get("content") or "").lower()) or scope:
-        el = (scope or soup).find(attrs={"itemprop": re.compile(r"^(price|lowPrice)$", re.I)})
-        pr = _num(el.get("content") or el.get_text()) if el else None
+        # itemprop=price на части сайтов встречается дважды: битый <meta content="14">
+        # и настоящая цена <span content="14573.95">. Берём наибольшее — обрезанный
+        # префикс тысяч всегда меньше настоящей цены.
+        # ponytail: max по itemprop=price; разбирать по каждому сайту, если встретится
+        # сайт, кладущий СТАРУЮ цену в тот же itemprop
+        cand = [_num(e.get("content") or e.get_text())
+                for e in (scope or soup).find_all(attrs={"itemprop": re.compile(r"^(price|lowPrice)$", re.I)})]
+        cand = [c for c in cand if c]
+        pr = max(cand) if cand else None
         if not pr:
             m = soup.find("meta", attrs={"property": re.compile(r"(product|og):price:amount")})
             pr = _num(m.get("content")) if m else None
@@ -127,7 +137,7 @@ def fetch(url):
 
 def load_layer_c():
     c = sqlite3.connect(ROOT + "/database/budget_automation.db"); c.row_factory = sqlite3.Row
-    rows = c.execute("select * from specification_items where specification_id=34").fetchall()
+    rows = c.execute("select * from specification_items where specification_id=?", (SPEC_ID,)).fetchall()
     by_id = {r["id"]: r for r in rows}
 
     def full(r):
@@ -154,6 +164,89 @@ def load_layer_c():
     return out
 
 
+COLS = [("№", 5), ("Позиция", 58), ("Марка", 22), ("Кол-во", 9), ("Ед.", 7),
+        ("Цена, ₽", 12), ("Сумма по позиции, ₽", 17), ("Продавец", 22), ("Ссылка", 46),
+        ("Что в карточке продавца", 60)]
+NOT_FOUND = "цену не нашли"
+BLOCKED_TXT = "товар есть, цену получить не удалось"
+
+
+def sheet_rows(results):
+    """Строка на КАЖДОЕ найденное предложение, внутри позиции — по возрастанию цены.
+
+    Минимум молча не выбираем: Иван смотрит разброс сам и по нему называет сайты,
+    которые показывать не надо. Сумма считается в КАЖДОЙ строке (цена x количество):
+    выбрать за него самое дешёвое нельзя — по теплосчётчику самое дешёвое оказалось
+    страницей серии, а не прибором, и разошлось с настоящей ценой в восемь раз.
+    """
+    rows = []
+    for n, r in enumerate(results, 1):
+        hits = sorted(r.get("hits") or [])
+        head = [n, r["name"], r["mark"], r["qty"], r["unit"]]
+        blank = ["", "", "", "", ""]
+        first = True
+        for price, url, host, card in hits:
+            summa = round(price * float(r["qty"]), 2) if r["qty"] else ""
+            rows.append((head if first else blank) + [round(price, 2), summa, host, url, card])
+            first = False
+        if not hits:
+            rows.append(head + ["", "", "", "", NOT_FOUND])
+            first = False
+        for host in [h for h in (r.get("blocked") or "").split("; ") if h]:
+            rows.append((head if first else blank) + ["", "", host, "", BLOCKED_TXT])
+            first = False
+    return rows
+
+
+def write_xlsx(results, path):
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook(); ws = wb.active; ws.title = "Цены по артикулам"
+    ws["A1"] = "Спецификация 19_8-24-ОВ — позиции с заводской маркой (артикулом)"
+    ws["A1"].font = Font(bold=True, size=13)
+    ws["A2"] = ("По каждой позиции показаны ВСЕ найденные предложения, от дешёвого к дорогому. "
+                "Ссылка ведёт на карточку товара — цену и характеристики видно там же. "
+                "Сумма в строке — это цена продавца, умноженная на количество по проекту. "
+                "Какое предложение верное, решаете вы: программа ничего не выбирает за вас.")
+    ws["A3"] = ("Где цены расходятся в разы — продавец обычно показывает соседний типоразмер той же "
+                "серии (VFG-2, MNF-R2, радиаторы). Размер смотрите в последней колонке.")
+    ws["A3"].font = Font(italic=True, color="9C3A00")
+    for r, h in ((1, 20), (2, 32), (3, 32)):       # иначе шапка сидит в колонке шириной 5 и рвётся
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=len(COLS))
+        ws.cell(r, 1).alignment = Alignment(vertical="center", wrap_text=True)
+        ws.row_dimensions[r].height = h
+    ws["A2"].font = Font(italic=True, color="555555")
+
+    hdr = 4
+    for i, (title, w) in enumerate(COLS, 1):
+        c = ws.cell(hdr, i, title)
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="44546A")
+        c.alignment = Alignment(vertical="center", wrap_text=True)
+        ws.column_dimensions[get_column_letter(i)].width = w
+
+    top = Border(top=Side(style="thin", color="9AA5B1"))
+    link = Font(color="0563C1", underline="single")
+    for j, row in enumerate(sheet_rows(results)):
+        rn = hdr + 1 + j
+        for i, v in enumerate(row, 1):
+            c = ws.cell(rn, i, v)
+            c.alignment = Alignment(vertical="top", wrap_text=(i in (2, 10)))
+            if row[0] != "":
+                c.border = top                      # отбиваем линией начало позиции
+        if row[8]:
+            c = ws.cell(rn, 9); c.hyperlink = row[8]; c.font = link
+        for col in (6, 7):
+            if row[col - 1] != "":
+                ws.cell(rn, col).number_format = "#,##0.00"
+    ws.freeze_panes = ws.cell(hdr + 1, 1)
+    ws.auto_filter.ref = "A%d:J%d" % (hdr, ws.max_row)
+    wb.save(path)
+    return ws.max_row - hdr
+
+
 def main():
     positions = load_layer_c()
     log("слой «с заводской маркой»: %d позиций\n" % len(positions))
@@ -177,27 +270,76 @@ def main():
                    price=round(hits[0][0], 2) if hits else "",
                    shops=len(hits), host=hits[0][2] if hits else "",
                    card=hits[0][3] if hits else "",
-                   blocked="; ".join(blocked), note=err or "")
+                   blocked="; ".join(blocked), note=err or "", hits=hits)
         results.append(row)
-        log("[%2d/%d] %-10s %5.0fs %10s  %-18s %s" % (
+        log("[%2d/%d] %-10s %5.0fs %10s  x%-2d %-18s %s" % (
             i, len(positions), row["status"], time.time() - t0, row["price"] or "-",
-            p["mark"][:18], p["name"][:40]))
+            row["shops"], p["mark"][:18], p["name"][:40]))
 
     cols = ["id", "name", "mark", "mark_src", "manufacturer", "unit", "qty",
             "status", "price", "shops", "host", "card", "blocked", "note"]
     with io.open(RESULT, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(results)
+    io.open(HITS_JSON, "w", encoding="utf-8").write(json.dumps(results, ensure_ascii=False))
+    nrows = write_xlsx(results, RESULT_XLSX)
 
     ok = [r for r in results if r["status"] == "found"]
-    summa = sum(float(r["price"]) * float(r["qty"]) for r in ok if r["price"] and r["qty"])
+    rub = lambda x: format(int(x), ",d").replace(",", " ")
+    lo = sum(min(h[0] for h in r["hits"]) * float(r["qty"]) for r in ok if r["qty"])
+    hi = sum(max(h[0] for h in r["hits"]) * float(r["qty"]) for r in ok if r["qty"])
     log("\n" + "=" * 70)
     log("позиций в слое:  %d" % len(results))
     log("цена найдена:    %d  (%.0f%%)" % (len(ok), len(ok) / len(results) * 100))
-    log("сумма:           %s ₽" % format(int(summa), ",d").replace(",", " "))
+    log("сумма по слою:   от %s до %s ₽ — смотря чьё предложение брать" % (rub(lo), rub(hi)))
+    log("у 2+ продавцов:  %d, в среднем %.1f предложения на позицию" % (
+        len([r for r in ok if r["shops"] > 1]), sum(r["shops"] for r in ok) / max(len(ok), 1)))
+    log("строк в файле:   %d  →  %s" % (nrows, RESULT_XLSX))
     from collections import Counter
     log("продавцы: %s" % ", ".join("%s×%d" % (h, n) for h, n in Counter(r["host"] for r in ok if r["host"]).most_common(8)))
     nb = Counter(h for r in results for h in (r["blocked"] or "").split("; ") if h)
     log("не пустили программу: %s" % ", ".join("%s×%d" % (h, n) for h, n in nb.most_common(6)))
 
 
-main()
+def render_only():
+    """Перерисовать лист из сохранённого прогона — без сети, чтобы правка вида стоила минуту."""
+    results = json.loads(io.open(HITS_JSON, encoding="utf-8").read())
+    for r in results:
+        r["hits"] = [tuple(h) for h in r["hits"]]
+    log("перерисовано: %d строк → %s" % (write_xlsx(results, RESULT_XLSX), RESULT_XLSX))
+
+
+def _selfcheck():
+    res = [
+        {"name": "Кран шаровой", "mark": "BV.R.201", "qty": 4, "unit": "шт",
+         "hits": [(900.0, "http://b/2", "b.ru", "Кран BV.R.201 ду20"),
+                  (500.0, "http://a/1", "a.ru", "Кран шаровой BV.R.201")],
+         "blocked": "lunda.ru"},
+        {"name": "Термометр", "mark": "TM-100", "qty": 2, "unit": "шт", "hits": [], "blocked": ""},
+    ]
+    rows = sheet_rows(res)
+    assert [r[8] for r in rows if r[8]] == ["http://a/1", "http://b/2"]   # все предложения, дешёвое первым
+    assert [r[5] for r in rows if r[5] != ""] == [500.0, 900.0]
+    assert rows[0][6] == 2000.0 and rows[1][6] == 3600.0                 # сумма в каждой строке, не только у дешёвой
+    assert rows[0][1] == "Кран шаровой" and rows[1][1] == ""             # позиция не дублируется
+    assert rows[2][7] == "lunda.ru" and rows[2][9] == BLOCKED_TXT
+    assert rows[3][1] == "Термометр" and rows[3][9] == NOT_FOUND
+    assert len(rows) == 4
+    print("selfcheck ok: %d строк, ссылки и порядок цен на месте" % len(rows))
+
+    # цена: битый <meta content="14"> рядом с настоящей 14 573,95 — так отдаёт nevagrad.com
+    html = ('<html><body><div itemtype="http://schema.org/Product" itemscope>'
+            '<h1>Преобразователь давления MBS 1700R</h1>'
+            '<meta itemprop="price" content="14">'
+            '<span itemprop="price" content="14573.95">14 573,95 руб</span>'
+            '</div></body></html>')
+    card, _soup, _why = product_page(html)
+    assert card and card[1] == 14573.95, card
+    print("selfcheck ok: обрезанный префикс тысяч не побеждает настоящую цену")
+
+
+if "selfcheck" in sys.argv:
+    _selfcheck()
+elif "render" in sys.argv:
+    render_only()
+else:
+    main()
