@@ -15,6 +15,7 @@ RESULT = ROOT + r"\price-harvester\out\zamer_layerC_clean.csv"
 RESULT_XLSX = ROOT + r"\price-harvester\out\Арта_цены_по-артикулам.xlsx"
 KLASS = ROOT + r"\price-harvester\research\klassifikator_pozicij.py"
 HITS_JSON = ROOT + r"\price-harvester\out\zamer_layerC_hits.json"
+RESULT_HTML = ROOT + r"\price-harvester\out\Арта_цены_по-артикулам.html"
 SPEC_ID = 34
 
 # классификатор берём как есть, чтобы состав слоя совпал с документом
@@ -198,6 +199,99 @@ def sheet_rows(results):
     return rows
 
 
+PAGE_CSS = """
+:root{--line:#e3e7ec;--muted:#6b7480;--ink:#1a1d21;--accent:#0563C1;--warn:#9C3A00}
+*{box-sizing:border-box}
+body{font:15px/1.45 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:var(--ink);margin:0;padding:20px;background:#fff}
+h1{font-size:21px;font-weight:600;margin:0 0 6px}
+.sub{color:var(--muted);margin:0 0 4px;max-width:900px}
+.warn{color:var(--warn);margin:0 0 14px;max-width:900px}
+.panel{position:sticky;top:0;background:#fff;padding:12px 0;border-bottom:1px solid var(--line);margin-bottom:2px;z-index:5}
+input[type=search]{font:15px inherit;padding:9px 12px;width:min(420px,100%);border:1px solid #c3cad3;border-radius:6px}
+label{margin-left:14px;color:var(--muted);white-space:nowrap}
+.count{color:var(--muted);margin-left:14px}
+table{border-collapse:collapse;width:100%;margin-top:10px}
+th{text-align:left;font-size:13px;color:#fff;background:#44546A;padding:8px 9px;position:sticky;top:64px;z-index:4}
+td{border-bottom:1px solid var(--line);padding:8px 9px;vertical-align:top}
+tr.start td{border-top:2px solid #9AA5B1}
+td.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+td.pos{font-weight:600;max-width:330px}
+td.card{color:var(--muted);max-width:360px}
+a{color:var(--accent);white-space:nowrap}
+th:nth-child(4){white-space:nowrap}
+.tag{display:inline-block;font-size:12px;padding:2px 7px;border-radius:10px;background:#f2f4f7;color:var(--muted)}
+.tag.no{background:#fdeeee;color:#9b2c2c}
+@media(max-width:800px){td.pos,td.card{max-width:none}th{position:static}}
+"""
+
+PAGE_JS = """
+var q=document.getElementById('q'),hb=document.getElementById('hideblocked'),
+    rows=[].slice.call(document.querySelectorAll('tbody tr')),cnt=document.getElementById('cnt');
+function apply(){
+  var s=q.value.trim().toLowerCase(),shown=0,pos={};
+  rows.forEach(function(tr){
+    var hit=!s||tr.dataset.k.indexOf(s)>=0;
+    if(hit&&hb.checked&&tr.dataset.blocked==='1')hit=false;
+    tr.style.display=hit?'':'none';
+    if(hit){shown++;pos[tr.dataset.p]=1}
+  });
+  cnt.textContent='показано '+shown+' строк по '+Object.keys(pos).length+' позициям';
+}
+q.addEventListener('input',apply);hb.addEventListener('change',apply);apply();
+"""
+
+
+def write_html(results, path):
+    """Одна самодостаточная страница: открывается двойным кликом с диска и по ссылке с прода.
+
+    Ничего не грузит извне — приём взят у price-harvester/src/export_html.py, который
+    так же кладётся в frontend/public и раздаётся статикой.
+    """
+    # кавычку экранируем обязательно: в названиях есть дюймы (G1/2"), а значения едут
+    # в атрибут data-k — без этого атрибут рвётся и строка выпадает из поиска
+    esc = lambda v: (str(v).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                     .replace('"', "&quot;").replace("'", "&#39;")
+                     if v not in (None, "") else "")
+    rub = lambda v: format(v, ",.2f").replace(",", " ").replace(".", ",") if v != "" else ""
+    num = lambda v: ("%g" % v) if isinstance(v, float) else esc(v)   # 95.0 -> 95, снабженец пишет так
+    body, cur = [], None
+    for row in sheet_rows(results):
+        n, name, mark, qty, unit, price, summa, host, url, card = row
+        if n != "":
+            cur = (n, name, mark, qty, unit)
+        blocked = 1 if card == BLOCKED_TXT else 0
+        key = " ".join(str(x).lower() for x in (cur[1], cur[2], host, card) if x)
+        body.append(
+            '<tr class="%s" data-p="%s" data-blocked="%d" data-k="%s">'
+            '<td class="num">%s</td><td class="pos">%s</td><td>%s</td><td class="num">%s</td>'
+            '<td>%s</td><td class="num">%s</td><td class="num">%s</td><td>%s</td>'
+            '<td>%s</td><td class="card">%s</td></tr>' % (
+                "start" if n != "" else "", cur[0], blocked, esc(key),
+                esc(n), esc(name), esc(mark), num(qty), esc(unit),
+                rub(price), rub(summa), esc(host),
+                ('<a href="%s" target="_blank" rel="noopener">открыть карточку</a>' % esc(url)) if url else "",
+                ('<span class="tag no">%s</span>' % esc(card)) if card in (BLOCKED_TXT, NOT_FOUND) else esc(card)))
+
+    head = "".join('<th>%s</th>' % esc(t) for t, _ in COLS)
+    io.open(path, "w", encoding="utf-8").write(
+        '<!doctype html><html lang="ru"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<title>Арта — цены по артикулам</title><style>%s</style></head><body>'
+        '<h1>Спецификация 19_8-24-ОВ — позиции с заводской маркой (артикулом)</h1>'
+        '<p class="sub">По каждой позиции показаны ВСЕ найденные предложения, от дешёвого к дорогому. '
+        'Ссылка ведёт на карточку товара — цену и характеристики видно там же. Сумма в строке — '
+        'это цена продавца, умноженная на количество по проекту. Какое предложение верное, '
+        'решаете вы: программа ничего не выбирает за вас.</p>'
+        '<p class="warn">Где цены расходятся в разы — продавец обычно показывает соседний типоразмер '
+        'той же серии (VFG-2, MNF-R2, радиаторы). Размер смотрите в последней колонке.</p>'
+        '<div class="panel"><input type="search" id="q" placeholder="Найти позицию, марку или продавца">'
+        '<label><input type="checkbox" id="hideblocked"> скрыть тех, кто не отдал цену</label>'
+        '<span class="count" id="cnt"></span></div>'
+        '<table><thead><tr>%s</tr></thead><tbody>%s</tbody></table>'
+        '<script>%s</script></body></html>' % (PAGE_CSS, head, "".join(body), PAGE_JS))
+    return len(body)
+
+
 def write_xlsx(results, path):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
@@ -282,6 +376,7 @@ def main():
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore"); w.writeheader(); w.writerows(results)
     io.open(HITS_JSON, "w", encoding="utf-8").write(json.dumps(results, ensure_ascii=False))
     nrows = write_xlsx(results, RESULT_XLSX)
+    write_html(results, RESULT_HTML)
 
     ok = [r for r in results if r["status"] == "found"]
     rub = lambda x: format(int(x), ",d").replace(",", " ")
@@ -305,14 +400,15 @@ def render_only():
     results = json.loads(io.open(HITS_JSON, encoding="utf-8").read())
     for r in results:
         r["hits"] = [tuple(h) for h in r["hits"]]
-    log("перерисовано: %d строк → %s" % (write_xlsx(results, RESULT_XLSX), RESULT_XLSX))
+    log("лист:     %d строк → %s" % (write_xlsx(results, RESULT_XLSX), RESULT_XLSX))
+    log("страница: %d строк → %s" % (write_html(results, RESULT_HTML), RESULT_HTML))
 
 
 def _selfcheck():
     res = [
         {"name": "Кран шаровой", "mark": "BV.R.201", "qty": 4, "unit": "шт",
          "hits": [(900.0, "http://b/2", "b.ru", "Кран BV.R.201 ду20"),
-                  (500.0, "http://a/1", "a.ru", "Кран шаровой BV.R.201")],
+                  (500.0, "http://a/1", "a.ru", 'Кран шаровой BV.R.201 G1/2"')],
          "blocked": "lunda.ru"},
         {"name": "Термометр", "mark": "TM-100", "qty": 2, "unit": "шт", "hits": [], "blocked": ""},
     ]
@@ -335,6 +431,23 @@ def _selfcheck():
     card, _soup, _why = product_page(html)
     assert card and card[1] == 14573.95, card
     print("selfcheck ok: обрезанный префикс тысяч не побеждает настоящую цену")
+
+    # страница: столько же строк, что и в листе, и ни одна ссылка не потеряна
+    import tempfile, os
+    tmp = os.path.join(tempfile.gettempdir(), "zamer_selfcheck.html")
+    assert write_html(res, tmp) == len(rows)
+    page = io.open(tmp, encoding="utf-8").read()
+    assert page.count("<tr ") == len(rows), page.count("<tr ")
+    assert page.count('target="_blank"') == 2 and "http://a/1" in page and "http://b/2" in page
+    assert BLOCKED_TXT in page and NOT_FOUND in page
+    assert "http" not in page.split("<tbody>")[0]        # ничего не грузим извне
+    # дюйм в названии не должен рвать data-k: иначе строка выпадает из поиска
+    assert page.count('data-k="') == len(rows) and 'G1/2&quot;' in page
+    keys = [c.split('"')[0] for c in page.split('data-k="')[1:]]
+    assert "a.ru" in keys[0] and "lunda.ru" in keys[2]   # хост дожил до конца ключа
+    assert all('"' not in k for k in keys)
+    os.remove(tmp)
+    print("selfcheck ok: страница самодостаточна, %d строк, ссылки на месте" % len(rows))
 
 
 if "selfcheck" in sys.argv:
