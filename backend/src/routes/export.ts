@@ -54,6 +54,9 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // plus the best external web-search price (latest snapshot, cheapest offer)
     // as a fallback for items with no invoice/price-list match.
     const rows = db.prepare(`
+      -- source='web_search' обязателен во всех трёх CTE: в external_prices лежат ещё
+      -- старые прогоны прежних источников, включая тестовые с несуществующим доменом
+      -- example-supplier. Без этого фильтра они уехали бы в спецификацию клиента как цены.
       WITH ext_ranked AS (
         SELECT ep.spec_item_id, ep.price, ep.supplier_name,
                json_extract(ep.raw_data, '$.found_by') as found_by,
@@ -63,14 +66,15 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
                  ORDER BY ep.snapshot_date DESC, ep.price ASC
                ) as rn
         FROM external_prices ep
-        WHERE ep.status = 'found'
+        WHERE ep.status = 'found' AND ep.source = 'web_search'
       ),
       ext_group AS (
         SELECT spec_item_id, MIN(json_extract(raw_data, '$.group')) as grp
-        FROM external_prices GROUP BY spec_item_id
+        FROM external_prices WHERE source = 'web_search' GROUP BY spec_item_id
       ),
       ext_notfound AS (
-        SELECT DISTINCT spec_item_id FROM external_prices WHERE status = 'not_found'
+        SELECT DISTINCT spec_item_id FROM external_prices
+        WHERE status = 'not_found' AND source = 'web_search'
       )
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
              COALESCE(ii.price, pli.price) as price,
@@ -160,7 +164,10 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
 
       for (const item of sectionItems) {
         const qty = item.quantity || 0;
-        const usedExternal = item.price == null && item.ext_price != null;
+        // Только в обычной выгрузке. В режимах «оригинал»/«аналог» пустая цена — это
+        // ответ «такого варианта нет», и подставлять туда интернет-цену нельзя:
+        // она не является ни оригиналом, ни аналогом.
+        const usedExternal = mode === 'best' && item.price == null && item.ext_price != null;
         const price = usedExternal ? item.ext_price : item.price;
         const supplier = usedExternal ? (item.ext_supplier || '') : (item.supplier_name || '');
         const pricing = computeUnitPriceWithVat(
@@ -204,6 +211,16 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // Grand total
     const grandTotalRowIdx = wsData.length;
     wsData.push([null, 'ОБЩИЙ ИТОГ:', null, null, null, null, Math.round(grandTotal * 100) / 100, null, null]);
+
+    // Итог складывает цены из счетов (приведённые к НДС) и цены из интернета (как есть,
+    // ставку НДС у продавца взять неоткуда). Пока все поставщики в базе с НДС в цене,
+    // разницы не видно — но читатель итога должен знать, из чего он сложен.
+    const externalCount = rows.filter((r) => r.price == null && r.ext_price != null).length;
+    if (externalCount > 0 && mode === 'best') {
+      wsData.push([]);
+      wsData.push([null, `В итог вошли ${externalCount} позиций с ценой из интернета (колонка «Тип» = Интернет). ` +
+        'По ним ставка НДС неизвестна — цена взята как у продавца.']);
+    }
 
     // Create workbook
     const wb = XLSX.utils.book_new();
