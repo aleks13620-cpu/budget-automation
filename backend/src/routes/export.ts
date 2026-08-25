@@ -58,9 +58,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       -- старые прогоны прежних источников, включая тестовые с несуществующим доменом
       -- example-supplier. Без этого фильтра они уехали бы в спецификацию клиента как цены.
       WITH ext_ranked AS (
-        SELECT ep.spec_item_id, ep.price, ep.supplier_name,
+        SELECT ep.spec_item_id, ep.price, ep.supplier_name, ep.source_url,
                json_extract(ep.raw_data, '$.found_by') as found_by,
                json_extract(ep.raw_data, '$.mark') as mark,
+               COUNT(*) OVER (PARTITION BY ep.spec_item_id) as offers,
+               MAX(ep.price) OVER (PARTITION BY ep.spec_item_id) as price_max,
                ROW_NUMBER() OVER (
                  PARTITION BY ep.spec_item_id
                  ORDER BY ep.snapshot_date DESC, ep.price ASC
@@ -85,6 +87,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
              s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat,
              COALESCE(m.is_analog, 0) as is_analog,
              er.price as ext_price, er.supplier_name as ext_supplier,
+             er.source_url as ext_url, er.offers as ext_offers, er.price_max as ext_price_max,
              er.found_by as ext_found_by, er.mark as ext_mark,
              eg.grp as ext_group,
              CASE WHEN enf.spec_item_id IS NOT NULL THEN 1 ELSE 0 END as ext_not_found
@@ -108,6 +111,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       vat_rate: number | null; prices_include_vat: number | null;
       is_analog: number;
       ext_price: number | null; ext_supplier: string | null;
+      ext_url: string | null; ext_offers: number | null; ext_price_max: number | null;
       ext_found_by: string | null; ext_mark: string | null;
       ext_group: string | null; ext_not_found: number;
     }>;
@@ -119,12 +123,35 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       'D. без марки': 'описано словами',
     };
 
-    function foundByLabel(usedExternal: boolean, foundBy: string | null, mark: string | null, notFound: number): string {
+    // ponytail: порог разброса 3x подобран на первом прогоне — крутить по словам снабженца,
+    // а не выводить формулой. Направление ошибки случайное: у грунта дешёвое было верным
+    // (цена за кг против ведра), у клапана MNF-R2 дешёвое оказалось страницей раздела.
+    const SPREAD_ALERT = 3;
+
+    function foundByLabel(item: { ext_offers: number | null; ext_price: number | null; ext_price_max: number | null },
+                          usedExternal: boolean, foundBy: string | null, mark: string | null, notFound: number): string {
       if (!usedExternal) return notFound ? 'искали, не нашли' : '';
       const suffix = mark ? ` ${mark}` : '';
-      if (foundBy === 'артикул') return `артикул${suffix}`;
-      if (foundBy === 'типоразмер') return `типоразмер${suffix}`;
-      return 'без артикула — проверьте';
+      let label = 'без артикула — проверьте';
+      if (foundBy === 'артикул') label = `артикул${suffix}`;
+      else if (foundBy === 'типоразмер') label = `типоразмер${suffix}`;
+
+      const n = item.ext_offers || 0;
+      const lo = item.ext_price;
+      const hi = item.ext_price_max;
+      if (n <= 1) return `${label} · предложение одно, сравнить не с чем`;
+      const plural = (v: number, one: string, few: string, many: string) => {
+        const m10 = v % 10, m100 = v % 100;
+        if (m10 === 1 && m100 !== 11) return one;
+        if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
+        return many;
+      };
+      const offers = `${n} ${plural(n, 'предложение', 'предложения', 'предложений')}`;
+      if (lo && hi && hi / lo >= SPREAD_ALERT) {
+        const k = Math.round(hi / lo);
+        return `${label} · ${offers}, дороже в ${k} ${plural(k, 'раз', 'раза', 'раз')} — проверьте`;
+      }
+      return `${label} · ${offers}`;
     }
 
     // Group by section
@@ -137,6 +164,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
 
     // Build worksheet data
     const wsData: (string | number | null)[][] = [];
+    const linkCells: Array<{ row: number; url: string }> = [];
 
     // Header
     const modeLabel = mode === 'original' ? ' [Оригинал]' : mode === 'analog' ? ' [Аналог]' : '';
@@ -145,7 +173,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     wsData.push([]); // empty row
 
     // Column headers
-    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по'];
+    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по', 'Ссылка'];
     wsData.push(headerRow);
 
     let grandTotal = 0;
@@ -196,8 +224,10 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           supplier,
           usedExternal ? 'Интернет' : (item.is_analog ? 'Аналог' : 'Ориг.'),
           item.ext_group ? (GROUP_LABELS[item.ext_group] || item.ext_group) : '',
-          foundByLabel(usedExternal, item.ext_found_by, item.ext_mark, item.ext_not_found),
+          foundByLabel(item, usedExternal, item.ext_found_by, item.ext_mark, item.ext_not_found),
+          usedExternal && item.ext_url ? 'открыть карточку' : '',
         ]);
+        if (usedExternal && item.ext_url) linkCells.push({ row: wsData.length - 1, url: item.ext_url });
       }
 
       grandTotal += sectionTotal;
@@ -238,18 +268,25 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 20 },  // Поставщик
       { wch: 9 },   // Тип
       { wch: 22 },  // Группа
-      { wch: 22 },  // Найдено по
+      { wch: 34 },  // Найдено по
+      { wch: 18 },  // Ссылка
     ];
+
+    // Ссылка кликабельная: Иван проверяет товар одним нажатием, не выходя из файла
+    for (const { row, url } of linkCells) {
+      const addr = XLSX.utils.encode_cell({ r: row, c: 11 });
+      if (ws[addr]) ws[addr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
+    }
 
     // Merge title row
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // title
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } }, // date
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }, // title
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } }, // date
     ];
 
     // Merge section header rows
     for (const r of sectionHeaderRows) {
-      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 10 } });
+      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 11 } });
     }
 
     XLSX.utils.book_append_sheet(wb, ws, 'Спецификация');
