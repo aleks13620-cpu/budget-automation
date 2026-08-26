@@ -112,9 +112,9 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.price_list_item_id = pli.id
       LEFT JOIN price_lists pl ON pli.price_list_id = pl.id
       LEFT JOIN suppliers s ON COALESCE(i.supplier_id, pl.supplier_id) = s.id
-      LEFT JOIN ext_ranked er ON er.spec_item_id = si.id AND er.project_id = si.project_id AND er.rn = 1
-      LEFT JOIN ext_group eg ON eg.spec_item_id = si.id AND eg.project_id = si.project_id
-      LEFT JOIN ext_notfound enf ON enf.spec_item_id = si.id AND enf.project_id = si.project_id
+      LEFT JOIN ext_ranked er ON er.spec_item_id = si.id AND er.rn = 1
+      LEFT JOIN ext_group eg ON eg.spec_item_id = si.id
+      LEFT JOIN ext_notfound enf ON enf.spec_item_id = si.id
       WHERE si.project_id = ?
       ORDER BY si.section, si.id
     `).all(projectId) as Array<{
@@ -196,7 +196,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     wsData.push([]); // empty row
 
     // Column headers
-    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по', 'Ссылка'];
+    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по'];
     wsData.push(headerRow);
 
     let grandTotal = 0;
@@ -248,7 +248,6 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           usedExternal ? 'Интернет' : (item.is_analog ? 'Аналог' : 'Ориг.'),
           item.ext_group ? (GROUP_LABELS[item.ext_group] || item.ext_group) : '',
           foundByLabel(item, usedExternal, item.ext_found_by, item.ext_mark, item.ext_not_found),
-          usedExternal && isWebLink(item.ext_url) ? 'открыть карточку' : '',
         ]);
         if (usedExternal && isWebLink(item.ext_url)) linkCells.push({ row: wsData.length - 1, url: item.ext_url! });
       }
@@ -290,28 +289,27 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 14 },  // Сумма
       { wch: 20 },  // Поставщик
       { wch: 9 },   // Тип
-      { wch: 22 },  // Группа
-      { wch: 34 },  // Найдено по
-      { wch: 18 },  // Ссылка
+      { wch: 26 },  // Группа
+      { wch: 46 },  // Найдено по — последняя, текст переливается вправо
     ];
 
     // Ссылка кликабельная: Иван проверяет товар одним нажатием, не выходя из файла.
     // Только http/https: адрес приходит с чужого сайта, а file:// или \\сервер\share
     // в документе Windows — рабочий способ утечки учётных данных по клику.
     for (const { row, url } of linkCells) {
-      const addr = XLSX.utils.encode_cell({ r: row, c: 11 });
+      const addr = XLSX.utils.encode_cell({ r: row, c: 7 });   // «Поставщик» — там уже домен
       if (ws[addr]) ws[addr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
     }
 
     // Merge title row
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }, // title
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } }, // date
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // title
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } }, // date
     ];
 
     // Merge section header rows
     for (const r of sectionHeaderRows) {
-      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 11 } });
+      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 10 } });
     }
 
     XLSX.utils.book_append_sheet(wb, ws, 'Спецификация');
