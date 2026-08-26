@@ -58,7 +58,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       -- старые прогоны прежних источников, включая тестовые с несуществующим доменом
       -- example-supplier. Без этого фильтра они уехали бы в спецификацию клиента как цены.
       WITH ext_ranked AS (
-        SELECT ep.spec_item_id, ep.price, ep.supplier_name, ep.source_url,
+        SELECT ep.spec_item_id, ep.project_id, ep.price, ep.supplier_name, ep.source_url,
                json_extract(ep.raw_data, '$.found_by') as found_by,
                json_extract(ep.raw_data, '$.mark') as mark,
                COUNT(*) OVER (PARTITION BY ep.spec_item_id) as offers,
@@ -71,11 +71,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
         WHERE ep.status = 'found' AND ep.source = 'web_search'
       ),
       ext_group AS (
-        SELECT spec_item_id, MIN(json_extract(raw_data, '$.group')) as grp
-        FROM external_prices WHERE source = 'web_search' GROUP BY spec_item_id
+        SELECT spec_item_id, project_id, MIN(json_extract(raw_data, '$.group')) as grp
+        FROM external_prices WHERE source = 'web_search' GROUP BY spec_item_id, project_id
       ),
       ext_notfound AS (
-        SELECT DISTINCT spec_item_id FROM external_prices
+        SELECT DISTINCT spec_item_id, project_id FROM external_prices
         WHERE status = 'not_found' AND source = 'web_search'
       )
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
@@ -98,9 +98,9 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       LEFT JOIN price_list_items pli ON (m.source = 'price_list') AND m.price_list_item_id = pli.id
       LEFT JOIN price_lists pl ON pli.price_list_id = pl.id
       LEFT JOIN suppliers s ON COALESCE(i.supplier_id, pl.supplier_id) = s.id
-      LEFT JOIN ext_ranked er ON er.spec_item_id = si.id AND er.rn = 1
-      LEFT JOIN ext_group eg ON eg.spec_item_id = si.id
-      LEFT JOIN ext_notfound enf ON enf.spec_item_id = si.id
+      LEFT JOIN ext_ranked er ON er.spec_item_id = si.id AND er.project_id = si.project_id AND er.rn = 1
+      LEFT JOIN ext_group eg ON eg.spec_item_id = si.id AND eg.project_id = si.project_id
+      LEFT JOIN ext_notfound enf ON enf.spec_item_id = si.id AND enf.project_id = si.project_id
       WHERE si.project_id = ?
       ORDER BY si.section, si.id
     `).all(projectId) as Array<{
@@ -272,8 +272,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 18 },  // Ссылка
     ];
 
-    // Ссылка кликабельная: Иван проверяет товар одним нажатием, не выходя из файла
+    // Ссылка кликабельная: Иван проверяет товар одним нажатием, не выходя из файла.
+    // Только http/https: адрес приходит с чужого сайта, а file:// или \\сервер\share
+    // в документе Windows — рабочий способ утечки учётных данных по клику.
     for (const { row, url } of linkCells) {
+      if (!/^https?:\/\//i.test(url)) continue;
       const addr = XLSX.utils.encode_cell({ r: row, c: 11 });
       if (ws[addr]) ws[addr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
     }
