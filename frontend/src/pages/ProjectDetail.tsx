@@ -77,6 +77,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
     status: 'ok' | 'conflict' | 'no_section' | 'parse_error'; error?: string;
   }[] | null>(null);
   const [specItemsView, setSpecItemsView] = useState<number | null>(null);
+  // Поиск цен в интернете. Кнопка живёт здесь, рядом со строкой спецификации: снабженец
+  // загрузил файл — тут же запускает поиск, не листая страницу до раздела сопоставления.
+  const [priceSearchStatus, setPriceSearchStatus] = useState<string>('idle');
+  const [priceSearchNote, setPriceSearchNote] = useState<string>('');
+  const [priceSearchPosting, setPriceSearchPosting] = useState(false);
   const [specItems, setSpecItems] = useState<any[]>([]);
   const [specItemsLoading, setSpecItemsLoading] = useState(false);
   const [deliveryTotal, setDeliveryTotal] = useState<number | null>(null);
@@ -136,6 +141,12 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   };
 
   useEffect(() => { loadData(); }, [projectId]);
+  // статус поиска цен при открытии: вернувшийся человек должен увидеть, что прогон идёт
+  useEffect(() => {
+    fetchPriceSearch(false).then(status => {
+      if (status === 'queued' || status === 'running') pollPriceSearch();
+    });
+  }, [projectId]);
 
   const handleUploadInvoice = async () => {
     const file = invoiceFileRef.current?.files?.[0];
@@ -226,6 +237,60 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
       setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка массовой загрузки' });
     } finally {
       setBulkUploading(false);
+    }
+  };
+
+  const priceSearchText = (status: string, note: string) => {
+    if (status === 'queued') return 'Заявка принята. Поиск начнётся в течение нескольких минут — страницу можно закрыть.';
+    if (status === 'running') return 'Идём по позициям, ищем цены. Обычно 15–30 минут. Страницу можно закрыть.';
+    if (status === 'done') return `Готово: ${note}. Откройте выгрузку спецификации — колонки «Цена», «Поставщик», «Группа», «Найдено по».`;
+    if (status === 'error') return `Поиск не завершился: ${note}. Мы уже видим это и разберёмся.`;
+    return '';
+  };
+
+  const fetchPriceSearch = async (announce = true): Promise<string> => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/price-search/status`);
+      const status = String(data.status || 'idle');
+      setPriceSearchStatus(status);
+      // при открытии страницы про давно завершённый прогон молчим — иначе человек решит,
+      // что поиск только что прошёл
+      if (announce || status === 'queued' || status === 'running') {
+        setPriceSearchNote(String(data.message || '').split(/\r?\n/)[0].slice(0, 140));
+      }
+      return status;
+    } catch {
+      return 'unknown';
+    }
+  };
+
+  const pollPriceSearch = async () => {
+    for (let i = 0; i < 180; i++) {
+      await new Promise(r => setTimeout(r, 15000));
+      const status = await fetchPriceSearch();
+      if (status === 'unknown') continue;   // сеть икнула — опрос не бросаем
+      if (status !== 'queued' && status !== 'running') return;
+    }
+  };
+
+  const handleFindPrices = async () => {
+    setPriceSearchPosting(true);
+    try {
+      await api.post(`/projects/${projectId}/price-search`);
+      setPriceSearchStatus('queued');
+      setPriceSearchNote('');
+      pollPriceSearch();
+    } catch (err: any) {
+      if (err.response?.status === 409) {
+        setPriceSearchStatus('running');
+        setPriceSearchNote('');
+        pollPriceSearch();
+      } else {
+        setPriceSearchStatus('error');
+        setPriceSearchNote(err.response?.data?.error || 'не удалось поставить заявку');
+      }
+    } finally {
+      setPriceSearchPosting(false);
     }
   };
 
@@ -554,6 +619,27 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
           <p className="muted" style={{ marginTop: '0.5rem' }}>
             Всего позиций: {totalSpecItems} в {specifications.length} разделах
           </p>
+        )}
+        {specifications.length > 0 && (
+          <div style={{ marginTop: '0.75rem', borderTop: '1px solid #e5e7eb', paddingTop: '0.75rem' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={handleFindPrices}
+              disabled={priceSearchPosting || priceSearchStatus === 'queued' || priceSearchStatus === 'running'}
+            >
+              {priceSearchPosting
+                ? 'Отправка...'
+                : priceSearchStatus === 'queued'
+                ? 'В очереди...'
+                : priceSearchStatus === 'running'
+                ? 'Идёт поиск...'
+                : 'Найти цены в интернете'}
+            </button>
+            <p className="muted" style={{ marginTop: '0.4rem', marginBottom: 0, fontSize: '0.85rem' }}>
+              {priceSearchText(priceSearchStatus, priceSearchNote)
+                || 'Ищем цены по позициям, где есть заводская марка или артикул. Результат встанет в выгрузку спецификации.'}
+            </p>
+          </div>
         )}
       </div>
 
@@ -1036,7 +1122,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
               спецификации от этого не зависят, они работают.
             </p>
           )}
-          {matchingStats && matchingStats.total > 0 && (
+          {invoices.length > 0 && matchingStats && matchingStats.total > 0 && (
             <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.85rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
                 <span style={{ fontWeight: 600 }}>Покрытие спецификации</span>
