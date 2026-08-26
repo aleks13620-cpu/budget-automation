@@ -145,7 +145,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // Адрес приходит с чужого сайта. Пускаем только http/https: file:// или \сервер\share
     // в документе Windows — рабочий способ утечки учётных данных по клику.
     // Тем же условием гасим и текст «открыть карточку», иначе он обещает клик, которого нет.
-    const isWebLink = (u: string | null): boolean => !!u && /^https?:\/\//i.test(u);
+    const isWebLink = (u: string | null): boolean => {
+      if (!u || !/^https?:\/\//i.test(u)) return false;
+      // логин:пароль прямо в адресе — у продавца такого не бывает, зато это приём фишинга
+      return !u.slice(u.indexOf('//') + 2).split('/')[0].includes('@');
+    };
 
     function foundByLabel(item: { ext_offers: number | null; ext_price: number | null; ext_price_max: number | null },
                           usedExternal: boolean, foundBy: string | null, mark: string | null, notFound: number): string {

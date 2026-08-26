@@ -6,6 +6,9 @@ node_modules/
 .env.local
 .env.*.local
 
+# Cookie-сессии кабинетов поставщиков (доступы клиента — в git не попадают НИКОГДА)
+price-harvester/secrets/
+
 # Database
 database/*.db
 database/*.db-journal
@@ -72,3 +75,12 @@ scripts/_investigate_*.py
 scripts/_test_invoice_summary.py
 scripts/analyze_invoice_pdf.py
 scripts/inspect_invoice_pdf.py
+
+# Файлы спецификаций клиента: рабочие данные, в репозитории им не место.
+# Прилетают в корень при разборе — один git add -A, и они в истории навсегда.
+/*.xlsx
+/*.xls
+
+# Временные базы, которые не попадали под database/*.db
+backend/*.db
+backend/scripts/*.db
