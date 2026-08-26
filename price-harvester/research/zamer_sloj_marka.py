@@ -4,7 +4,7 @@
 Прошлый прогон был собран наспех: в него протекли проектные позиции (узлы TDU.5R),
 а запрос строился без производителя. Здесь и то и другое исправлено.
 """
-import base64, csv, io, json, re, sqlite3, sys, time, urllib.request
+import base64, csv, io, json, os, re, sqlite3, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from bs4 import BeautifulSoup
@@ -14,9 +14,11 @@ CRED = json.load(io.open(ROOT + r"\price-harvester\secrets\yandex_search.json", 
 RESULT = ROOT + r"\price-harvester\out\zamer_layerC_clean.csv"
 RESULT_XLSX = ROOT + r"\price-harvester\out\Арта_цены_по-артикулам.xlsx"
 KLASS = ROOT + r"\price-harvester\research\klassifikator_pozicij.py"
-HITS_JSON = ROOT + r"\price-harvester\out\zamer_layerC_hits.json"
+# файл-мост между прогоном и укладкой. Через окружение — чтобы два одновременных
+# задания не перетёрли результат друг друга МОЛЧА (по умолчанию путь прежний).
+HITS_JSON = os.environ.get("HITS_JSON", ROOT + r"\price-harvester\out\zamer_layerC_hits.json")
 RESULT_HTML = ROOT + r"\price-harvester\out\Арта_цены_по-артикулам.html"
-SPEC_ID = 34
+SPEC_ID = int(os.environ.get("SPEC_ID", 34))       # воркер (worker.py) гоняет по временной базе
 
 # классификатор берём как есть, чтобы состав слоя совпал с документом
 ns = {"__name__": "k"}
@@ -137,7 +139,8 @@ def fetch(url):
 
 
 def load_layer_c():
-    c = sqlite3.connect(ROOT + "/database/budget_automation.db"); c.row_factory = sqlite3.Row
+    c = sqlite3.connect(os.environ.get("BUDGET_DB_PATH", ROOT + "/database/budget_automation.db"))
+    c.row_factory = sqlite3.Row
     rows = c.execute("select * from specification_items where specification_id=?", (SPEC_ID,)).fetchall()
     by_id = {r["id"]: r for r in rows}
 
@@ -384,7 +387,10 @@ def main():
     hi = sum(max(h[0] for h in r["hits"]) * float(r["qty"]) for r in ok if r["qty"])
     log("\n" + "=" * 70)
     log("позиций в слое:  %d" % len(results))
-    log("цена найдена:    %d  (%.0f%%)" % (len(ok), len(ok) / len(results) * 100))
+    # деление защищено: в проекте может не оказаться ни одной позиции с заводской маркой
+    # (всё «по чертежу» / «описано словами»). Это не сбой — прогону просто нечего искать,
+    # и падать здесь нельзя: снаружи это выглядит как «поиск сломался».
+    log("цена найдена:    %d  (%.0f%%)" % (len(ok), len(ok) / len(results) * 100 if results else 0))
     log("сумма по слою:   от %s до %s ₽ — смотря чьё предложение брать" % (rub(lo), rub(hi)))
     log("у 2+ продавцов:  %d, в среднем %.1f предложения на позицию" % (
         len([r for r in ok if r["shops"] > 1]), sum(r["shops"] for r in ok) / max(len(ok), 1)))

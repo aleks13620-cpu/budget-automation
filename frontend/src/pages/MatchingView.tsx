@@ -92,6 +92,8 @@ export function MatchingView({ projectId, onBack }: Props) {
   const [submittingReport, setSubmittingReport] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [priceSearchStatus, setPriceSearchStatus] = useState<'idle' | 'queued' | 'running' | 'done' | 'error'>('idle');
+  const [priceSearchPosting, setPriceSearchPosting] = useState(false);
   const [filterStatus, setFilterStatus] = useState<FilterStatus>('all');
 
   // Manual matching state
@@ -147,6 +149,14 @@ export function MatchingView({ projectId, onBack }: Props) {
     loadInitial();
   }, [projectId]);
 
+  // Один запрос статуса поиска цен при открытии страницы — чтобы вернувшийся пользователь
+  // увидел «поиск идёт», даже если закрывал вкладку. Если поиск ещё не завершён — продолжаем опрос.
+  useEffect(() => {
+    fetchPriceSearchStatus(false).then(status => {
+      if (status === 'queued' || status === 'running') pollPriceSearchStatus();
+    });
+  }, [projectId]);
+
   const handleRefresh = () => {
     loadMatching(false);
     loadSummary();
@@ -175,6 +185,86 @@ export function MatchingView({ projectId, onBack }: Props) {
       setMessage({ type: 'error', text: 'Ошибка при экспорте' });
     } finally {
       setExporting(false);
+    }
+  };
+
+  // Тексты состояний поиска цен в интернете — дословно из контракта (docs/plans/active/КОНТРАКТ_кнопка-поиска-цен.md).
+  const PRICE_SEARCH_TEXT: Record<'queued' | 'running', string> = {
+    queued: 'Заявка принята. Поиск начнётся в течение нескольких минут — страницу можно закрыть.',
+    running: 'Идём по позициям, ищем цены. Обычно 15–30 минут. Страницу можно закрыть.',
+  };
+
+  // Один запрос статуса; обновляет состояние кнопки и текст под ней. Возвращает статус для вызывающего.
+  const fetchPriceSearchStatus = async (announce = true): Promise<'idle' | 'queued' | 'running' | 'done' | 'error' | null> => {
+    try {
+      const { data } = await api.get(`/projects/${projectId}/price-search/status`);
+      const status = (data.status || 'idle') as 'idle' | 'queued' | 'running' | 'done' | 'error';
+      setPriceSearchStatus(status);
+      // announce=false — это первый запрос при открытии страницы. Про идущий поиск сказать надо,
+      // а про давно завершённый — нет: иначе Иван, открыв проект через неделю, видит «Готово,
+      // цены записаны» и думает, что прогон только что прошёл.
+      if (!announce && status !== 'queued' && status !== 'running') return status;
+      if (status === 'queued' || status === 'running') {
+        // Заявка ждёт нашу рабочую машину. Если та не на связи, обещание «начнётся в течение
+        // нескольких минут» через час превращается в неправду — говорим, как есть.
+        const waitingMin = data.requestedAt ? (Date.now() - Date.parse(data.requestedAt)) / 60000 : 0;
+        const text = status === 'queued' && waitingMin > 30
+          ? 'Заявка в очереди дольше обычного: наша машина сейчас не на связи. Мы это видим, поиск начнётся, как только она поднимется.'
+          : PRICE_SEARCH_TEXT[status];
+        setMessage({ type: 'success', text });
+      } else if (status === 'done') {
+        // Сводка приходит с сервера в ПОЗИЦИЯХ («цены нашлись по 45 позициям из 175»).
+        // Число строк сюда не годится: строк всегда больше — на позицию несколько
+        // предложений плюс «не искали» и «продавец не отдал цену».
+        setMessage({
+          type: 'success',
+          text: `Готово: ${data.message || `записей: ${data.rowsWritten ?? 0}`}. Откройте выгрузку — колонки «Цена из интернета», «Продавец», «Группа», «Найдено по».`,
+        });
+      } else if (status === 'error') {
+        // В message приезжает хвост stderr питоновского прогона — целиком это трейсбек,
+        // Ивану он ничего не говорит и пугает. Показываем первую строку и коротко;
+        // полный текст остаётся в базе, разбираем его мы.
+        const reason = String(data.message || 'неизвестная ошибка').split(/\r?\n/)[0].slice(0, 140);
+        setMessage({ type: 'error', text: `Поиск не завершился: ${reason}. Мы уже видим это и разберёмся.` });
+      }
+      return status;
+    } catch {
+      return null;
+    }
+  };
+
+  // Опрос по образцу pollMatchingStatus: раз в 10 секунд, пока идёт queued/running.
+  // Поиск может идти 30-40 минут — запас до 45 минут, чтобы не оборвать раньше времени.
+  const pollPriceSearchStatus = async () => {
+    const maxPolls = 270;
+    for (let i = 0; i < maxPolls; i++) {
+      await new Promise(resolve => setTimeout(resolve, 10000));
+      const status = await fetchPriceSearchStatus();
+      if (status === null) continue;  // сеть икнула (сон ноутбука, перезапуск сервера) — не бросаем опрос
+      if (status === 'done' || status === 'error') return;
+      if (status !== 'queued' && status !== 'running') return; // idle — задания больше нет
+    }
+  };
+
+  const handleFindPrices = async () => {
+    setPriceSearchPosting(true);
+    setMessage(null);
+    try {
+      await api.post(`/projects/${projectId}/price-search`);
+      setPriceSearchStatus('queued');
+      setMessage({ type: 'success', text: PRICE_SEARCH_TEXT.queued });
+      pollPriceSearchStatus();
+    } catch (err: any) {
+      if (err.response?.status === 409) {
+        setMessage({ type: 'error', text: 'Поиск по этому проекту уже идёт.' });
+        const status = err.response?.data?.status;
+        if (status === 'queued' || status === 'running') setPriceSearchStatus(status);
+        pollPriceSearchStatus();
+      } else {
+        setMessage({ type: 'error', text: err.response?.data?.error || 'Ошибка при запуске поиска цен' });
+      }
+    } finally {
+      setPriceSearchPosting(false);
     }
   };
 
@@ -352,6 +442,20 @@ export function MatchingView({ projectId, onBack }: Props) {
           </select>
           <button className="btn btn-secondary" onClick={handleExport} disabled={exporting || items.length === 0}>
             {exporting ? 'Экспорт...' : 'Экспорт в Excel'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            onClick={handleFindPrices}
+            disabled={priceSearchPosting || priceSearchStatus === 'queued' || priceSearchStatus === 'running'}
+            title="Найти актуальные цены на позиции спецификации в интернете"
+          >
+            {priceSearchPosting
+              ? 'Отправка...'
+              : priceSearchStatus === 'queued'
+              ? 'В очереди...'
+              : priceSearchStatus === 'running'
+              ? 'Идёт поиск...'
+              : 'Найти цены в интернете'}
           </button>
         </div>
       </div>

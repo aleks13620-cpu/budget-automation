@@ -129,6 +129,21 @@ function initializeDatabase(): void {
       'CREATE INDEX IF NOT EXISTS idx_external_prices_spec    ON external_prices(spec_item_id)',
       'CREATE INDEX IF NOT EXISTS idx_external_prices_project ON external_prices(project_id)',
       'CREATE INDEX IF NOT EXISTS idx_external_prices_source  ON external_prices(source)',
+      // Очередь заданий кнопки «Найти цены». Поиск идёт НЕ на проде: ключ Yandex Search и
+      // «домашний» IP живут на рабочей машине. Кнопка только кладёт сюда строку, воркер с
+      // рабочей машины забирает её через /api/price-search/jobs/next и возвращает цены.
+      // Таблица — единственное место, где браузер и воркер встречаются.
+      `CREATE TABLE IF NOT EXISTS price_search_jobs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        project_id   INTEGER NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'queued',
+        requested_at TEXT NOT NULL,
+        started_at   TEXT,
+        finished_at  TEXT,
+        rows_written INTEGER,
+        message      TEXT
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_price_search_jobs_status ON price_search_jobs(status)',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

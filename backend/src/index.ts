@@ -17,6 +17,7 @@ import unitTriggerRoutes from './routes/unitTriggers';
 import priceListRoutes from './routes/priceLists';
 import gigachatRoutes from './routes/gigachat';
 import metricsDashboardRoutes, { invalidateDashboardCache } from './routes/metricsDashboard';
+import priceSearchRoutes from './routes/priceSearch';
 
 dotenv.config();
 
@@ -46,6 +47,12 @@ if (API_SECRET) {
     next();
   });
 }
+// Тело результата поиска цен — сотни килобайт: на спецификации Арты 408 строк весят ~370 КБ,
+// а умолчание body-parser 100 КБ. С ним воркер после 40 минут поиска получал бы 413, и НИ ОДНА
+// цена не встала бы — замерено на реальном прогоне. Поднято ТОЛЬКО на путь воркера: глобальный
+// подъём отдал бы всем ~40 ручкам разбор десятимегабайтных тел, а это уже вред вне этой кнопки.
+// Порядок важен: второй парсер не трогает запрос, тело которого уже разобрано первым.
+app.use('/api/price-search/jobs', express.json({ limit: '10mb' }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -95,6 +102,7 @@ app.use(unitTriggerRoutes);
 app.use(priceListRoutes);
 app.use(gigachatRoutes);
 app.use(metricsDashboardRoutes);
+app.use(priceSearchRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

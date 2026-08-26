@@ -22,8 +22,8 @@ import common  # noqa: F401  (грузит .env, задаёт BUDGET_DB_PATH —
 import db
 
 KLASS = os.path.join(ROOT, "research", "klassifikator_pozicij.py")
-HITS_JSON = os.path.join(ROOT, "out", "zamer_layerC_hits.json")
-SPEC_ID = 34
+HITS_JSON = os.environ.get("HITS_JSON", os.path.join(ROOT, "out", "zamer_layerC_hits.json"))
+SPEC_ID = int(os.environ.get("SPEC_ID", 34))   # воркер (worker.py) гоняет по временной базе
 
 # классификатор берём как есть (см. zamer_sloj_marka.py) — чтобы группы совпали с прогоном
 _ns = {"__name__": "k"}
