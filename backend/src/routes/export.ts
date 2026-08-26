@@ -57,7 +57,15 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       -- source='web_search' обязателен во всех трёх CTE: в external_prices лежат ещё
       -- старые прогоны прежних источников, включая тестовые с несуществующим доменом
       -- example-supplier. Без этого фильтра они уехали бы в спецификацию клиента как цены.
-      WITH ext_ranked AS (
+      -- Последний прогон по каждой позиции — считается по ВСЕМ статусам, не только по
+      -- найденным. Иначе позиция, которая в свежем прогоне перестала находиться, тянула бы
+      -- цену из старого среза как текущую, а флаг «не нашли» терялся. Проверено фактом.
+      WITH ext_last AS (
+        SELECT spec_item_id, project_id, MAX(snapshot_date) as last_date
+        FROM external_prices WHERE source = 'web_search'
+        GROUP BY spec_item_id, project_id
+      ),
+      ext_ranked AS (
         SELECT ep.spec_item_id, ep.project_id, ep.price, ep.supplier_name, ep.source_url,
                json_extract(ep.raw_data, '$.found_by') as found_by,
                json_extract(ep.raw_data, '$.mark') as mark,
@@ -65,9 +73,12 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
                MAX(ep.price) OVER (PARTITION BY ep.spec_item_id) as price_max,
                ROW_NUMBER() OVER (
                  PARTITION BY ep.spec_item_id
-                 ORDER BY ep.snapshot_date DESC, ep.price ASC
+                 ORDER BY ep.price ASC
                ) as rn
         FROM external_prices ep
+        JOIN ext_last el ON el.spec_item_id = ep.spec_item_id
+                        AND el.project_id IS ep.project_id
+                        AND ep.snapshot_date = el.last_date
         WHERE ep.status = 'found' AND ep.source = 'web_search'
       ),
       ext_group AS (
@@ -75,8 +86,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
         FROM external_prices WHERE source = 'web_search' GROUP BY spec_item_id, project_id
       ),
       ext_notfound AS (
-        SELECT DISTINCT spec_item_id, project_id FROM external_prices
-        WHERE status = 'not_found' AND source = 'web_search'
+        SELECT DISTINCT ep.spec_item_id, ep.project_id FROM external_prices ep
+        JOIN ext_last el ON el.spec_item_id = ep.spec_item_id
+                        AND el.project_id IS ep.project_id
+                        AND ep.snapshot_date = el.last_date
+        WHERE ep.status = 'not_found' AND ep.source = 'web_search'
       )
       SELECT si.id, si.position_number, si.name, si.unit, si.quantity, si.section,
              COALESCE(ii.price, pli.price) as price,
@@ -127,6 +141,11 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // а не выводить формулой. Направление ошибки случайное: у грунта дешёвое было верным
     // (цена за кг против ведра), у клапана MNF-R2 дешёвое оказалось страницей раздела.
     const SPREAD_ALERT = 3;
+
+    // Адрес приходит с чужого сайта. Пускаем только http/https: file:// или \сервер\share
+    // в документе Windows — рабочий способ утечки учётных данных по клику.
+    // Тем же условием гасим и текст «открыть карточку», иначе он обещает клик, которого нет.
+    const isWebLink = (u: string | null): boolean => !!u && /^https?:\/\//i.test(u);
 
     function foundByLabel(item: { ext_offers: number | null; ext_price: number | null; ext_price_max: number | null },
                           usedExternal: boolean, foundBy: string | null, mark: string | null, notFound: number): string {
@@ -225,9 +244,9 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           usedExternal ? 'Интернет' : (item.is_analog ? 'Аналог' : 'Ориг.'),
           item.ext_group ? (GROUP_LABELS[item.ext_group] || item.ext_group) : '',
           foundByLabel(item, usedExternal, item.ext_found_by, item.ext_mark, item.ext_not_found),
-          usedExternal && item.ext_url ? 'открыть карточку' : '',
+          usedExternal && isWebLink(item.ext_url) ? 'открыть карточку' : '',
         ]);
-        if (usedExternal && item.ext_url) linkCells.push({ row: wsData.length - 1, url: item.ext_url });
+        if (usedExternal && isWebLink(item.ext_url)) linkCells.push({ row: wsData.length - 1, url: item.ext_url! });
       }
 
       grandTotal += sectionTotal;
@@ -276,7 +295,6 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     // Только http/https: адрес приходит с чужого сайта, а file:// или \\сервер\share
     // в документе Windows — рабочий способ утечки учётных данных по клику.
     for (const { row, url } of linkCells) {
-      if (!/^https?:\/\//i.test(url)) continue;
       const addr = XLSX.utils.encode_cell({ r: row, c: 11 });
       if (ws[addr]) ws[addr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
     }
