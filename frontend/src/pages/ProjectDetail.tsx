@@ -1023,9 +1023,19 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
       </div>
 
       {/* Matching section */}
-      {specifications.length > 0 && invoices.length > 0 && (
+      {/* Раньше раздел требовал И спецификацию, И счета. С кнопкой «Найти цены в интернете»
+          это стало тупиком: проект, где счетов ещё нет, — ровно тот случай, ради которого
+          цены и ищут, а войти на страницу было нельзя. Достаточно спецификации; когда счетов
+          нет, честно говорим об этом строкой ниже. */}
+      {specifications.length > 0 && (
         <div className="section">
           <h2>Сопоставление</h2>
+          {invoices.length === 0 && (
+            <p style={{ marginTop: 0, color: '#6b7280', fontSize: '0.9rem' }}>
+              Счетов пока нет — сопоставлять не с чем. Поиск цен в интернете и выгрузка
+              спецификации от этого не зависят, они работают.
+            </p>
+          )}
           {matchingStats && matchingStats.total > 0 && (
             <div style={{ marginBottom: '0.75rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '6px', fontSize: '0.85rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.3rem' }}>
