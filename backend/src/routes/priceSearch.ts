@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../database';
+import { classifySpecPositions } from '../services/specClassifier';
 
 const router = Router();
 
@@ -82,6 +83,56 @@ function releaseStaleRunning(
   ).run(nowIso(), 'Прогон не завершился: рабочая машина не ответила больше двух часов', job.id);
   return true;
 }
+
+// 0. GET /api/projects/:id/spec-groups — из чего состоит спецификация и что уже нашли.
+// Правило деления на группы перенесено из price-harvester/research/klassifikator_pozicij.py
+// в services/specClassifier.ts и сверено 1:1 на 7039 позициях (тест test_spec_classifier.ts).
+// Показываем то же, по чему реально идёт поиск, иначе экран будет обещать одно, а искать другое.
+router.get('/api/projects/:id/spec-groups', (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Проект не найден' });
+
+    const positions = classifySpecPositions({ projectId }, db);
+    const groups: Record<string, number> = {};
+    for (const p of positions) groups[p.group] = (groups[p.group] ?? 0) + 1;
+    const searchable = positions.filter(p => p.group.startsWith('C')).length;
+
+    // Сколько позиций получили цену в ПОСЛЕДНЕМ прогоне.
+    // JOIN на specification_items обязателен: пересборка спецификации (reparse) пересоздаёт
+    // позиции с новыми номерами, и старые цены остаются сиротами — выгрузка их уже не видит,
+    // а экран без JOIN обещал бы «нашли цену у 45», которых в документе нет.
+    // Дата прогона берётся по ВСЕМ статусам, а не только по найденным: прогон, где ничего не
+    // нашлось (площадки не пустили), иначе выглядел бы как «поиск ещё не запускался».
+    const priced = db.prepare(`
+      WITH ext_last AS (
+        SELECT ep.spec_item_id, MAX(ep.snapshot_date) AS last_date
+        FROM external_prices ep
+        JOIN specification_items si ON si.id = ep.spec_item_id AND si.project_id = ep.project_id
+        WHERE ep.source = 'web_search' AND ep.project_id = ?
+        GROUP BY ep.spec_item_id
+      )
+      SELECT
+        (SELECT COUNT(DISTINCT ep.spec_item_id)
+           FROM external_prices ep
+           JOIN ext_last el ON el.spec_item_id = ep.spec_item_id AND ep.snapshot_date = el.last_date
+          WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found') AS n,
+        (SELECT MAX(last_date) FROM ext_last) AS run_date
+    `).get(projectId, projectId) as { n: number; run_date: string | null };
+
+    res.json({
+      total: positions.length,
+      groups,
+      layer1: { searchable, withPrice: priced?.n ?? 0, lastRunDate: priced?.run_date ?? null },
+    });
+  } catch (error) {
+    console.error('GET /api/projects/:id/spec-groups error:', error);
+    res.status(500).json({ error: 'Ошибка при разборе спецификации на группы' });
+  }
+});
 
 // 1. POST /api/projects/:id/price-search — кнопка «Найти цены в интернете»
 router.post('/api/projects/:id/price-search', (req: Request, res: Response) => {

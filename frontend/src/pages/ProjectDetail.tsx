@@ -79,6 +79,8 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const [specItemsView, setSpecItemsView] = useState<number | null>(null);
   // Поиск цен в интернете. Кнопка живёт здесь, рядом со строкой спецификации: снабженец
   // загрузил файл — тут же запускает поиск, не листая страницу до раздела сопоставления.
+  const [specGroups, setSpecGroups] = useState<{ total: number; groups: Record<string, number>;
+    layer1: { searchable: number; withPrice: number; lastRunDate: string | null } } | null>(null);
   const [priceSearchStatus, setPriceSearchStatus] = useState<string>('idle');
   const [priceSearchNote, setPriceSearchNote] = useState<string>('');
   const [priceSearchPosting, setPriceSearchPosting] = useState(false);
@@ -117,6 +119,11 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   };
 
   const loadData = async () => {
+    // состав спецификации перечитываем здесь, а не только при открытии проекта: loadData зовётся
+    // после каждой загрузки и пересборки раздела, и без этого сразу после загрузки файла экран
+    // показывал бы нули по всем группам — ровно в тот момент, ради которого всё и делалось
+    api.get(`/projects/${projectId}/spec-groups`)
+      .then(r => setSpecGroups(r.data)).catch(() => setSpecGroups(null));
     setLoading(true);
     try {
       const [specRes, invRes, delivRes, plRes, statsRes] = await Promise.all([
@@ -243,7 +250,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const priceSearchText = (status: string, note: string) => {
     if (status === 'queued') return 'Заявка принята. Поиск начнётся в течение нескольких минут — страницу можно закрыть.';
     if (status === 'running') return 'Идём по позициям, ищем цены. Обычно 15–30 минут. Страницу можно закрыть.';
-    if (status === 'done') return `Готово: ${note}. Откройте выгрузку спецификации — колонки «Цена», «Поставщик», «Группа», «Найдено по».`;
+    // при перезаходе на страницу сводка прогона не запрашивается заново — тогда пусть говорит
+    // строка слоя 1 («нашли цену у 45 из 54»), а не «Готово: .» с пустым местом
+    if (status === 'done') return note ? `Готово: ${note}. Откройте выгрузку спецификации — колонки «Цена», «Поставщик», «Группа», «Найдено по».` : '';
     if (status === 'error') return `Поиск не завершился: ${note}. Мы уже видим это и разберёмся.`;
     return '';
   };
@@ -621,7 +630,33 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
           </p>
         )}
         {specifications.length > 0 && (
-          <div style={{ marginTop: '0.75rem', borderTop: '1px solid #e5e7eb', paddingTop: '0.75rem' }}>
+          <div style={{ marginTop: '1rem', borderTop: '1px solid #e5e7eb', paddingTop: '0.75rem' }}>
+            {/* разбивка приезжает отдельным запросом; если он не ответил — молча не рисуем
+                её, но кнопка поиска и слои остаются на месте: они работали и без неё */}
+            {specGroups && (<>
+            <p style={{ fontWeight: 600, margin: '0 0 0.2rem' }}>
+              Что уйдёт в поиск: {specGroups.total} позиций из {totalSpecItems}
+            </p>
+            <p className="muted" style={{ margin: '0 0 0.4rem', fontSize: '0.8rem' }}>
+              Строки без количества не считаем. Позиции с одинаковым началом названия считаем
+              один раз — если подряд идут типоразмеры, часть может уйти в поиск как одна.
+            </p>
+            <div style={{ fontSize: '0.9rem', color: '#374151', marginBottom: '1rem' }}>
+              {[
+                ['C. марка изделия', 'есть заводская марка — по ним ищем цены'],
+                ['D. без марки', 'описано словами — слой 2'],
+                ['A. изготавливается', 'изготавливается по чертежу'],
+                ['B. проектное', 'проектное, цена по запросу'],
+              ].map(([key, label]) => (
+                <div key={key} style={{ display: 'flex', gap: '0.5rem', padding: '0.15rem 0' }}>
+                  <span style={{ minWidth: '3rem', fontWeight: 600 }}>{specGroups.groups[key] ?? 0}</span>
+                  <span>{label}</span>
+                </div>
+              ))}
+            </div>
+            </>)}
+
+            <p style={{ fontWeight: 600, margin: '0 0 0.3rem' }}>Слой 1 — цены по артикулу в интернете</p>
             <button
               className="btn btn-secondary"
               onClick={handleFindPrices}
@@ -635,9 +670,20 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 ? 'Идёт поиск...'
                 : 'Найти цены в интернете'}
             </button>
-            <p className="muted" style={{ marginTop: '0.4rem', marginBottom: 0, fontSize: '0.85rem' }}>
+            <p className="muted" style={{ margin: '0.4rem 0 0', fontSize: '0.85rem' }}>
               {priceSearchText(priceSearchStatus, priceSearchNote)
-                || 'Ищем цены по позициям, где есть заводская марка или артикул. Результат встанет в выгрузку спецификации.'}
+                || (!specGroups
+                  ? 'Ищем цены по позициям, где есть заводская марка или артикул. Результат встанет в выгрузку спецификации.'
+                  : specGroups.layer1.lastRunDate
+                  ? `Нашли цену у ${specGroups.layer1.withPrice} из ${specGroups.layer1.searchable} позиций с маркой. Последний поиск: ${specGroups.layer1.lastRunDate}. Цены — в выгрузке спецификации.`
+                  : `Поиск ещё не запускался. Искать будем по ${specGroups.layer1.searchable} позициям с заводской маркой.`)}
+            </p>
+
+            <p style={{ fontWeight: 600, margin: '1rem 0 0.3rem' }}>Слой 2 — разбор описаний через ИИ</p>
+            <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
+              {specGroups
+                ? `Пока не сделан. ${specGroups.groups['D. без марки'] ?? 0} позиций описаны словами, без марки — по ним цены не ищутся.`
+                : 'Пока не сделан: позиции, описанные словами, без марки, остаются без цены.'}
             </p>
           </div>
         )}
