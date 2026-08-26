@@ -635,7 +635,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 её, но кнопка поиска и слои остаются на месте: они работали и без неё */}
             {specGroups && (<>
             <p style={{ fontWeight: 600, margin: '0 0 0.2rem' }}>
-              Что уйдёт в поиск: {specGroups.total} позиций из {totalSpecItems}
+              Что уйдёт в поиск: {specGroups.total} из {totalSpecItems} позиций
             </p>
             <p className="muted" style={{ margin: '0 0 0.4rem', fontSize: '0.8rem' }}>
               Строки без количества не считаем. Позиции с одинаковым началом названия считаем
