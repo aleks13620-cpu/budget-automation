@@ -1,8 +1,9 @@
 name: Deploy to server
 
+# ВРЕМЕННО переведено на ручной запуск (workflow_dispatch) на время восстановления
+# сервера после смены IP. Вернуть `on: push: branches: [main]` после стабилизации.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 jobs:
   deploy:
