@@ -95,6 +95,40 @@ function initializeDatabase(): void {
       )`,
       'ALTER TABLE matched_items ADD COLUMN matching_rule_id INTEGER',
       'ALTER TABLE matched_items ADD COLUMN match_reason TEXT',
+      // Цены, найденные снаружи (поиск по интернету, прайсы поставщиков). Раньше таблицу
+      // заводил только python-скрипт харвестера, и на проде её не было вовсе — а экспорт
+      // спецификации теперь из неё читает. Без этой миграции выгрузка падала бы с
+      // «no such table» по ВСЕМ проектам. DDL держать одинаковым с price-harvester/src/db.py.
+      `CREATE TABLE IF NOT EXISTS external_prices (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        business_key   TEXT NOT NULL UNIQUE,
+        project_id     INTEGER,
+        spec_item_id   INTEGER,
+        query_name     TEXT,
+        source         TEXT NOT NULL,
+        source_url     TEXT NOT NULL,
+        snapshot_date  TEXT NOT NULL,
+        supplier_name  TEXT,
+        manufacturer   TEXT,
+        article        TEXT,
+        name           TEXT NOT NULL,
+        unit           TEXT,
+        price          REAL,
+        currency       TEXT DEFAULT 'RUB',
+        vat_included   INTEGER,
+        vat_rate       INTEGER,
+        min_batch      REAL,
+        lead_time_days INTEGER,
+        in_stock       INTEGER,
+        match_score    REAL,
+        status         TEXT NOT NULL DEFAULT 'found',
+        raw_data       TEXT,
+        created_at     TEXT NOT NULL,
+        updated_at     TEXT NOT NULL
+      )`,
+      'CREATE INDEX IF NOT EXISTS idx_external_prices_spec    ON external_prices(spec_item_id)',
+      'CREATE INDEX IF NOT EXISTS idx_external_prices_project ON external_prices(project_id)',
+      'CREATE INDEX IF NOT EXISTS idx_external_prices_source  ON external_prices(source)',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
