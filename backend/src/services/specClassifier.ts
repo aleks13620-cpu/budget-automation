@@ -199,9 +199,36 @@ export function buildFullName(row: SpecItemRow, byId: Map<number, SpecItemRow>):
 }
 
 /**
+ * Поля, из которых складывается ПОИСКОВЫЙ ЗАПРОС (по ним же find_mark ищет марку).
+ * Копия KEY_FIELDS из klassifikator_pozicij.py.
+ */
+const KEY_FIELDS = [
+  'name', 'product_code', 'characteristics', 'manufacturer', 'marking', 'article',
+] as const;
+
+/**
+ * Ключ «это одна и та же позиция спецификации». Копия dedup_key из
+ * price-harvester/research/klassifikator_pozicij.py — расхождение ловит сверка
+ * (в дампах обеих сторон есть поле `key`).
+ *
+ * Прежний ключ — срез полного имени в 60 символов + артикул + производитель — склеивал
+ * РАЗНЫЕ товары: buildFullName берёт `full_name || name`, поэтому у строк с заполненным
+ * full_name собственное имя (а это и есть артикул: C21-500-400, C21-500-500…) в ключ
+ * не попадало вовсе, и пять разных радиаторов считались одной позицией.
+ *
+ * `!v ? '' : String(v).trim()` — та же семантика «ложное → пусто», что и `x or ''` в python:
+ * число 0 и null дают одно и то же по обе стороны. JSON — чтобы склейка полей не давала
+ * ложных совпадений.
+ */
+export function dedupKey(row: SpecItemRow, fullName: string): string {
+  const v = (f: (typeof KEY_FIELDS)[number]) => (!row[f] ? '' : String(row[f]).trim());
+  return JSON.stringify([fullName, ...KEY_FIELDS.map(v)]);
+}
+
+/**
  * Позиции спецификации (или всего проекта) с квалификацией.
  * Подготовка входа — как в python load_positions: позиции без количества пропускаем,
- * дедуп по (первые 60 символов полного имени, product_code, manufacturer).
+ * дедуп по dedupKey.
  */
 export function classifySpecPositions(
   opts: { specificationId?: number; projectId?: number },
@@ -220,8 +247,7 @@ export function classifySpecPositions(
   for (const r of rows) {
     if (!r.quantity) continue;
     const fullName = buildFullName(r, byId);
-    // ключ-кортеж python; JSON — чтобы склейка полей не давала ложных совпадений
-    const key = JSON.stringify([fullName.slice(0, 60), r.product_code || '', r.manufacturer || '']);
+    const key = dedupKey(r, fullName);
     if (seen.has(key)) continue;
     seen.add(key);
     const { group, mark, markSrc } = classifySpecItem(r, fullName);

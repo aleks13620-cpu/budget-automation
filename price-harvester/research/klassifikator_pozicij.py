@@ -99,6 +99,29 @@ def classify(row, full_name):
     return "D. без марки", None, None
 
 
+# Поля, из которых складывается ПОИСКОВЫЙ ЗАПРОС: марка ищется по ним (find_mark),
+# производитель и полное имя идут в строку запроса. Ключ дедупа обязан совпадать
+# с ними, иначе позиции с РАЗНЫМИ запросами схлопнутся в одну и часть товаров
+# просто не попадёт в поиск цен.
+KEY_FIELDS = ("name", "product_code", "characteristics", "manufacturer", "marking", "article")
+
+
+def dedup_key(row, full_name):
+    """Ключ «это одна и та же позиция спецификации», ЕДИНСТВЕННОЕ определение на python.
+    Копия правила на TS — backend/src/services/specClassifier.ts; расхождение ловит сверка.
+
+    Раньше ключом был срез полного имени в 60 символов + артикул + производитель.
+    Он склеивал разные товары: full() берёт `full_name or name`, поэтому у строк, где
+    заполнено full_name, СОБСТВЕННОЕ имя (а это и есть артикул — C21-500-400, C21-500-500…)
+    в ключ не попадало вовсе, и пять разных радиаторов считались одной позицией.
+    Замер 27.08.2026 по всей базе: возвращает в поиск +65 позиций на вентиляционной
+    спецификации из 704 строк и +1 на 19_8-24-ОВ.xlsx, лишних запросов не добавляет.
+    """
+    # «ложное -> пусто», как было у прежнего ключа (`r["product_code"] or ""`):
+    # число 0 и None дают одно и то же по обе стороны, python и JS тут совпадают.
+    return (full_name,) + tuple("" if not row[f] else str(row[f]).strip() for f in KEY_FIELDS)
+
+
 def run():
     c = sqlite3.connect(DB); c.row_factory = sqlite3.Row
     specs = c.execute("""select s.id, s.file_name, count(si.id) n from specifications s
@@ -131,7 +154,7 @@ def run():
             if not r["quantity"]:
                 continue
             fn = full(r)
-            key = (fn[:60], r["product_code"] or "", r["manufacturer"] or "")
+            key = dedup_key(r, fn)
             if key in seen:
                 continue
             seen.add(key)

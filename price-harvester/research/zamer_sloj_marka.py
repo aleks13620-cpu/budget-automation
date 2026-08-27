@@ -25,6 +25,7 @@ ns = {"__name__": "k"}
 exec(compile(io.open(KLASS, encoding="utf-8").read().replace("\nrun()\n", "\n"),
              "klass", "exec"), ns)
 classify, find_mark = ns["classify"], ns["find_mark"]
+dedup_key = ns["dedup_key"]   # ключ дедупа — одно определение на python, см. klassifikator_pozicij.py
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
 BLOCKED = ("yandex.ru", "google.", "youtube.", "wikipedia.", "avito.ru", "market.")
@@ -156,7 +157,7 @@ def load_layer_c():
     for r in rows:
         if not r["quantity"]: continue
         fn = full(r)
-        key = (fn[:60], r["product_code"] or "", r["manufacturer"] or "")
+        key = dedup_key(r, fn)
         if key in seen: continue
         seen.add(key)
         kind, mark, src = classify(r, fn)
@@ -411,6 +412,26 @@ def render_only():
 
 
 def _selfcheck():
+    # --- ключ дедупа: тот самый баг, из-за которого пять радиаторов считались одной позицией ---
+    def _r(**kw):
+        base = dict(name=None, product_code=None, characteristics=None,
+                    manufacturer=None, marking=None, article=None)
+        base.update(kw); return base
+    fn = "Cтальной панельный радиатор Royal Thermo Compact с боковым подключением, тип C 21"
+    # разные артикулы в собственном имени при ОДИНАКОВОМ полном имени - это РАЗНЫЕ позиции
+    assert dedup_key(_r(name="C21-500-400"), fn) != dedup_key(_r(name="C21-500-500"), fn)
+    # разный типоразмер в характеристиках - тоже разные позиции (ДК-250М против ДК-160М)
+    assert dedup_key(_r(name="Клапан", characteristics="ДК-250М"), fn) !=            dedup_key(_r(name="Клапан", characteristics="ДК-160М"), fn)
+    # полностью совпавшая строка - одна позиция, второго платного запроса не будет
+    assert dedup_key(_r(name="C21-500-400"), fn) == dedup_key(_r(name="C21-500-400"), fn)
+    # «ложное -> пусто»: None, "" и 0 неразличимы, как было у прежнего ключа
+    assert dedup_key(_r(name="X", product_code=None), fn) == dedup_key(_r(name="X", product_code=""), fn)
+    assert dedup_key(_r(name="X", product_code=0), fn) == dedup_key(_r(name="X", product_code=""), fn)
+    assert dedup_key(_r(name="X", product_code=" A "), fn) == dedup_key(_r(name="X", product_code="A"), fn)
+    # различие ЗА 60-м символом полного имени больше не теряется
+    assert dedup_key(_r(name="X"), "A" * 60 + "левый") != dedup_key(_r(name="X"), "A" * 60 + "правый")
+    print("selfcheck ok: ключ дедупа различает артикул, типоразмер и хвост полного имени")
+
     res = [
         {"name": "Кран шаровой", "mark": "BV.R.201", "qty": 4, "unit": "шт",
          "hits": [(900.0, "http://b/2", "b.ru", "Кран BV.R.201 ду20"),

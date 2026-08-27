@@ -8,7 +8,7 @@
  *
  * Запуск:  cd backend && npx ts-node test_spec_classifier.ts
  */
-import { classifySpecItem, buildFullName, trimSizeTail } from './src/services/specClassifier';
+import { classifySpecItem, buildFullName, trimSizeTail, dedupKey } from './src/services/specClassifier';
 import type { SpecItemRow } from './src/services/specClassifier';
 
 let pass = 0, fail = 0;
@@ -118,5 +118,21 @@ check('имя ребёнка склеено с родителем',
 check('склейка родителя даёт группу B',
   classifySpecItem(child, buildFullName(child, byId)).group === 'B. проектное');
 
+console.log('');
+console.log('=== ключ дедупа (тот же набор, что в python selfcheck) ===');
+const FN = 'Cтальной панельный радиатор Royal Thermo Compact с боковым подключением, тип C 21';
+const k = (r: Partial<SpecItemRow>, fn = FN) => dedupKey(row(r), fn);
+// разные артикулы в собственном имени при ОДИНАКОВОМ полном — РАЗНЫЕ позиции
+check('C21-500-400 и C21-500-500 — разные позиции', k({ name: 'C21-500-400' }) !== k({ name: 'C21-500-500' }));
+check('ДК-250М и ДК-160М — разные позиции',
+  k({ name: 'Клапан', characteristics: 'ДК-250М' }) !== k({ name: 'Клапан', characteristics: 'ДК-160М' }));
+check('совпавшая строка — одна позиция', k({ name: 'C21-500-400' }) === k({ name: 'C21-500-400' }));
+// «ложное -> пусто»: null, '' и 0 неразличимы — это же правило в python
+check('null и пусто — один ключ', k({ name: 'X', product_code: null }) === k({ name: 'X', product_code: '' }));
+check('0 и пусто — один ключ', k({ name: 'X', product_code: 0 as any }) === k({ name: 'X', product_code: '' }));
+check('пробелы обрезаются', k({ name: 'X', product_code: ' A ' }) === k({ name: 'X', product_code: 'A' }));
+// различие ЗА 60-м символом полного имени больше не теряется
+check('хвост полного имени за 60-м символом различается',
+  k({ name: 'X' }, 'A'.repeat(60) + 'левый') !== k({ name: 'X' }, 'A'.repeat(60) + 'правый'));
 console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 process.exit(fail === 0 ? 0 : 1);

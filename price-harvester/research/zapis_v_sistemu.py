@@ -30,6 +30,7 @@ _ns = {"__name__": "k"}
 exec(compile(io.open(KLASS, encoding="utf-8").read().replace("\nrun()\n", "\n"),
              "klass", "exec"), _ns)
 classify = _ns["classify"]
+dedup_key = _ns["dedup_key"]   # ключ дедупа — одно определение на python, см. klassifikator_pozicij.py
 
 # признак поиска — только для группы C. Типоразмер радиатора: буквы+цифры-цифры-цифры
 # (C22-400-600, CV11-400-1000). Степень защиты: IP + только цифры (IP54). Остальное — артикул.
@@ -67,7 +68,7 @@ def load_positions(con):
         if not r["quantity"]:
             continue
         fn = full(r)
-        key = (fn[:60], r["product_code"] or "", r["manufacturer"] or "")
+        key = dedup_key(r, fn)
         if key in seen:
             continue
         seen.add(key)

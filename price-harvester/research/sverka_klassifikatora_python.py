@@ -11,7 +11,7 @@ KLASS = os.path.join(ROOT, "price-harvester", "research", "klassifikator_pozicij
 
 ns = {"__name__": "k"}
 exec(compile(io.open(KLASS, encoding="utf-8").read().replace("\nrun()\n", "\n"), "klass", "exec"), ns)
-classify = ns["classify"]
+classify, dedup_key = ns["classify"], ns["dedup_key"]
 
 con = sqlite3.connect(DB)
 con.row_factory = sqlite3.Row
@@ -34,7 +34,8 @@ out = []
 for r in rows:
     fn = full(r)
     k, mark, src = classify(r, fn)
-    out.append({"id": r["id"], "full_name": fn, "group": k, "mark": mark, "mark_src": src})
+    out.append({"id": r["id"], "full_name": fn, "group": k, "mark": mark, "mark_src": src,
+                "key": list(dedup_key(r, fn))})
 
 io.open(os.path.join(ROOT, "price-harvester", "out", "sverka_python.json"),
         "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=1))
