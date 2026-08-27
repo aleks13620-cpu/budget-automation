@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { api } from '../api';
+import { api, apiUrlWithToken } from '../api';
 
 interface Specification {
   id: number;
@@ -678,6 +678,17 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                   ? `Нашли цену у ${specGroups.layer1.withPrice} из ${specGroups.layer1.searchable} позиций с маркой. Последний поиск: ${specGroups.layer1.lastRunDate}. Цены — в выгрузке спецификации.`
                   : `Поиск ещё не запускался. Искать будем по ${specGroups.layer1.searchable} позициям с заводской маркой.`)}
             </p>
+
+            {specGroups?.layer1.lastRunDate && (
+              <p style={{ margin: '0.6rem 0 0' }}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => window.open(apiUrlWithToken(`/api/projects/${projectId}/export`), '_blank')}
+                >
+                  Скачать выгрузку с ценами
+                </button>
+              </p>
+            )}
 
             <p style={{ fontWeight: 600, margin: '1rem 0 0.3rem' }}>Слой 2 — разбор описаний через ИИ</p>
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>
