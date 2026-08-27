@@ -186,6 +186,10 @@ CREATE TABLE IF NOT EXISTS specification_parser_configs (
   header_row INTEGER NOT NULL,
   column_mapping TEXT NOT NULL,
   merge_multiline INTEGER NOT NULL DEFAULT 1,
+  -- Нормализованная строка заголовков файла, для которого разметку задали руками.
+  -- По ПОЛНОМУ совпадению этой подписи разметка переиспользуется при загрузке
+  -- следующего файла с такой же шапкой (excelParser.headerSignature).
+  header_signature TEXT,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );

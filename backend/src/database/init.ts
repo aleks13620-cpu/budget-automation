@@ -144,6 +144,12 @@ function initializeDatabase(): void {
         message      TEXT
       )`,
       'CREATE INDEX IF NOT EXISTS idx_price_search_jobs_status ON price_search_jobs(status)',
+      // Подпись шапки файла, для которого разметку колонок задали руками. По её полному
+      // совпадению разметка переиспользуется при загрузке следующего такого же бланка
+      // (иначе человек размечает каждый раз заново и теряет артикулы).
+      // Значение у уже сохранённых конфигов (на проде их 1) досчитывается лениво, при первом
+      // обращении — см. findParserConfigByHeader в routes/specifications.ts.
+      'ALTER TABLE specification_parser_configs ADD COLUMN header_signature TEXT',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

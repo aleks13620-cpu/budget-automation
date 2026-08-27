@@ -196,7 +196,7 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     wsData.push([]); // empty row
 
     // Column headers
-    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по'];
+    const headerRow = ['№', 'Наименование', 'Ед.', 'Кол-во', 'Цена', 'Цена с НДС', 'Сумма', 'Поставщик', 'Тип', 'Группа', 'Найдено по', 'Ссылка на товар'];
     wsData.push(headerRow);
 
     let grandTotal = 0;
@@ -248,6 +248,10 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
           usedExternal ? 'Интернет' : (item.is_analog ? 'Аналог' : 'Ориг.'),
           item.ext_group ? (GROUP_LABELS[item.ext_group] || item.ext_group) : '',
           foundByLabel(item, usedExternal, item.ext_found_by, item.ext_mark, item.ext_not_found),
+          // Адрес отдельной колонкой, а не только гиперссылкой на домене: библиотека пишет
+          // xlsx без стилей, и кликабельная ячейка выглядит обычным чёрным текстом — человек
+          // не видит, что по ней можно перейти. Видимый адрес читается как ссылка сам по себе.
+          usedExternal && isWebLink(item.ext_url) ? item.ext_url : '',
         ]);
         if (usedExternal && isWebLink(item.ext_url)) linkCells.push({ row: wsData.length - 1, url: item.ext_url! });
       }
@@ -290,7 +294,8 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
       { wch: 20 },  // Поставщик
       { wch: 9 },   // Тип
       { wch: 26 },  // Группа
-      { wch: 46 },  // Найдено по — последняя, текст переливается вправо
+      { wch: 46 },  // Найдено по
+      { wch: 52 },  // Ссылка на товар — последняя, адрес переливается вправо
     ];
 
     // Ссылка кликабельная: Иван проверяет товар одним нажатием, не выходя из файла.
@@ -299,17 +304,19 @@ router.get('/api/projects/:id/export', (req: Request, res: Response) => {
     for (const { row, url } of linkCells) {
       const addr = XLSX.utils.encode_cell({ r: row, c: 7 });   // «Поставщик» — там уже домен
       if (ws[addr]) ws[addr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
+      const urlAddr = XLSX.utils.encode_cell({ r: row, c: 11 }); // «Ссылка на товар» — виден адрес
+      if (ws[urlAddr]) ws[urlAddr].l = { Target: url, Tooltip: 'Открыть карточку товара у продавца' };
     }
 
     // Merge title row
     ws['!merges'] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }, // title
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 10 } }, // date
+      { s: { r: 0, c: 0 }, e: { r: 0, c: 11 } }, // title
+      { s: { r: 1, c: 0 }, e: { r: 1, c: 11 } }, // date
     ];
 
     // Merge section header rows
     for (const r of sectionHeaderRows) {
-      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 10 } });
+      ws['!merges']!.push({ s: { r, c: 0 }, e: { r, c: 11 } });
     }
 
     XLSX.utils.book_append_sheet(wb, ws, 'Спецификация');

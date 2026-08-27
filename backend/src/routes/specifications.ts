@@ -4,7 +4,7 @@ import fs from 'fs';
 import { getDatabase } from '../database';
 import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename } from '../utils/fileUtils';
-import { parseExcelFile, parseFromRawData, detectMappingFromRawData } from '../services/excelParser';
+import { parseExcelFile, parseFromRawData, detectMappingFromRawData, headerSignature } from '../services/excelParser';
 import type { ColumnMapping } from '../services/excelParser';
 import { detectSectionFromFilename, detectSectionFromItems } from '../services/sectionDetector';
 import { enrichSpecItems } from '../services/gigachatSpecParser';
@@ -31,6 +31,227 @@ function hardBlockReason(q: SpecPdfParseQuality): string {
   }
   const pct = Math.round((q.bareOrphanFraction ?? 0) * 100);
   return `Спека не распарсилась корректно: ${pct}% строк — оторванные типоразмеры/коды без родителя. Пришлите Excel или проверьте PDF.`;
+}
+
+/** Колонки, потеря которых обесценивает загрузку: без артикула нет поиска цен, без количества
+ *  позиция вылетает фильтром `if (!r.quantity) continue` в classifySpecPositions и не доходит
+ *  ни до классификации, ни до поиска (проект 14 «Жк Фаворит ОВ»: раздел ВК — 387 позиций,
+ *  количество распозналось у нуля, 64% спецификации потеряно молча). */
+const KEY_COLUMNS: Array<keyof ColumnMapping> = ['product_code', 'quantity'];
+
+/** Откуда взялась разметка колонок — чтобы человек не думал, что система «сама поняла» файл. */
+type MappingTemplateInfo = { specificationId: number; fileName: string; filledColumns: string[] };
+
+type SavedParserConfig = {
+  specificationId: number;
+  fileName: string;
+  columnMapping: ColumnMapping;
+  mergeMultiline: boolean;
+};
+
+/** Разметка, которой файл фактически разобран, — её и запоминаем для новой спецификации. */
+type AppliedParserConfig = {
+  headerRow: number;
+  columnMapping: ColumnMapping;
+  mergeMultiline: boolean;
+  headerSignature: string | null;
+};
+
+/**
+ * UPSERT разметки колонок — одно место на все четыре точки записи (/reparse, /parser-config
+ * и обе загрузки). Без записи при загрузке память не размножается: редактор открывает файл,
+ * видит автодетект (артикул не выбран) и «Пересобрать» тем, что показал экран, возвращает 179→0.
+ */
+function saveParserConfig(
+  db: ReturnType<typeof getDatabase>,
+  specificationId: number,
+  cfg: AppliedParserConfig,
+): void {
+  db.prepare(`
+    INSERT INTO specification_parser_configs (specification_id, header_row, column_mapping, merge_multiline, header_signature, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(specification_id) DO UPDATE SET
+      header_row = excluded.header_row,
+      column_mapping = excluded.column_mapping,
+      merge_multiline = excluded.merge_multiline,
+      header_signature = excluded.header_signature,
+      updated_at = CURRENT_TIMESTAMP
+  `).run(
+    specificationId,
+    cfg.headerRow,
+    JSON.stringify(cfg.columnMapping),
+    cfg.mergeMultiline ? 1 : 0,
+    cfg.headerSignature,
+  );
+}
+
+/** Подпись шапки для уже сохранённого конфига: считаем из raw_data его же спецификации. */
+function signatureOfSavedConfig(rawData: string | null, headerRow: number): string | null {
+  if (!rawData) return null;
+  try {
+    const rows = JSON.parse(rawData) as unknown[][];
+    if (!Array.isArray(rows) || !Array.isArray(rows[headerRow])) return null;
+    return headerSignature(rows[headerRow]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Ищем ранее сохранённую РУЧНУЮ разметку по ПОЛНОМУ совпадению подписи шапки.
+ * Частичное совпадение не годится: у двух разных бланков Арты совпадают 5 заголовков из 7,
+ * а колонка 2 в одном — марка изделия, в другом — обозначение документа. Молча подставленная
+ * чужая разметка хуже, чем её отсутствие.
+ *
+ * Колонку header_signature завели позже самих конфигов, поэтому у старых записей она NULL —
+ * досчитываем её здесь из raw_data и тут же дописываем. Так проще и надёжнее, чем бэкофил
+ * в миграции: миграции в проекте — голый DDL (database/init.ts), парсинг JSON туда не лезет,
+ * а ленивый досчёт срабатывает и на прод-базе, и на любой копии, без отдельного прогона.
+ *
+ * Порядок задан явно: свежая разметка выигрывает у старой. Конфигов теперь по одному на каждую
+ * загрузку, и без ORDER BY выигрывал бы старейший — то есть исправленная человеком разметка
+ * не применилась бы никогда.
+ *
+ * ponytail: перебираем все конфиги (на проде их единицы). Станут тысячи — индекс по
+ * header_signature и поиск запросом.
+ */
+function findParserConfigByHeader(signature: string): SavedParserConfig | null {
+  if (!signature) return null;
+  const db = getDatabase();
+  const rows = db.prepare(`
+    SELECT c.specification_id, c.header_row, c.column_mapping, c.merge_multiline, c.header_signature,
+           s.file_name, s.raw_data
+    FROM specification_parser_configs c
+    JOIN specifications s ON s.id = c.specification_id
+    ORDER BY c.updated_at DESC, c.id DESC
+  `).all() as Array<{
+    specification_id: number;
+    header_row: number;
+    column_mapping: string;
+    merge_multiline: number;
+    header_signature: string | null;
+    file_name: string;
+    raw_data: string | null;
+  }>;
+
+  for (const row of rows) {
+    let sig = row.header_signature;
+    if (sig === null || sig === undefined) {
+      sig = signatureOfSavedConfig(row.raw_data, row.header_row);
+      if (sig !== null) {
+        db.prepare('UPDATE specification_parser_configs SET header_signature = ? WHERE specification_id = ?')
+          .run(sig, row.specification_id);
+      }
+    }
+    if (!sig || sig !== signature) continue;
+
+    let mapping: ColumnMapping;
+    try {
+      mapping = JSON.parse(row.column_mapping) as ColumnMapping;
+    } catch {
+      continue;
+    }
+    if (!mapping || typeof mapping !== 'object') continue;
+    return {
+      specificationId: row.specification_id,
+      fileName: row.file_name,
+      columnMapping: mapping,
+      mergeMultiline: row.merge_multiline !== 0,
+    };
+  }
+  return null;
+}
+
+/**
+ * Достраиваем автоопределённый маппинг сохранённой разметкой: берём ТОЛЬКО те поля, которые
+ * автодетект оставил пустыми. Успешно определённую колонку не подменяем — автодетект видит
+ * конкретный файл, шаблон видит только шапку. Колонку, уже занятую автодетектом под другое
+ * поле, тоже не трогаем: два поля на одной колонке — это молчаливая порча данных.
+ */
+function mergeMappingWithTemplate(
+  detected: ColumnMapping,
+  template: ColumnMapping,
+): { mapping: ColumnMapping; filledColumns: string[] } {
+  const mapping: ColumnMapping = { ...detected };
+  const usedCols = new Set<number>(
+    Object.values(detected).filter((v): v is number => typeof v === 'number'),
+  );
+  const filledColumns: string[] = [];
+
+  for (const field of Object.keys(mapping) as Array<keyof ColumnMapping>) {
+    const fromTemplate = template[field];
+    if (mapping[field] !== null || typeof fromTemplate !== 'number') continue;
+    if (usedCols.has(fromTemplate)) continue;
+    mapping[field] = fromTemplate;
+    usedCols.add(fromTemplate);
+    filledColumns.push(field);
+  }
+  return { mapping, filledColumns };
+}
+
+/**
+ * Единственное место разбора загруженного xlsx — общее для одиночной и массовой загрузки,
+ * чтобы поведение двух эндпоинтов не разъезжалось.
+ *
+ * Если автоопределение не нашло ключевую колонку (артикул или количество), а шапка файла
+ * полностью совпадает с шапкой файла, который человек однажды разметил руками, — достраиваем
+ * маппинг его разметкой. Признака артикула в заголовке «Наименование в счете» нет и быть не
+ * может, расширять словарь заголовков нечем — разметку остаётся только запоминать.
+ */
+function parseUploadedExcel(filePath: string): {
+  parseResult: ReturnType<typeof parseExcelFile>;
+  rawDataStr: string;
+  mappingFromTemplate: MappingTemplateInfo | null;
+  parserConfig: AppliedParserConfig | null;
+} {
+  const XLSXu = require('xlsx');
+  const wb = XLSXu.readFile(filePath);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rawRows = XLSXu.utils.sheet_to_json(ws, { header: 1, defval: '' }) as string[][];
+  const rawDataStr = JSON.stringify(rawRows);
+
+  const detected = detectMappingFromRawData(rawRows);
+  const missesKeyColumn = !!detected && KEY_COLUMNS.some(c => detected.columnMapping[c] === null);
+  const signature = detected ? headerSignature(rawRows[detected.headerRow]) : null;
+
+  if (detected && missesKeyColumn) {
+    const template = findParserConfigByHeader(signature!);
+    if (template) {
+      const { mapping, filledColumns } = mergeMappingWithTemplate(detected.columnMapping, template.columnMapping);
+      // Применяем, только если шаблон реально закрыл ключевую дыру. Иначе это молчаливая
+      // подмена разметки без выигрыша.
+      const closedKeyGap = KEY_COLUMNS.some(c => detected.columnMapping[c] === null && mapping[c] !== null);
+      if (closedKeyGap && mapping.name !== null) {
+        // Строка заголовка берётся у НОВОГО файла: именно её подпись совпала с шаблоном,
+        // значит именно к ней привязаны номера колонок.
+        const templated = parseFromRawData(rawRows, detected.headerRow, mapping, template.mergeMultiline);
+        if (templated.items.length > 0) {
+          return {
+            parseResult: templated,
+            rawDataStr,
+            mappingFromTemplate: {
+              specificationId: template.specificationId,
+              fileName: template.fileName,
+              filledColumns,
+            },
+            parserConfig: { headerRow: detected.headerRow, columnMapping: mapping, mergeMultiline: template.mergeMultiline, headerSignature: signature },
+          };
+        }
+      }
+    }
+  }
+
+  // Автоопределение справилось само (или заголовок не найден вовсе). Разметку всё равно
+  // запоминаем: иначе следующий такой же файл снова не с чем будет сверить.
+  // mergeMultiline = true — parseExcelFile склеивает многострочные позиции всегда.
+  return {
+    parseResult: parseExcelFile(filePath),
+    rawDataStr,
+    mappingFromTemplate: null,
+    parserConfig: detected
+      ? { headerRow: detected.headerRow, columnMapping: detected.columnMapping, mergeMultiline: true, headerSignature: signature }
+      : null,
+  };
 }
 
 const upload = createUploadMiddleware({
@@ -90,6 +311,8 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
     const ext = path.extname(req.file.originalname).toLowerCase();
     let parseResult: ReturnType<typeof parseExcelFile>;
     let rawDataStr: string;
+    let mappingFromTemplate: MappingTemplateInfo | null = null;
+    let parserConfig: AppliedParserConfig | null = null;
 
     if (ext === '.pdf') {
       parseResult = await parseSpecFromPdf(req.file.path);
@@ -115,7 +338,11 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
           : buildRawDataFromPdfItems(parseResult.items)
       );
     } else {
-      parseResult = parseExcelFile(req.file.path);
+      const parsed = parseUploadedExcel(req.file.path);
+      parseResult = parsed.parseResult;
+      rawDataStr = parsed.rawDataStr;
+      mappingFromTemplate = parsed.mappingFromTemplate;
+      parserConfig = parsed.parserConfig;
       if (parseResult.items.length === 0) {
         fs.unlink(req.file.path, () => {});
         return res.status(400).json({
@@ -123,11 +350,6 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
           details: parseResult.errors,
         });
       }
-      const XLSX2 = require('xlsx');
-      const wb2 = XLSX2.readFile(req.file.path);
-      const ws2 = wb2.Sheets[wb2.SheetNames[0]];
-      const rawData2 = XLSX2.utils.sheet_to_json(ws2, { header: 1, defval: '' }) as string[][];
-      rawDataStr = JSON.stringify(rawData2);
     }
 
     const fileName = fixFilename(req.file.originalname);
@@ -180,6 +402,10 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
         });
       }
 
+      // Разметка, которой файл разобран, остаётся с новой спецификацией: редактор откроет
+      // именно её, а не автодетект, и «Пересобрать» не обнулит артикулы.
+      if (parserConfig) saveParserConfig(db, specificationId, parserConfig);
+
       return { specificationId, items: inserted };
     })();
 
@@ -196,6 +422,9 @@ router.post('/api/projects/:id/specifications', upload.single('file'), async (re
       category: parseResult.category ?? null,
       categoryReason: parseResult.categoryReason ?? null,
       specParseQuality: parseResult.specParseQuality ?? null,
+      // null = колонки распознаны автоматически; объект = разметка взята из ранее
+      // размеченного руками файла с такой же шапкой. Человек должен видеть разницу.
+      mappingFromTemplate,
     });
   } catch (error) {
     console.error('POST /api/projects/:id/specifications error:', error);
@@ -322,6 +551,7 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
       imported: number;
       status: 'ok' | 'conflict' | 'no_section' | 'parse_error' | 'quality_block';
       error?: string;
+      mappingFromTemplate?: MappingTemplateInfo | null;
     }[] = [];
 
     for (const file of files) {
@@ -332,6 +562,8 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
         let parseResult: ReturnType<typeof parseExcelFile>;
         let rawDataB: string;
         let parseSource: 'excel' | 'pdf_gigachat' = 'excel';
+        let mappingFromTemplate: MappingTemplateInfo | null = null;
+        let parserConfig: AppliedParserConfig | null = null;
 
         if (ext === '.pdf') {
           parseResult = await parseSpecFromPdf(file.path);
@@ -368,16 +600,18 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
               : buildRawDataFromPdfItems(parseResult.items)
           );
         } else {
-          parseResult = parseExcelFile(file.path);
+          // Тот же путь, что и у одиночной загрузки: сохранённая ручная разметка колонок
+          // применяется в общем месте, чтобы два эндпоинта не разъезжались.
+          const parsed = parseUploadedExcel(file.path);
+          parseResult = parsed.parseResult;
+          rawDataB = parsed.rawDataStr;
+          mappingFromTemplate = parsed.mappingFromTemplate;
+          parserConfig = parsed.parserConfig;
           if (parseResult.items.length === 0) {
             fs.unlink(file.path, () => {});
             results.push({ fileName, section: null, imported: 0, status: 'parse_error', error: 'Не удалось извлечь данные' });
             continue;
           }
-          const XLSXb = require('xlsx');
-          const wbb = XLSXb.readFile(file.path);
-          const wsb = wbb.Sheets[wbb.SheetNames[0]];
-          rawDataB = JSON.stringify(XLSXb.utils.sheet_to_json(wsb, { header: 1, defval: '' }));
         }
 
         // Detect section: filename first, then items (для пустого PDF — только имя файла)
@@ -433,6 +667,8 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
             insertedIds.push(Number(r.lastInsertRowid));
             count++;
           }
+          // Зеркало одиночной загрузки: разметка запоминается за новой спецификацией.
+          if (parserConfig) saveParserConfig(db, specificationId, parserConfig);
           return count;
         })();
 
@@ -443,6 +679,7 @@ router.post('/api/projects/:id/specifications/bulk', upload.array('files', 50), 
           imported: result,
           status: 'ok',
           error: parseResult.category === 'C' ? parseResult.categoryReason ?? undefined : undefined,
+          mappingFromTemplate,
         });
       } catch (err) {
         fs.unlink(file.path, () => {});
@@ -531,16 +768,14 @@ router.post('/api/specifications/:id/reparse', (req: Request, res: Response) => 
         );
         insertedIds.push(Number(r.lastInsertRowid));
       }
-      // UPSERT parser config
-      db.prepare(`
-        INSERT INTO specification_parser_configs (specification_id, header_row, column_mapping, merge_multiline, updated_at)
-        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ON CONFLICT(specification_id) DO UPDATE SET
-          header_row = excluded.header_row,
-          column_mapping = excluded.column_mapping,
-          merge_multiline = excluded.merge_multiline,
-          updated_at = CURRENT_TIMESTAMP
-      `).run(specId, headerRow, JSON.stringify(columnMapping), mergeMultiline ? 1 : 0);
+      // Подпись шапки пишем здесь же: только с ней разметку, заданную сейчас руками,
+      // можно будет переиспользовать на следующем таком же файле.
+      saveParserConfig(db, specId, {
+        headerRow,
+        columnMapping,
+        mergeMultiline: mergeMultiline !== false,
+        headerSignature: Array.isArray(rawRows[headerRow]) ? headerSignature(rawRows[headerRow]) : null,
+      });
       return parseResult.items.length;
     })();
 
@@ -556,18 +791,16 @@ router.post('/api/specifications/:id/parser-config', (req: Request, res: Respons
   try {
     const specId = parseInt(String(req.params.id), 10);
     const db = getDatabase();
-    const spec = db.prepare('SELECT id FROM specifications WHERE id = ?').get(specId);
+    const spec = db.prepare('SELECT id, raw_data FROM specifications WHERE id = ?').get(specId) as { id: number; raw_data: string | null } | undefined;
     if (!spec) return res.status(404).json({ error: 'Спецификация не найдена' });
     const { headerRow, columnMapping, mergeMultiline } = req.body;
-    db.prepare(`
-      INSERT INTO specification_parser_configs (specification_id, header_row, column_mapping, merge_multiline, updated_at)
-      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(specification_id) DO UPDATE SET
-        header_row = excluded.header_row,
-        column_mapping = excluded.column_mapping,
-        merge_multiline = excluded.merge_multiline,
-        updated_at = CURRENT_TIMESTAMP
-    `).run(specId, headerRow, JSON.stringify(columnMapping), mergeMultiline ? 1 : 0);
+    // Подпись шапки — как в /reparse: без неё разметка останется одноразовой.
+    saveParserConfig(db, specId, {
+      headerRow,
+      columnMapping,
+      mergeMultiline: !!mergeMultiline,
+      headerSignature: signatureOfSavedConfig(spec.raw_data, headerRow),
+    });
     res.json({ saved: true });
   } catch (error) {
     console.error('POST /api/specifications/:id/parser-config error:', error);
