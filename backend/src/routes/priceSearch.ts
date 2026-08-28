@@ -110,6 +110,13 @@ router.get('/api/projects/:id/spec-groups', (req: Request, res: Response) => {
     // а экран без JOIN обещал бы «нашли цену у 45», которых в документе нет.
     // Дата прогона берётся по ВСЕМ статусам, а не только по найденным: прогон, где ничего не
     // нашлось (площадки не пустили), иначе выглядел бы как «поиск ещё не запускался».
+    // NOT EXISTS зеркалит развилку выгрузки `item.price == null && item.ext_price != null`
+    // (routes/export.ts:221): позиция с ценой из счёта в файл как «Интернет» не попадает, значит
+    // и в счётчике ей не место — иначе экран обещает больше, чем лежит в скачанном документе.
+    // Условие именно «сопоставление С ЦЕНОЙ», а не «сопоставление есть»: у выбранного матча
+    // цена бывает пустой (в базе такой есть), и тогда выгрузка интернет-цену ПОКАЖЕТ.
+    // ponytail: дубль правила с export.ts намеренный — там половина условия в JS, свести дешевле
+    // не выходит. Сторожит test_layer1_counter_vs_export.ts: считает оба числа и падает на разнице.
     const priced = db.prepare(`
       WITH ext_last AS (
         SELECT ep.spec_item_id, MAX(ep.snapshot_date) AS last_date
@@ -122,7 +129,16 @@ router.get('/api/projects/:id/spec-groups', (req: Request, res: Response) => {
         (SELECT COUNT(DISTINCT ep.spec_item_id)
            FROM external_prices ep
            JOIN ext_last el ON el.spec_item_id = ep.spec_item_id AND ep.snapshot_date = el.last_date
-          WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found') AS n,
+          WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found'
+            AND NOT EXISTS (
+              SELECT 1 FROM matched_items m
+              LEFT JOIN invoice_items ii
+                ON COALESCE(m.source, 'invoice') = 'invoice' AND m.invoice_item_id = ii.id
+              LEFT JOIN price_list_items pli
+                ON m.source = 'price_list' AND m.price_list_item_id = pli.id
+              WHERE m.specification_item_id = ep.spec_item_id AND m.is_selected = 1
+                AND COALESCE(ii.price, pli.price) IS NOT NULL
+            )) AS n,
         (SELECT MAX(last_date) FROM ext_last) AS run_date
     `).get(projectId, projectId) as { n: number; run_date: string | null };
 
