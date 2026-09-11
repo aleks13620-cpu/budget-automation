@@ -104,6 +104,24 @@ check('«ТУ5769-015-54737814-2008» марка',
 check('«из оцинкованной стали толщиной» → A',
   cls(row({ name: 'Короб из оцинкованной стали толщиной 0,7 мм' })).group === 'A. изготавливается');
 
+console.log('\n=== ISO/DIN/EN — стандарты, не марка (Ф9.2) ===');
+// «резьбы внутренняя-внутренняя по ISO 7:2000» — ISO 7 классификатор принимал за марку
+check('«ISO 7» не марка', cls(row({ name: 'Кран', characteristics: 'резьба по ISO 7' })).mark === null);
+check('«ISO 7:2000» не марка', cls(row({ name: 'Кран', characteristics: 'резьба внутренняя-внутренняя по ISO 7:2000' })).mark === null);
+check('«DIN 2999» не марка', cls(row({ name: 'Муфта', product_code: 'DIN 2999' })).mark === null);
+check('«EN 10255» не марка', cls(row({ name: 'Труба', product_code: 'EN 10255' })).mark === null);
+// граница слова обязательна: слитно с буквами/цифрами после ISO/DIN/EN — марка, не стандарт
+{
+  const r = cls(row({ id: 90001, name: 'Реле', product_code: 'DINA-40' }));
+  check('«DINA-40» остаётся маркой', r.group === 'C. марка изделия' && r.mark !== null,
+    { group: r.group, mark: r.mark });
+}
+{
+  const r = cls(row({ id: 90002, name: 'Автомат', product_code: 'ENC25' }));
+  check('«ENC25» остаётся маркой', r.group === 'C. марка изделия' && r.mark !== null,
+    { group: r.group, mark: r.mark });
+}
+
 console.log('\n=== хвост типоразмера ===');
 check('BVS-R/Dy25/Py63/Tmax180 → BVS-R', trimSizeTail('BVS-R/Dy25/Py63/Tmax180') === 'BVS-R',
   trimSizeTail('BVS-R/Dy25/Py63/Tmax180'));
