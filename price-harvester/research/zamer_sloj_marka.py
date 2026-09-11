@@ -4,7 +4,7 @@
 Прошлый прогон был собран наспех: в него протекли проектные позиции (узлы TDU.5R),
 а запрос строился без производителя. Здесь и то и другое исправлено.
 """
-import base64, csv, io, json, os, re, sqlite3, sys, time, urllib.request
+import base64, csv, html, io, json, os, re, sqlite3, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 import httpx
 from bs4 import BeautifulSoup
@@ -123,6 +123,35 @@ def mark_on_page(mark, soup, card_name):
     m = mark.lower()
     flat = lambda s: re.sub(r"[\s\-_./]", "", s)
     return m in hay or (flat(m) and flat(m) in flat(hay))
+
+
+INCH_DN = {"1/2": 15, "3/4": 20, "1": 25, "1 1/4": 32, "1 1/2": 40, "2": 50,
+           "2 1/2": 65, "3": 80, "4": 100}
+# дюйм: 1/2", 1 1/4", 2“, 1″, 1`, G1/2, G 1, R 3/4 — нужен знак дюйма или префикс G/R
+INCH = re.compile(r'(?:(?<!\w)([GR])\s*|(?<![\w/.,-]))((?:\d\s+)?\d(?:/\d)?)(?![\d/])\s*(")?')
+# DN/Ду/Dy с числом; «DN 1"1/2» и «ДУ 2“» — это дюймы, их берёт INCH
+DN = re.compile(r'(?<![A-Za-zА-Яа-яЁё])(?:d[ny]|д[уy])\s*[-.]?\s*(\d{1,4})(?![\d/"]|\s*"|\s+\d/\d)', re.I)
+
+
+def dn_sizes(text):
+    """Типоразмеры DN из текста: DN/Ду/Dy с числом и дюймы, приведённые к DN."""
+    s = html.unescape(html.unescape(text or ""))          # у продавцов бывает 1/2&amp;quot;
+    s = re.sub(r"''|[″“”'`]", '"', s)
+    s = re.sub(r'(\d)"\s*(\d/\d)', r'\1 \2"', s)          # 1"1/2 -> 1 1/2"
+    out = {int(n) for n in DN.findall(s)}
+    for pre, val, q in INCH.findall(s):
+        if (pre or q) and re.sub(r"\s+", " ", val) in INCH_DN:
+            out.add(INCH_DN[re.sub(r"\s+", " ", val)])
+    return out
+
+
+def size_ok(spec_text, card_text):
+    """True — диаметр совпал; False — оба указаны и различаются; None — где-то его нет.
+
+    Габариты (радиаторы 22-400-1200) не трогаем: там размер зашит в марку, её сверяет mark_on_page.
+    """
+    a, b = dn_sizes(spec_text), dn_sizes(card_text)
+    return (bool(a & b)) if a and b else None
 
 
 def fetch(url):
@@ -362,6 +391,8 @@ def main():
                     if not card: continue
                     name, price = card
                     if not mark_on_page(p["mark"], soup, name): continue
+                    # Ф9.3: не тот диаметр хуже, чем нет цены (правило Ивана). None пока пропускаем.
+                    if size_ok(p["name"], name) is False: continue
                     hits.append((price, url, url.split("/")[2], name[:70]))
         hits.sort()
         row = dict(p, status="found" if hits else "not_found",
@@ -412,6 +443,20 @@ def render_only():
 
 
 def _selfcheck():
+    # --- сверка диаметра (Ф9.3): случаи с «Ласточки ВК» 11.09 ---
+    assert size_ok('Кран шаровой латунный, DN 3/4"', 'Кран шаровой 1/2" ВР/ВР') is False
+    assert size_ok('Кран DN 1"1/2', "Кран шаровой ISO 7/1 Ду 15 мм, PN 40 бар") is False
+    assert size_ok("Кран шаровой 11Б27п Ду25", 'Кран шаровой газ G1" Ру16') is True
+    assert size_ok("Кран шаровой Ду25", "Кран БАЗ 11б27п 1″ Ру40") is True
+    assert size_ok("Грунт ГФ-021", "Грунтовка ГФ-021 Ду25") is None        # в позиции размера нет
+    assert size_ok("Кран шаровой Ду25", "Кран шаровый Danfoss BVR") is None  # на карточке нет
+    assert dn_sizes('DN 1"1/2') == dn_sizes('1 1/2"') == {40}
+    assert dn_sizes("Клапан G1''") == {25} and dn_sizes("Осевой клапан, ДУ 2“") == {50}
+    assert dn_sizes("Редуктор Heizen 1/2&amp;quot;") == {15} and dn_sizes("VFG-2R/Dy32") == {32}
+    # не размеры: ISO 7/1, А12/1, 1700R 4-20 мА, 0-10 бар, 100/10, радиатор 22-400-1200
+    assert not dn_sizes("UNI ISO 7/1 А12/1 MBS 1700R 4-20 мА 0-10 бар 100/10 C22-400-1200 M20x1,5")
+    print("selfcheck ok: диаметр позиции сверяется с карточкой, дюймы приведены к DN")
+
     # --- ключ дедупа: тот самый баг, из-за которого пять радиаторов считались одной позицией ---
     def _r(**kw):
         base = dict(name=None, product_code=None, characteristics=None,
@@ -477,9 +522,12 @@ def _selfcheck():
     print("selfcheck ok: страница самодостаточна, %d строк, ссылки на месте" % len(rows))
 
 
-if "selfcheck" in sys.argv:
-    _selfcheck()
-elif "render" in sys.argv:
-    render_only()
-else:
-    main()
+# защита обязательна: без неё import этого файла запускал ПЛАТНЫЙ прогон (03.09).
+# worker.py зовёт скрипт отдельным процессом (python zamer_sloj_marka.py) — ему всё равно.
+if __name__ == "__main__":
+    if "selfcheck" in sys.argv:
+        _selfcheck()
+    elif "render" in sys.argv:
+        render_only()
+    else:
+        main()
