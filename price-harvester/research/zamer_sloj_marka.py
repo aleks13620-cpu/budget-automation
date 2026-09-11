@@ -127,10 +127,12 @@ def mark_on_page(mark, soup, card_name):
 
 INCH_DN = {"1/2": 15, "3/4": 20, "1": 25, "1 1/4": 32, "1 1/2": 40, "2": 50,
            "2 1/2": 65, "3": 80, "4": 100}
-# дюйм: 1/2", 1 1/4", 2“, 1″, 1`, G1/2, G 1, R 3/4 — нужен знак дюйма или префикс G/R
-INCH = re.compile(r'(?:(?<!\w)([GR])\s*|(?<![\w/.,-]))((?:\d\s+)?\d(?:/\d)?)(?![\d/])\s*(")?')
-# DN/Ду/Dy с числом; «DN 1"1/2» и «ДУ 2“» — это дюймы, их берёт INCH
-DN = re.compile(r'(?<![A-Za-zА-Яа-яЁё])(?:d[ny]|д[уy])\s*[-.]?\s*(\d{1,4})(?![\d/"]|\s*"|\s+\d/\d)', re.I)
+# дюйм: 1/2", 1 1/4", 2“, 1″, 1`, G1/2, G 1, R 3/4 — нужен знак дюйма или префикс G/R.
+# G/R после буквы, цифры или дефиса — часть модели (MNF-R2, VFM-2R), не резьба
+INCH = re.compile(r'(?:(?<![\w-])([GR])\s*|(?<![\w/.,-]))((?:\d\s+)?\d(?:/\d)?)(?![\d/])\s*(")?')
+# DN/Ду/Dy с числом после любого не-буквенного символа (VFM-2R/Dy32/Kvs16);
+# «DN 1/2», «DN 1"1/2» и «ДУ 2“» — это дюймы, их берёт INCH
+DN = re.compile(r'(?<![A-Za-zА-Яа-яЁё])(?:d[ny]|д[уy])\s*[-.]?\s*(\d{1,4})(?![\d"]|/\d|\s*"|\s+\d/\d)', re.I)
 
 
 def dn_sizes(text):
@@ -146,12 +148,13 @@ def dn_sizes(text):
 
 
 def size_ok(spec_text, card_text):
-    """True — диаметр совпал; False — оба указаны и различаются; None — где-то его нет.
+    """True — диаметр совпал; False — оба указаны и различаются; None — где-то его нет
+    или на карточке несколько разных размеров (страница серии: цена обычно за самый малый).
 
     Габариты (радиаторы 22-400-1200) не трогаем: там размер зашит в марку, её сверяет mark_on_page.
     """
     a, b = dn_sizes(spec_text), dn_sizes(card_text)
-    return (bool(a & b)) if a and b else None
+    return (bool(a & b)) if a and len(b) == 1 else None
 
 
 def fetch(url):
@@ -391,8 +394,9 @@ def main():
                     if not card: continue
                     name, price = card
                     if not mark_on_page(p["mark"], soup, name): continue
-                    # Ф9.3: не тот диаметр хуже, чем нет цены (правило Ивана). None пока пропускаем.
-                    if size_ok(p["name"], name) is False: continue
+                    # Ф9.3: не тот диаметр хуже, чем нет цены (правило Ивана). Размер у позиции
+                    # есть — карточка обязана подтвердить его (без размера или серия — мимо).
+                    if dn_sizes(p["name"]) and size_ok(p["name"], name) is not True: continue
                     hits.append((price, url, url.split("/")[2], name[:70]))
         hits.sort()
         row = dict(p, status="found" if hits else "not_found",
@@ -455,6 +459,11 @@ def _selfcheck():
     assert dn_sizes("Редуктор Heizen 1/2&amp;quot;") == {15} and dn_sizes("VFG-2R/Dy32") == {32}
     # не размеры: ISO 7/1, А12/1, 1700R 4-20 мА, 0-10 бар, 100/10, радиатор 22-400-1200
     assert not dn_sizes("UNI ISO 7/1 А12/1 MBS 1700R 4-20 мА 0-10 бар 100/10 C22-400-1200 M20x1,5")
+    # раунд 2 (спецификация Ивана): размер после косой черты, модель — не резьба, серия — не подтверждение
+    assert dn_sizes("VFM-2R/Dy32/Kvs16") == {32} and dn_sizes("MNF-R2/Dy80/Kvs122.3") == {80}
+    assert dn_sizes("MNF-R2 PN25") == set() and dn_sizes("ISO 7/1") == set()
+    assert dn_sizes("R 3/4") == {20} and dn_sizes("G 1") == {25}
+    assert size_ok("Кран Ду25", "Кран DN15-DN80") is None
     print("selfcheck ok: диаметр позиции сверяется с карточкой, дюймы приведены к DN")
 
     # --- ключ дедупа: тот самый баг, из-за которого пять радиаторов считались одной позицией ---
