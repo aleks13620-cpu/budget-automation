@@ -27,6 +27,11 @@ MADE = re.compile(r"ГОСТ\s*14918|из\s+оцинк\w*\.?\s+стали\s+то
                   r"^(воздуховод|отвод|переход |врезка|заглушка|зонт |кожух)", re.I)
 PROJECT = re.compile(r"КЛАД|ПРОК|КПУ|ВРАН|клапан противопожарн|дымоудал|установка приточ|"
                      r"узел этажный|блок ввода|смесительный узел|в составе:|шумоглушител", re.I)
+# Заголовок раздела/узла — не товар. «Спецификация элементов стояка К1.1» с шифром проекта
+# в колонке марки (ОА-06-03-2024-ВК) или с обозначением узла (К1.1) уходила в слой C и
+# тратила запросы на поиск цены заголовка. Проверяем СОБСТВЕННОЕ имя: в full_name имя
+# родителя стоит в начале и правило по нему выкинуло бы все дочерние позиции.
+HEADER = re.compile(r"^\s*(спецификация|ведомость|экспликация)(?![А-Яа-яЁёA-Za-z])", re.I)
 
 
 
@@ -89,6 +94,8 @@ def find_mark(*fields):
 def classify(row, full_name):
     mark, src = find_mark(row["name"], row["product_code"], row["characteristics"],
                           row["manufacturer"], row["marking"], row["article"], row["full_name"])
+    if HEADER.match(row["name"] or ""):
+        return "D. без марки", None, None
     text = full_name + " " + (row["characteristics"] or "")
     if MADE.search(text):
         return "A. изготавливается", mark, src
@@ -185,4 +192,29 @@ def run():
                 shown += 1
 
 
-run()
+def _selfcheck():
+    """Заголовок узла не товар, а настоящая позиция остаётся в C (12.09, «Ласточка ВК»)."""
+    def _r(**kw):
+        base = dict(name=None, product_code=None, characteristics=None,
+                    manufacturer=None, marking=None, article=None, full_name=None)
+        base.update(kw); return base
+    # заголовки узлов «Ласточки»: шифр проекта и обозначение стояка в колонке марки
+    hdr1 = _r(name="Спецификация элементов стояка К1.1", marking="К1.1")
+    hdr2 = _r(name="Спецификация элементов узла ввода в квартиру", marking="ОА-06-03-2024-ВК - Лист 2")
+    assert classify(hdr1, hdr1["name"])[0] == "D. без марки"
+    assert classify(hdr2, hdr2["name"])[0] == "D. без марки"
+    # товар, чьё ПОЛНОЕ имя начинается с заголовка родителя, из C не выпадает
+    kid = _r(name="Клапан обратный осевой муфтовый", marking="CA1103-0025")
+    assert classify(kid, "Спецификация элементов стояка К1.1 Клапан обратный")[0] == "C. марка изделия"
+    # слово внутри строки заголовком не делает
+    other = _r(name="Шкаф по спецификации заказчика", marking="ШГ-1200")
+    assert classify(other, other["name"])[0] == "C. марка изделия"
+    print("selfcheck ok: заголовок узла не товар, дочерние позиции остались в C")
+
+
+if __name__ == "__main__":
+    import sys
+    if "selfcheck" in sys.argv:
+        _selfcheck()
+    else:
+        run()

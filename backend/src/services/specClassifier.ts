@@ -101,6 +101,11 @@ const MADE =
 const PROJECT =
   /КЛАД|ПРОК|КПУ|ВРАН|клапан противопожарн|дымоудал|установка приточ|узел этажный|блок ввода|смесительный узел|в составе:|шумоглушител/i;
 
+// Заголовок раздела/узла — не товар (копия HEADER из klassifikator_pozicij.py).
+// Граница слова здесь — явный lookahead, а не \b: JS-ный \b считает по ASCII и после
+// кириллического «я» границу не видит вовсе.
+const HEADER = /^\s*(?:спецификация|ведомость|экспликация)(?![\p{L}])/iu;
+
 // типоразмерный хвост: BVS-R/Dy25/Py63/Tmax180 -> BVS-R, «O80мм 0» -> пусто
 const SIZE_SEG = /^(?:DN|DY|ДУ|PN|РУ|D|Ф|O|Ø|L|S|G|Kvs|Tmax|Тmax|Qmax)\s*[\d.\/]+/i;
 const PURE_SIZE = /^[\d.,x×х-]+\s*(?:мм|м|кг)?$/i;   // re.fullmatch в python
@@ -174,6 +179,7 @@ export function classifySpecItem(
   row: SpecItemRow,
   fullName: string,
 ): { group: SpecGroup; mark: string | null; markSrc: MarkSource | null } {
+  if (HEADER.test(row.name || '')) return { group: 'D. без марки', mark: null, markSrc: null };
   const [mark, markSrc] = findMark(row);
   const text = fullName + ' ' + (row.characteristics || '');
   if (MADE.test(text)) return { group: 'A. изготавливается', mark, markSrc };
