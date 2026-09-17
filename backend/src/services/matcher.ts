@@ -754,9 +754,11 @@ const PRICE_LIST_ITEMS_SQL = `
   FROM price_list_items pli
   JOIN price_lists pl ON pli.price_list_id = pl.id
   WHERE pl.project_id = ?
-    -- Ф12: цена с сайта уже привязана к своей позиции (routes/priceSearch.ts, syncSiteVariants);
-    -- по похожести имени она прилипла бы к чужой.
-    AND pl.file_path <> 'web_search'
+    -- Ф12/Ф13: цена с сайта или прайса поставщика уже привязана к своей позиции
+    -- (routes/priceSearch.ts, syncSiteVariants); по похожести имени она прилипла бы к чужой.
+    -- Список источников не хардкодим — file_path у таких прайсов всегда равен source
+    -- из external_prices, новый источник исключается сам, без правки этого файла.
+    AND pl.file_path NOT IN (SELECT DISTINCT source FROM external_prices)
 `;
 const RULES_SQL = "SELECT id, specification_pattern, invoice_pattern, confidence, times_used, supplier_id, COALESCE(is_negative,0) as is_negative, COALESCE(is_analog,0) as is_analog, COALESCE(source,'none') as source FROM matching_rules";
 

@@ -456,14 +456,14 @@ async function runMatchingBackground(projectId: number, mode: string): Promise<v
         db.prepare(`
           DELETE FROM matched_items
           WHERE is_confirmed = 0
-            AND COALESCE(match_type, '') <> ?
+            AND COALESCE(match_type, '') NOT IN (SELECT DISTINCT source FROM external_prices)
             AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
             AND specification_item_id NOT IN (
               SELECT DISTINCT specification_item_id FROM matched_items
               WHERE is_confirmed = 1
                 AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
             )
-        `).run(WEB_MATCH_TYPE, projectId, projectId);
+        `).run(projectId, projectId);
       };
     } else {
       candidates = await runMatching(projectId);
@@ -471,12 +471,14 @@ async function runMatchingBackground(projectId: number, mode: string): Promise<v
         db.prepare(`
           DELETE FROM matched_items
           WHERE is_confirmed = 0
-            -- Ф12: вариант-сайт создан не матчером и держится своей позиции — не стираем.
-            AND COALESCE(match_type, '') <> ?
+            -- Ф12/Ф13: вариант (сайт, прайс поставщика, ...) создан не матчером и держится своей
+            -- позиции — не стираем. Источник match_type проверяем по факту его наличия в
+            -- external_prices, а не по списку литералов.
+            AND COALESCE(match_type, '') NOT IN (SELECT DISTINCT source FROM external_prices)
             AND specification_item_id IN (
               SELECT id FROM specification_items WHERE project_id = ?
             )
-        `).run(WEB_MATCH_TYPE, projectId);
+        `).run(projectId);
       };
     }
 
@@ -515,12 +517,13 @@ async function runMatchingBackground(projectId: number, mode: string): Promise<v
         WHERE is_confirmed = 1
           AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
       `).all(projectId) as { specification_item_id: number }[]).map(row => row.specification_item_id));
-      // Иван выбрал цену с сайта — пересопоставление не перебивает его выбор своим лучшим.
+      // Иван выбрал цену-вариант (сайт, прайс поставщика, ...) — пересопоставление не
+      // перебивает его выбор своим лучшим.
       const siteSelectedSpecIds = new Set((db.prepare(`
         SELECT specification_item_id FROM matched_items
-        WHERE is_selected = 1 AND match_type = ?
+        WHERE is_selected = 1 AND match_type IN (SELECT DISTINCT source FROM external_prices)
           AND specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
-      `).all(WEB_MATCH_TYPE, projectId) as { specification_item_id: number }[]).map(row => row.specification_item_id));
+      `).all(projectId) as { specification_item_id: number }[]).map(row => row.specification_item_id));
       for (const c of candidates) {
         if (confirmedSpecIds.has(c.specItemId)) continue;
         const source = c.source ?? 'invoice';
@@ -556,8 +559,8 @@ async function runMatchingBackground(projectId: number, mode: string): Promise<v
       SELECT COUNT(DISTINCT specification_item_id) as cnt
       FROM matched_items
       WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
-        AND COALESCE(match_type, '') <> ?
-    `).get(projectId, WEB_MATCH_TYPE) as { cnt: number };
+        AND COALESCE(match_type, '') NOT IN (SELECT DISTINCT source FROM external_prices)
+    `).get(projectId) as { cnt: number };
     const matched = totalMatchedRows.cnt;
 
     setMatchingResult(projectId, {
@@ -643,34 +646,36 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Проект не найден' });
     }
 
-    // Ф12: цены с сайта — отдельным списком siteVariants, а не в matches: счётчики «сопоставлено /
-    // без матча», фильтры и массовое подтверждение остаются про счета и прайсы, а подтверждение
-    // цены с сайта не учит правила сопоставления чужими названиями.
+    // Ф12/Ф13: цены-варианты (сайт, прайс поставщика, ...) — отдельным списком siteVariants, а не
+    // в matches: счётчики «сопоставлено / без матча», фильтры и массовое подтверждение остаются
+    // про счета и прайсы, а подтверждение варианта не учит правила сопоставления чужими названиями.
     syncSiteVariants(db, projectId);
     const siteVariantsBySpec = new Map<number, Array<{
       id: number; supplierName: string | null; price: number | null; name: string;
-      url: string | null; date: string | null; isSelected: boolean;
+      url: string | null; date: string | null; isSelected: boolean; sourceLabel: string;
     }>>();
     const siteRows = db.prepare(`
       SELECT m.id, m.specification_item_id, m.is_selected, pli.price, pli.name,
-             s.name AS supplier_name, ep.source_url, ep.snapshot_date
+             s.name AS supplier_name, ep.source_url, ep.snapshot_date, ep.source AS ep_source
       FROM matched_items m
       JOIN specification_items si ON si.id = m.specification_item_id
       JOIN price_list_items pli ON pli.id = m.price_list_item_id
       JOIN price_lists pl ON pl.id = pli.price_list_id
       LEFT JOIN suppliers s ON s.id = pl.supplier_id
       LEFT JOIN external_prices ep ON ep.id = pli.row_index
-      WHERE si.project_id = ? AND m.match_type = ?
+      WHERE si.project_id = ? AND m.match_type IN (SELECT DISTINCT source FROM external_prices)
       ORDER BY pli.price
-    `).all(projectId, WEB_MATCH_TYPE) as Array<{
+    `).all(projectId) as Array<{
       id: number; specification_item_id: number; is_selected: number; price: number | null; name: string;
-      supplier_name: string | null; source_url: string | null; snapshot_date: string | null;
+      supplier_name: string | null; source_url: string | null; snapshot_date: string | null; ep_source: string | null;
     }>;
+    const SOURCE_LABELS: Record<string, string> = { [WEB_MATCH_TYPE]: 'Цена с сайта' };
     for (const r of siteRows) {
       const list = siteVariantsBySpec.get(r.specification_item_id) ?? [];
       list.push({
         id: r.id, supplierName: r.supplier_name, price: r.price, name: r.name,
         url: r.source_url, date: r.snapshot_date, isSelected: r.is_selected === 1,
+        sourceLabel: (r.ep_source && SOURCE_LABELS[r.ep_source]) || 'Прайс поставщика',
       });
       siteVariantsBySpec.set(r.specification_item_id, list);
     }
@@ -727,7 +732,7 @@ router.get('/api/projects/:id/matching', (req: Request, res: Response) => {
       LEFT JOIN price_lists pl ON pli.price_list_id = pl.id
       LEFT JOIN suppliers s ON COALESCE(i.supplier_id, pl.supplier_id) = s.id
       WHERE m.specification_item_id = ?
-        AND COALESCE(m.match_type, '') <> '${WEB_MATCH_TYPE}'
+        AND COALESCE(m.match_type, '') NOT IN (SELECT DISTINCT source FROM external_prices)
       ORDER BY m.confidence DESC
     `);
 
@@ -1820,8 +1825,8 @@ router.get('/api/projects/:id/matching/stats', (req: Request, res: Response) => 
     const matched = (db.prepare(`
       SELECT COUNT(DISTINCT specification_item_id) as cnt FROM matched_items
       WHERE specification_item_id IN (SELECT id FROM specification_items WHERE project_id = ?)
-        AND COALESCE(match_type, '') <> ?
-    `).get(projectId, WEB_MATCH_TYPE) as { cnt: number }).cnt;
+        AND COALESCE(match_type, '') NOT IN (SELECT DISTINCT source FROM external_prices)
+    `).get(projectId) as { cnt: number }).cnt;
     const confirmed = (db.prepare(`
       SELECT COUNT(DISTINCT specification_item_id) as cnt FROM matched_items
       WHERE is_confirmed = 1

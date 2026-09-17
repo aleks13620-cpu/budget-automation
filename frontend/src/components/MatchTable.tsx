@@ -39,7 +39,8 @@ interface DupGroupMeta {
   role: 'leader' | 'follower';
 }
 
-// Ф12: цена с сайта — вариант рядом с ценой счёта; выбирается той же ручкой «выбрать».
+// Ф12/Ф13: цена-вариант (сайт, прайс поставщика, ...) рядом с ценой счёта; выбирается той же
+// ручкой «выбрать». sourceLabel различает происхождение — «Цена с сайта» или «Прайс поставщика».
 interface SiteVariant {
   id: number;
   supplierName: string | null;
@@ -48,6 +49,7 @@ interface SiteVariant {
   url: string | null;
   date: string | null;
   isSelected: boolean;
+  sourceLabel: string;
 }
 
 interface MatchRow {
@@ -619,12 +621,12 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                     );
                   })()}
 
-                  {/* Ф12: цена с сайта — видна без раскрытия, выбирается галочкой */}
+                  {/* Ф12/Ф13: цена-вариант (сайт, прайс поставщика) — видна без раскрытия, выбирается галочкой */}
                   {(row.siteVariants?.length ?? 0) > 0 && (
                     <div style={{ borderTop: '1px dashed #bfdbfe', background: '#f5f9ff', padding: '0.4rem 0.75rem 0.4rem 2.75rem' }}>
                       {row.siteVariants!.map(v => (
                         <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', padding: '0.15rem 0' }}>
-                          <span style={{ flex: '0 0 110px', fontSize: '0.7rem', color: '#1d4ed8' }}>Цена с сайта</span>
+                          <span style={{ flex: '0 0 110px', fontSize: '0.7rem', color: '#1d4ed8' }}>{v.sourceLabel || 'Цена с сайта'}</span>
                           <span style={{ flex: '0 0 20%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             {isWebLink(v.url)
                               ? <a href={v.url} target="_blank" rel="noopener noreferrer" title={v.url}>{v.supplierName || v.url}</a>

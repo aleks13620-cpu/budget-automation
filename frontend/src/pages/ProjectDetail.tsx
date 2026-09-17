@@ -94,6 +94,10 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   }[] | null>(null);
   const [priceLists, setPriceLists] = useState<{ id: number; file_name: string; status: string; item_count: number; supplier_name: string | null }[]>([]);
   const [uploadingPriceList, setUploadingPriceList] = useState(false);
+  // Ф13: прайс поставщика файлом (Русклимат, дальше Лунда/Сантехкомплект) — цена Арты
+  // вариантом рядом с ценой счёта и сайта, тем же механизмом, что кнопка «Найти цены в интернете».
+  const [supplierPriceName, setSupplierPriceName] = useState('');
+  const [uploadingSupplierPrice, setUploadingSupplierPrice] = useState(false);
   const [invoiceItemsView, setInvoiceItemsView] = useState<number | null>(null);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
   const [invoiceItemsMeta, setInvoiceItemsMeta] = useState<any | null>(null);
@@ -107,6 +111,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const bulkInvFileRef = useRef<HTMLInputElement>(null);
   const priceListFileRef = useRef<HTMLInputElement>(null);
   const specFileRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const supplierPriceFileRef = useRef<HTMLInputElement>(null);
 
   const handleSaveVat = async (supplierId: number, vatRate: number, pricesIncludeVat: boolean) => {
     try {
@@ -177,6 +182,32 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
       setMessage({ type: 'error', text: details ? `${errorMsg}: ${typeof details === 'string' ? details : JSON.stringify(details)}` : errorMsg });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleUploadSupplierPrice = async () => {
+    const file = supplierPriceFileRef.current?.files?.[0];
+    if (!file) return;
+    if (!supplierPriceName.trim()) {
+      setMessage({ type: 'error', text: 'Укажите поставщика' });
+      return;
+    }
+    setUploadingSupplierPrice(true);
+    setMessage(null);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('supplier', supplierPriceName.trim());
+    try {
+      const { data } = await api.post(`/projects/${projectId}/supplier-price`, formData);
+      setMessage({ type: 'success', text: data.message });
+      if (supplierPriceFileRef.current) supplierPriceFileRef.current.value = '';
+      await loadData();
+    } catch (err: any) {
+      const details = err.response?.data?.details;
+      const errorMsg = err.response?.data?.error || 'Ошибка загрузки прайса';
+      setMessage({ type: 'error', text: details ? `${errorMsg}: ${typeof details === 'string' ? details : JSON.stringify(details)}` : errorMsg });
+    } finally {
+      setUploadingSupplierPrice(false);
     }
   };
 
@@ -689,6 +720,30 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 </button>
               </p>
             )}
+
+            {/* Ф13: прайс поставщика файлом — цена Арты вариантом рядом со счётом и сайтом,
+                поиск «марка + серия + диаметр» по справочнику марок, без общего матчера. */}
+            <p style={{ fontWeight: 600, margin: '1rem 0 0.3rem' }}>Прайс поставщика файлом</p>
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Поставщик (например, Русклимат)"
+                value={supplierPriceName}
+                onChange={e => setSupplierPriceName(e.target.value)}
+                style={{ minWidth: '220px' }}
+              />
+              <input type="file" accept=".csv,.xlsx" ref={supplierPriceFileRef} />
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={handleUploadSupplierPrice}
+                disabled={uploadingSupplierPrice}
+              >
+                {uploadingSupplierPrice ? 'Загрузка...' : 'Загрузить прайс поставщика'}
+              </button>
+            </div>
+            <p className="muted" style={{ margin: '0.4rem 0 0', fontSize: '0.85rem' }}>
+              Цена появится в сопоставлении рядом со счётом и ценой из интернета — выбирается той же галочкой.
+            </p>
 
             <p style={{ fontWeight: 600, margin: '1rem 0 0.3rem' }}>Слой 2 — разбор описаний через ИИ</p>
             <p className="muted" style={{ margin: 0, fontSize: '0.85rem' }}>

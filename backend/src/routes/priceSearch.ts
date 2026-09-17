@@ -21,7 +21,7 @@ type Job = {
 
 // Поля UPSERT'а external_prices — ровно те же и в том же порядке, что в
 // price-harvester/src/db.py (константа UPSERT). Расхождение имён = молча потерянная колонка.
-const PRICE_FIELDS = [
+export const PRICE_FIELDS = [
   'business_key', 'project_id', 'spec_item_id', 'query_name', 'source', 'source_url',
   'snapshot_date', 'supplier_name', 'manufacturer', 'article', 'name', 'unit', 'price',
   'currency', 'vat_included', 'vat_rate', 'min_batch', 'lead_time_days', 'in_stock',
@@ -29,7 +29,9 @@ const PRICE_FIELDS = [
 ] as const;
 
 // Один в один UPSERT из price-harvester/src/db.py, на именованных параметрах better-sqlite3.
-const UPSERT_EXTERNAL_PRICE = `
+// Экспортирован: Ф13 (services/supplierPriceMatch.ts) пишет находки прайса поставщика в ту же
+// таблицу тем же способом, вместо второй копии этого SQL.
+export const UPSERT_EXTERNAL_PRICE = `
 INSERT INTO external_prices
   (business_key, project_id, spec_item_id, query_name, source, source_url, snapshot_date,
    supplier_name, manufacturer, article, name, unit, price, currency, vat_included, vat_rate,
@@ -51,7 +53,7 @@ ON CONFLICT(business_key) DO UPDATE SET
 // better-sqlite3 роняет запрос на undefined, boolean и объекте — приводим к тому, что sqlite
 // умеет хранить. Отсутствующее поле = NULL (в схеме почти все колонки nullable), NOT NULL
 // колонки при этом честно упадут констрейнтом, а не запишутся мусором.
-function toBindable(value: unknown, now: string, field: string): string | number | null {
+export function toBindable(value: unknown, now: string, field: string): string | number | null {
   if (value === undefined || value === null) {
     return field === 'created_at' || field === 'updated_at' ? now : null;
   }
@@ -60,7 +62,7 @@ function toBindable(value: unknown, now: string, field: string): string | number
   return JSON.stringify(value); // raw_data может приехать объектом
 }
 
-function nowIso(): string {
+export function nowIso(): string {
   return new Date().toISOString();
 }
 
@@ -79,15 +81,27 @@ export const WEB_MATCH_TYPE = 'web_search';
 // же дня обновляет ту же строку UPSERT'ом и не плодит вариантов.
 // Правила: вариант, который Иван выбрал, не удаляется, даже если свежий срез его не содержит;
 // вариант, который Иван отклонил (прайс-позиция есть, matched_items нет), не воскрешается.
-// ponytail: один вариант на позицию; «лучшее со своего сайта + лучшее из интернета» — после Ф11.
+// Ф13: источников больше одного (поиск в интернете, прайс поставщика файлом, позже API) — на
+// позицию один вариант НА КАЖДЫЙ ИСТОЧНИК, а не один на позицию, иначе дешёвая розница сайта
+// спрятала бы цену поставщика (и наоборот). Список источников берём из самой external_prices —
+// новый source (например 'rusklimat_api' у соседней сессии) подхватывается без правки кода.
 export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: number): void {
+  const sources = (db.prepare(
+    'SELECT DISTINCT source FROM external_prices WHERE project_id = ?'
+  ).all(projectId) as Array<{ source: string }>).map(r => r.source);
+  for (const source of sources) syncOneSourceVariants(db, projectId, source);
+}
+
+// match_type = source: подпись слоя 1 (WEB_MATCH_TYPE = 'web_search', ниже) продолжает считать
+// только автопоиск по интернету — прайсы поставщиков в неё не попадают (критерий 4 Ф12).
+function syncOneSourceVariants(db: ReturnType<typeof getDatabase>, projectId: number, source: string): void {
   db.transaction(() => {
     const wanted = db.prepare(`
       WITH ext_last AS (
         SELECT ep.spec_item_id, MAX(ep.snapshot_date) AS last_date
         FROM external_prices ep
         JOIN specification_items si ON si.id = ep.spec_item_id AND si.project_id = ep.project_id
-        WHERE ep.source = 'web_search' AND ep.project_id = ?
+        WHERE ep.source = ? AND ep.project_id = ?
         GROUP BY ep.spec_item_id
       ),
       ranked AS (
@@ -96,11 +110,11 @@ export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: 
                ROW_NUMBER() OVER (PARTITION BY ep.spec_item_id ORDER BY ep.price ASC, ep.id ASC) AS rn
         FROM external_prices ep
         JOIN ext_last el ON el.spec_item_id = ep.spec_item_id AND ep.snapshot_date = el.last_date
-        WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found'
+        WHERE ep.source = ? AND ep.project_id = ? AND ep.status = 'found'
           AND ep.price IS NOT NULL
       )
       SELECT * FROM ranked WHERE rn = 1
-    `).all(projectId, projectId) as Array<{
+    `).all(source, projectId, source, projectId) as Array<{
       id: number; spec_item_id: number; supplier_name: string | null; source_url: string;
       name: string; article: string | null; unit: string | null; price: number;
     }>;
@@ -113,7 +127,7 @@ export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: 
       JOIN price_lists pl ON pl.id = pli.price_list_id
       LEFT JOIN matched_items m ON m.price_list_item_id = pli.id AND m.source = 'price_list'
       WHERE pl.project_id = ? AND pl.file_path = ?
-    `).all(projectId, WEB_PRICE_LIST) as Array<{
+    `).all(projectId, source) as Array<{
       pli_id: number; ep_id: number; name: string; article: string | null; unit: string | null;
       price: number | null; m_id: number | null; is_selected: number | null; is_confirmed: number | null;
     }>;
@@ -139,15 +153,16 @@ export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: 
     const insertSupplier = db.prepare('INSERT OR IGNORE INTO suppliers (name) VALUES (?)');
     const findList = db.prepare('SELECT id FROM price_lists WHERE project_id = ? AND file_path = ? AND supplier_id = ?');
     const insertList = db.prepare(
-      `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, ?, ?, 'web_search')`
+      `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, ?, ?, ?)`
     );
     const insertItem = db.prepare(
       'INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, ?, ?, ?, ?, ?)'
     );
+    const matchReason = source === WEB_MATCH_TYPE ? 'Цена с сайта' : 'Цена из прайса поставщика';
     const insertMatch = db.prepare(`
       INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
                                  match_reason, is_confirmed, is_selected, source)
-      VALUES (?, ?, 1.0, ?, 'Цена с сайта', 0, 0, 'price_list')
+      VALUES (?, ?, 1.0, ?, ?, 0, 0, 'price_list')
     `);
     for (const w of wanted) {
       if (seen.has(w.id)) continue;
@@ -155,17 +170,18 @@ export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: 
       if (!seller) { try { seller = new URL(w.source_url).hostname; } catch { seller = 'сайт без названия'; } }
       insertSupplier.run(seller);
       const supplierId = (findSupplier.get(seller) as { id: number }).id;
-      const list = findList.get(projectId, WEB_PRICE_LIST, supplierId) as { id: number } | undefined;
+      const list = findList.get(projectId, source, supplierId) as { id: number } | undefined;
+      const listName = source === WEB_MATCH_TYPE ? `Сайт ${seller}` : seller;
       const listId = list?.id
-        ?? Number(insertList.run(projectId, supplierId, `Сайт ${seller}`, WEB_PRICE_LIST).lastInsertRowid);
+        ?? Number(insertList.run(projectId, supplierId, listName, source, source).lastInsertRowid);
       const itemId = Number(insertItem.run(listId, w.article, w.name, w.unit, w.price, w.id).lastInsertRowid);
-      insertMatch.run(w.spec_item_id, itemId, WEB_MATCH_TYPE);
+      insertMatch.run(w.spec_item_id, itemId, source, matchReason);
     }
 
     db.prepare(`
       DELETE FROM price_lists WHERE project_id = ? AND file_path = ?
         AND NOT EXISTS (SELECT 1 FROM price_list_items WHERE price_list_id = price_lists.id)
-    `).run(projectId, WEB_PRICE_LIST);
+    `).run(projectId, source);
   })();
 }
 

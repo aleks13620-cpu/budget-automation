@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
+import multer from 'multer';
 import { getDatabase } from '../database';
 import { safeUnlink } from '../utils/safeUnlink';
 import { createUploadMiddleware, fixFilename } from '../utils/fileUtils';
@@ -9,6 +10,7 @@ import {
   detectColumns, SavedMapping, categorizeParsingResult,
 } from '../services/pdfParser';
 import { parseExcelInvoice, extractExcelRawRows, extractExcelPreviewData } from '../services/excelInvoiceParser';
+import { parseCsvPriceFile, parseXlsxPriceFile, matchSupplierPriceToProject } from '../services/supplierPriceMatch';
 
 const upload = createUploadMiddleware({
   allowedExtensions: ['.pdf', '.xlsx', '.xls'],
@@ -78,7 +80,9 @@ router.get('/api/projects/:id/price-lists', (req: Request, res: Response) => {
       FROM price_lists pl
       LEFT JOIN suppliers s ON pl.supplier_id = s.id
       WHERE pl.project_id = ?
-        AND pl.file_path <> 'web_search' -- Ф12: цены с сайта живут в сопоставлении, не в списке файлов
+        -- Ф12/Ф13: синтетические прайсы (цена с сайта, прайс поставщика, ...) живут в
+        -- сопоставлении, не в списке файлов; file_path у них всегда равен source в external_prices.
+        AND pl.file_path NOT IN (SELECT DISTINCT source FROM external_prices)
       ORDER BY pl.created_at DESC
     `).all(projectId);
     res.json(rows);
@@ -217,6 +221,61 @@ router.put('/api/price-lists/:id/reparse', async (req: Request, res: Response) =
     res.json({ imported: parseResult.items.length, status: newStatus, errors: parseResult.errors });
   } catch (error) {
     res.status(500).json({ error: 'Ошибка при пересборке прайса', details: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+// Ф13. POST /api/projects/:id/supplier-price — «Загрузить прайс поставщика».
+// Файл разбирается в памяти (multer.memoryStorage — на диск не пишем, чужой прайс —
+// коммерческая тайна) и на диске не остаётся вовсе, поэтому «удалить после разбора» не нужно:
+// нечего удалять. Поиск — не общий матчер (решение оркестратора, Ф13), а целевой алгоритм
+// «марка + серия + диаметр» (services/supplierPriceMatch.ts), находки уходят в external_prices
+// и превращаются в вариант сопоставления тем же механизмом, что цена с сайта (Ф12).
+const supplierPriceUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+router.post('/api/projects/:id/supplier-price', supplierPriceUpload.single('file'), (req: Request, res: Response) => {
+  try {
+    const projectId = parseInt(String(req.params.id), 10);
+    const db = getDatabase();
+
+    const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
+    if (!project) return res.status(404).json({ error: 'Проект не найден' });
+    if (!req.file) return res.status(400).json({ error: 'Файл не загружен' });
+
+    const supplierName = String(req.body?.supplier || '').trim();
+    if (!supplierName) return res.status(400).json({ error: 'Укажите поставщика' });
+
+    const fileName = fixFilename(req.file.originalname);
+    const ext = path.extname(fileName).toLowerCase();
+    if (ext !== '.csv' && ext !== '.xlsx') {
+      return res.status(400).json({ error: 'Допустимы только .csv и .xlsx' });
+    }
+
+    let priceIndex;
+    try {
+      priceIndex = ext === '.csv' ? parseCsvPriceFile(req.file.buffer) : parseXlsxPriceFile(req.file.buffer);
+    } catch (parseError) {
+      return res.status(400).json({
+        error: 'Не удалось разобрать прайс',
+        details: parseError instanceof Error ? parseError.message : 'Unknown error',
+      });
+    }
+
+    const snapshotDate = new Date().toISOString().slice(0, 10);
+    const summary = matchSupplierPriceToProject(db, projectId, supplierName, priceIndex, snapshotDate);
+
+    res.json({
+      supplier: supplierName,
+      fileName,
+      rows: priceIndex.length,
+      found: summary.found,
+      withBrand: summary.withBrand,
+      total: summary.total,
+      message: `${supplierName}: цена найдена у ${summary.found} позиций из ${summary.withBrand} с маркой поставщика`,
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Ошибка при загрузке прайса поставщика', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 
