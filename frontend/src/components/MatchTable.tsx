@@ -39,11 +39,30 @@ interface DupGroupMeta {
   role: 'leader' | 'follower';
 }
 
+// Ф12: цена с сайта — вариант рядом с ценой счёта; выбирается той же ручкой «выбрать».
+interface SiteVariant {
+  id: number;
+  supplierName: string | null;
+  price: number | null;
+  name: string;
+  url: string | null;
+  date: string | null;
+  isSelected: boolean;
+}
+
 interface MatchRow {
   specItem: SpecItem;
   matches: MatchItem[];
   dupGroup?: DupGroupMeta | null;
+  siteVariants?: SiteVariant[];
 }
+
+// Адрес приходит с чужого сайта: ссылкой делаем только http/https (как в выгрузке, export.ts).
+const isWebLink = (u: string | null): u is string => !!u && /^https?:\/\//i.test(u);
+const formatDate = (d: string | null): string => {
+  const m = d ? /^(\d{4})-(\d{2})-(\d{2})/.exec(d) : null;
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : (d || '');
+};
 
 interface SectionGroup {
   section: string;
@@ -599,6 +618,47 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                       </div>
                     );
                   })()}
+
+                  {/* Ф12: цена с сайта — видна без раскрытия, выбирается галочкой */}
+                  {(row.siteVariants?.length ?? 0) > 0 && (
+                    <div style={{ borderTop: '1px dashed #bfdbfe', background: '#f5f9ff', padding: '0.4rem 0.75rem 0.4rem 2.75rem' }}>
+                      {row.siteVariants!.map(v => (
+                        <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', padding: '0.15rem 0' }}>
+                          <span style={{ flex: '0 0 110px', fontSize: '0.7rem', color: '#1d4ed8' }}>Цена с сайта</span>
+                          <span style={{ flex: '0 0 20%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {isWebLink(v.url)
+                              ? <a href={v.url} target="_blank" rel="noopener noreferrer" title={v.url}>{v.supplierName || v.url}</a>
+                              : (v.supplierName || '—')}
+                          </span>
+                          <span style={{ flex: '0 0 90px', fontWeight: 600 }}>
+                            {v.price != null ? `${v.price.toLocaleString('ru-RU')} ₽` : '—'}
+                          </span>
+                          <span style={{ flex: '0 0 80px', color: '#6b7280', fontSize: '0.75rem' }}>{formatDate(v.date)}</span>
+                          <span className="muted" style={{ flex: 1, fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.name}>{v.name}</span>
+                          <div style={{ flex: '0 0 auto', display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', cursor: v.isSelected ? 'default' : 'pointer', color: v.isSelected ? '#16a34a' : undefined, fontWeight: v.isSelected ? 600 : undefined }}>
+                              <input
+                                type="checkbox"
+                                checked={v.isSelected}
+                                disabled={v.isSelected || loading === v.id}
+                                onChange={() => handleSelect(v.id)}
+                                title="Взять в выгрузку цену с сайта вместо цены счёта"
+                              />
+                              {v.isSelected ? 'выбрана' : 'выбрать'}
+                            </label>
+                            {!v.isSelected && (
+                              <button className="btn btn-secondary btn-sm" onClick={() => handleReject(v.id)} disabled={loading === v.id} title="Убрать эту цену с сайта">✕</button>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {row.siteVariants!.some(v => v.isSelected) && row.matches.length > 0 && (
+                        <div className="muted" style={{ fontSize: '0.7rem', paddingLeft: '118px' }}>
+                          Цена счёта сейчас не выбрана. Вернуть её: «▼», затем «●» у нужной строки.
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* #17 Quick-tags strip (one-click operator feedback) */}
                   {projectId != null && (

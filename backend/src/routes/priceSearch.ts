@@ -64,6 +64,111 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+// Ф12. Цена с сайта — вариант в сопоставлении. Находка поиска оформляется как позиция
+// прайс-листа «Сайт <продавец>» (price_lists.file_path = WEB_PRICE_LIST) и строка matched_items
+// с match_type = WEB_MATCH_TYPE. Схема не меняется: CHECK в matched_items пускает только
+// счёт или прайс, а выгрузка уже умеет цену и продавца выбранного прайса.
+// Позиция держится своей позиции через price_list_items.row_index = external_prices.id:
+// позицию спецификации берём из external_prices, а не из похожести имени, и матчер такие
+// прайсы не видит (services/matcher.ts), а пересопоставление их не удаляет (routes/matching.ts).
+export const WEB_PRICE_LIST = 'web_search';
+export const WEB_MATCH_TYPE = 'web_search';
+
+// На позицию один вариант — самое дешёвое найденное в последнем срезе, ровно то, что выгрузка
+// подставляет «Интернетом». Идемпотентно: ключ — id строки external_prices, повтор прогона того
+// же дня обновляет ту же строку UPSERT'ом и не плодит вариантов.
+// Правила: вариант, который Иван выбрал, не удаляется, даже если свежий срез его не содержит;
+// вариант, который Иван отклонил (прайс-позиция есть, matched_items нет), не воскрешается.
+// ponytail: один вариант на позицию; «лучшее со своего сайта + лучшее из интернета» — после Ф11.
+export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: number): void {
+  db.transaction(() => {
+    const wanted = db.prepare(`
+      WITH ext_last AS (
+        SELECT ep.spec_item_id, MAX(ep.snapshot_date) AS last_date
+        FROM external_prices ep
+        JOIN specification_items si ON si.id = ep.spec_item_id AND si.project_id = ep.project_id
+        WHERE ep.source = 'web_search' AND ep.project_id = ?
+        GROUP BY ep.spec_item_id
+      ),
+      ranked AS (
+        SELECT ep.id, ep.spec_item_id, ep.supplier_name, ep.source_url, ep.name, ep.article,
+               ep.unit, ep.price,
+               ROW_NUMBER() OVER (PARTITION BY ep.spec_item_id ORDER BY ep.price ASC, ep.id ASC) AS rn
+        FROM external_prices ep
+        JOIN ext_last el ON el.spec_item_id = ep.spec_item_id AND ep.snapshot_date = el.last_date
+        WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found'
+          AND ep.price IS NOT NULL
+      )
+      SELECT * FROM ranked WHERE rn = 1
+    `).all(projectId, projectId) as Array<{
+      id: number; spec_item_id: number; supplier_name: string | null; source_url: string;
+      name: string; article: string | null; unit: string | null; price: number;
+    }>;
+    const wantedById = new Map(wanted.map(w => [w.id, w]));
+
+    const existing = db.prepare(`
+      SELECT pli.id AS pli_id, pli.row_index AS ep_id, pli.name, pli.article, pli.unit, pli.price,
+             m.id AS m_id, m.is_selected, m.is_confirmed
+      FROM price_list_items pli
+      JOIN price_lists pl ON pl.id = pli.price_list_id
+      LEFT JOIN matched_items m ON m.price_list_item_id = pli.id AND m.source = 'price_list'
+      WHERE pl.project_id = ? AND pl.file_path = ?
+    `).all(projectId, WEB_PRICE_LIST) as Array<{
+      pli_id: number; ep_id: number; name: string; article: string | null; unit: string | null;
+      price: number | null; m_id: number | null; is_selected: number | null; is_confirmed: number | null;
+    }>;
+
+    const updateItem = db.prepare('UPDATE price_list_items SET name = ?, article = ?, unit = ?, price = ? WHERE id = ?');
+    const deleteMatch = db.prepare('DELETE FROM matched_items WHERE price_list_item_id = ?');
+    const deleteItem = db.prepare('DELETE FROM price_list_items WHERE id = ?');
+    const seen = new Set<number>();
+    for (const e of existing) {
+      const w = wantedById.get(e.ep_id);
+      if (w) {
+        seen.add(e.ep_id);
+        if (w.name !== e.name || w.article !== e.article || w.unit !== e.unit || w.price !== e.price) {
+          updateItem.run(w.name, w.article, w.unit, w.price, e.pli_id);
+        }
+      } else if (!e.is_selected && !e.is_confirmed) {
+        deleteMatch.run(e.pli_id);
+        deleteItem.run(e.pli_id);
+      }
+    }
+
+    const findSupplier = db.prepare('SELECT id FROM suppliers WHERE name = ?');
+    const insertSupplier = db.prepare('INSERT OR IGNORE INTO suppliers (name) VALUES (?)');
+    const findList = db.prepare('SELECT id FROM price_lists WHERE project_id = ? AND file_path = ? AND supplier_id = ?');
+    const insertList = db.prepare(
+      `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, ?, ?, 'web_search')`
+    );
+    const insertItem = db.prepare(
+      'INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, ?, ?, ?, ?, ?)'
+    );
+    const insertMatch = db.prepare(`
+      INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
+                                 match_reason, is_confirmed, is_selected, source)
+      VALUES (?, ?, 1.0, ?, 'Цена с сайта', 0, 0, 'price_list')
+    `);
+    for (const w of wanted) {
+      if (seen.has(w.id)) continue;
+      let seller = (w.supplier_name || '').trim();
+      if (!seller) { try { seller = new URL(w.source_url).hostname; } catch { seller = 'сайт без названия'; } }
+      insertSupplier.run(seller);
+      const supplierId = (findSupplier.get(seller) as { id: number }).id;
+      const list = findList.get(projectId, WEB_PRICE_LIST, supplierId) as { id: number } | undefined;
+      const listId = list?.id
+        ?? Number(insertList.run(projectId, supplierId, `Сайт ${seller}`, WEB_PRICE_LIST).lastInsertRowid);
+      const itemId = Number(insertItem.run(listId, w.article, w.name, w.unit, w.price, w.id).lastInsertRowid);
+      insertMatch.run(w.spec_item_id, itemId, WEB_MATCH_TYPE);
+    }
+
+    db.prepare(`
+      DELETE FROM price_lists WHERE project_id = ? AND file_path = ?
+        AND NOT EXISTS (SELECT 1 FROM price_list_items WHERE price_list_id = price_lists.id)
+    `).run(projectId, WEB_PRICE_LIST);
+  })();
+}
+
 // Задание, зависшее в running: рабочая машина выключилась посреди прогона, сообщить о сбое
 // уже некому. Без отпуска кнопка у Ивана заблокирована навсегда — а он как раз и должен
 // уметь перезапустить сам. Прогон на 175 позиций идёт ~40 минут, поэтому два часа без
@@ -101,46 +206,23 @@ router.get('/api/projects/:id/spec-groups', (req: Request, res: Response) => {
     for (const p of positions) groups[p.group] = (groups[p.group] ?? 0) + 1;
     const searchable = positions.filter(p => p.group.startsWith('C')).length;
 
-    // Сколько позиций стоят с ценой по последнему срезу — той же логикой, что и выгрузка:
-    // по каждой позиции берётся её самая свежая запись. Это не «сколько нашёл последний
-    // прогон»: позиция, найденная утром и не найденная вечером того же дня, останется в счёте,
-    // потому что снимок хранится с точностью до даты. Экран и выгрузка при этом говорят одно.
-    // JOIN на specification_items обязателен: пересборка спецификации (reparse) пересоздаёт
-    // позиции с новыми номерами, и старые цены остаются сиротами — выгрузка их уже не видит,
-    // а экран без JOIN обещал бы «нашли цену у 45», которых в документе нет.
-    // Дата прогона берётся по ВСЕМ статусам, а не только по найденным: прогон, где ничего не
-    // нашлось (площадки не пустили), иначе выглядел бы как «поиск ещё не запускался».
-    // NOT EXISTS зеркалит развилку выгрузки `item.price == null && item.ext_price != null`
-    // (routes/export.ts:221): позиция с ценой из счёта в файл как «Интернет» не попадает, значит
-    // и в счётчике ей не место — иначе экран обещает больше, чем лежит в скачанном документе.
-    // Условие именно «сопоставление С ЦЕНОЙ», а не «сопоставление есть»: у выбранного матча
-    // цена бывает пустой (в базе такой есть), и тогда выгрузка интернет-цену ПОКАЖЕТ.
-    // ponytail: дубль правила с export.ts намеренный — там половина условия в JS, свести дешевле
-    // не выходит. Сторожит test_layer1_counter_vs_export.ts: считает оба числа и падает на разнице.
+    // Ф12: подпись слоя 1 = число позиций, у которых в сопоставлении есть вариант-сайт. Он же
+    // виден в таблице рядом с ценой счёта, поэтому экран и таблица говорят одно (закрывает Ф1.1).
+    // Варианты досоздаются здесь лениво: цены, найденные до Ф12, иначе в таблице не появятся.
+    // Дата прогона — по ВСЕМ статусам и только по живым позициям (JOIN на specification_items):
+    // прогон, где ничего не нашлось, иначе выглядел бы как «поиск ещё не запускался».
+    syncSiteVariants(db, projectId);
     const priced = db.prepare(`
-      WITH ext_last AS (
-        SELECT ep.spec_item_id, MAX(ep.snapshot_date) AS last_date
-        FROM external_prices ep
-        JOIN specification_items si ON si.id = ep.spec_item_id AND si.project_id = ep.project_id
-        WHERE ep.source = 'web_search' AND ep.project_id = ?
-        GROUP BY ep.spec_item_id
-      )
       SELECT
-        (SELECT COUNT(DISTINCT ep.spec_item_id)
+        (SELECT COUNT(DISTINCT m.specification_item_id)
+           FROM matched_items m
+           JOIN specification_items si ON si.id = m.specification_item_id
+          WHERE si.project_id = ? AND m.match_type = ?) AS n,
+        (SELECT MAX(ep.snapshot_date)
            FROM external_prices ep
-           JOIN ext_last el ON el.spec_item_id = ep.spec_item_id AND ep.snapshot_date = el.last_date
-          WHERE ep.source = 'web_search' AND ep.project_id = ? AND ep.status = 'found'
-            AND NOT EXISTS (
-              SELECT 1 FROM matched_items m
-              LEFT JOIN invoice_items ii
-                ON COALESCE(m.source, 'invoice') = 'invoice' AND m.invoice_item_id = ii.id
-              LEFT JOIN price_list_items pli
-                ON m.source = 'price_list' AND m.price_list_item_id = pli.id
-              WHERE m.specification_item_id = ep.spec_item_id AND m.is_selected = 1
-                AND COALESCE(ii.price, pli.price) IS NOT NULL
-            )) AS n,
-        (SELECT MAX(last_date) FROM ext_last) AS run_date
-    `).get(projectId, projectId) as { n: number; run_date: string | null };
+           JOIN specification_items si ON si.id = ep.spec_item_id AND si.project_id = ep.project_id
+          WHERE ep.source = 'web_search' AND ep.project_id = ?) AS run_date
+    `).get(projectId, WEB_MATCH_TYPE, projectId) as { n: number; run_date: string | null };
 
     res.json({
       total: positions.length,
@@ -323,6 +405,7 @@ router.post('/api/price-search/jobs/:id/result', (req: Request, res: Response) =
         for (const field of PRICE_FIELDS) params[field] = toBindable(row[field], now, field);
         upsert.run(params);
       }
+      syncSiteVariants(db, job.project_id);
 
       // Сводка для Ивана — в ПОЗИЦИЯХ, а не в строках. Строк всегда больше: на одну позицию
       // приходится несколько предложений, плюс строки «не искали» и «продавец не отдал цену».

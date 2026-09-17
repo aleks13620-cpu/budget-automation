@@ -78,6 +78,7 @@ router.get('/api/projects/:id/price-lists', (req: Request, res: Response) => {
       FROM price_lists pl
       LEFT JOIN suppliers s ON pl.supplier_id = s.id
       WHERE pl.project_id = ?
+        AND pl.file_path <> 'web_search' -- Ф12: цены с сайта живут в сопоставлении, не в списке файлов
       ORDER BY pl.created_at DESC
     `).all(projectId);
     res.json(rows);
