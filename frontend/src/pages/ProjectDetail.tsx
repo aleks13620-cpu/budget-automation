@@ -706,7 +706,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 || (!specGroups
                   ? 'Ищем цены по позициям, где есть заводская марка или артикул. Результат встанет в выгрузку спецификации.'
                   : specGroups.layer1.lastRunDate
-                  ? `Нашли цену у ${specGroups.layer1.withPrice} из ${specGroups.layer1.searchable} позиций с маркой. Последний поиск: ${specGroups.layer1.lastRunDate}. Цены — в выгрузке спецификации.`
+                  ? `Нашли цену у ${specGroups.layer1.withPrice} из ${specGroups.layer1.searchable} позиций с маркой. Последний поиск: ${specGroups.layer1.lastRunDate}. Цены видны в таблице сопоставления. Если у позиции есть и счёт, и цена с сайта, отметьте нужную — она попадёт в выгрузку; без счёта цена с сайта попадает туда сама.`
                   : `Поиск ещё не запускался. Искать будем по ${specGroups.layer1.searchable} позициям с заводской маркой.`)}
             </p>
 

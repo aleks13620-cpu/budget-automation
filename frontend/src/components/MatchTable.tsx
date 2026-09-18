@@ -276,8 +276,12 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
 
   // Top-1 matches across all currently-VISIBLE rows that have a match and are
   // not already confirmed — the candidates for quick mass-selection.
+  // Ф12-фикс В: строку с уже выбранным вариантом-сайтом/прайсом исключаем — массовое
+  // подтверждение зовёт bulk/confirm → clearSelectedForSpec, который снимает is_selected
+  // со всех строк позиции, включая выбранный вариант.
   const selectableBestMatches: MatchItem[] = groupedItems
     .flatMap(getVisibleRows)
+    .filter(r => !r.siteVariants?.some(v => v.isSelected))
     .map(getBestMatchOf)
     .filter((m): m is MatchItem => m != null && !m.isConfirmed);
 
@@ -638,18 +642,22 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
                           <span style={{ flex: '0 0 80px', color: '#6b7280', fontSize: '0.75rem' }}>{formatDate(v.date)}</span>
                           <span className="muted" style={{ flex: 1, fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={v.name}>{v.name}</span>
                           <div style={{ flex: '0 0 auto', display: 'flex', gap: '0.25rem', alignItems: 'center' }}>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', cursor: v.isSelected ? 'default' : 'pointer', color: v.isSelected ? '#16a34a' : undefined, fontWeight: v.isSelected ? 600 : undefined }}>
-                              <input
-                                type="checkbox"
-                                checked={v.isSelected}
-                                disabled={v.isSelected || loading === v.id}
-                                onChange={() => handleSelect(v.id)}
-                                title="Взять в выгрузку цену с сайта вместо цены счёта"
-                              />
-                              {v.isSelected ? 'выбрана' : 'выбрать'}
-                            </label>
-                            {!v.isSelected && (
-                              <button className="btn btn-secondary btn-sm" onClick={() => handleReject(v.id)} disabled={loading === v.id} title="Убрать эту цену с сайта">✕</button>
+                            {/* Ф12-фикс Б: без обычного сопоставления на позиции выбор варианта-сайта
+                                (web_search) уводит export.ts с автоподстановки ext_price (там ссылка
+                                и пометка «проверьте») на «Ориг.» без них — цена та же, но индикаторы
+                                пропадают. У прайса поставщика (supplier_price) такой автоподстановки
+                                в export.ts нет вовсе — там чекбокс единственный способ взять цену. */}
+                            {(row.matches.length > 0 || v.sourceLabel !== 'Цена с сайта') && (
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem', cursor: v.isSelected ? 'default' : 'pointer', color: v.isSelected ? '#16a34a' : undefined, fontWeight: v.isSelected ? 600 : undefined }}>
+                                <input
+                                  type="checkbox"
+                                  checked={v.isSelected}
+                                  disabled={v.isSelected || loading === v.id}
+                                  onChange={() => handleSelect(v.id)}
+                                  title="Взять в выгрузку цену с сайта вместо цены счёта"
+                                />
+                                {v.isSelected ? 'выбрана' : 'выбрать'}
+                              </label>
                             )}
                           </div>
                         </div>
