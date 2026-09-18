@@ -3,7 +3,8 @@
  * Запуск: cd backend && npx ts-node --transpile-only test_f13_supplier_price.ts <csv> [путь к базе]
  * Дёргает НАСТОЯЩИЕ обработчики роутов (как test_f12_site_variant.ts) на своей временной копии базы.
  *
- *   2. проект 16 «Арта ОВ»: вариант «Русклимат» у 27 позиций — множество spec_id и цена
+ *   2. проект 16 «Арта ОВ»: вариант «Русклимат» у 23 позиций (Ф13.1: 4 неоднозначных
+ *      исполнения — BVR/MVT/ЗДМ с несколькими кодами кандидатов — не ставятся) — spec_id и цена
  *      совпадают с python-прототипом scripts/f13_seriya_dn.py (сверено отдельно, см. отчёт);
  *   3. проект 17 «Ласточка ВК»: 0 вариантов, без ошибки;
  *   4. позиция с ценой сайта и ценой Русклимата показывает ОБА варианта; выбор Русклимата →
@@ -100,17 +101,17 @@ async function main(): Promise<void> {
   const before17 = await label(17);
   console.log(`  15=${before15} 16=${before16} 17=${before17}`);
 
-  console.log('\n=== 2. проект 16 «Арта ОВ»: прайс Русклимата → 27 вариантов ===');
+  console.log('\n=== 2. проект 16 «Арта ОВ»: прайс Русклимата → 23 варианта (Ф13.1: 4 неоднозначных пропущены) ===');
   const up16 = await uploadSupplierPrice(16, 'Русклимат', CSV_PATH);
-  check(`ответ: found=${up16.found}, withBrand=${up16.withBrand}`, up16.found === 27, up16);
+  check(`ответ: found=${up16.found}, withBrand=${up16.withBrand}`, up16.found === 23, up16);
   check('сообщение сформировано по образцу «Поставщик: цена найдена у N позиций из M»',
     up16.message === `Русклимат: цена найдена у ${up16.found} позиций из ${up16.withBrand} с маркой поставщика`);
   const variants16 = supplierCount(16);
-  check(`в external_prices вариантов supplier_price = 27 (факт ${variants16})`, variants16 === 27);
+  check(`в external_prices вариантов supplier_price = 23 (факт ${variants16})`, variants16 === 23);
   const rows16 = db.prepare(
     `SELECT COUNT(*) c FROM matched_items m JOIN specification_items si ON si.id = m.specification_item_id
       WHERE si.project_id = 16 AND m.match_type = 'supplier_price'`).get() as any;
-  check(`в сопоставлении варианты supplier_price = 27 (факт ${rows16.c})`, rows16.c === 27);
+  check(`в сопоставлении варианты supplier_price = 23 (факт ${rows16.c})`, rows16.c === 23);
 
   console.log('\n=== 3. проект 17 «Ласточка ВК»: 0 вариантов, без ошибки ===');
   const up17 = await uploadSupplierPrice(17, 'Русклимат', CSV_PATH);
@@ -148,12 +149,12 @@ async function main(): Promise<void> {
 
   console.log('\n=== 5. повторная загрузка того же файла не плодит дублей ===');
   const up16b = await uploadSupplierPrice(16, 'Русклимат', CSV_PATH);
-  check(`второй приём: found=${up16b.found} (было 27)`, up16b.found === 27);
-  check(`в external_prices всё ещё 27 строк supplier_price (факт ${supplierCount(16)})`, supplierCount(16) === 27);
+  check(`второй приём: found=${up16b.found} (было 23)`, up16b.found === 23);
+  check(`в external_prices всё ещё 23 строки supplier_price (факт ${supplierCount(16)})`, supplierCount(16) === 23);
   const rows16b = db.prepare(
     `SELECT COUNT(*) c FROM matched_items m JOIN specification_items si ON si.id = m.specification_item_id
       WHERE si.project_id = 16 AND m.match_type = 'supplier_price'`).get() as any;
-  check(`в сопоставлении по-прежнему 27 вариантов supplier_price (факт ${rows16b.c})`, rows16b.c === 27);
+  check(`в сопоставлении по-прежнему 23 варианта supplier_price (факт ${rows16b.c})`, rows16b.c === 23);
 
   console.log(`\n==== ${pass} passed, ${fail} failed ====`);
 }
