@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getDatabase } from '../database';
 import * as XLSX from 'xlsx';
-import { computeExportRows } from '../services/exportPricing';
+import { computeExportRows, ExportRow } from '../services/exportPricing';
 import { matchItemsToRawRows } from '../services/rowMatcher';
 
 const router = Router();
@@ -19,6 +19,27 @@ const router = Router();
 export function normalizeCellNewlines<T>(v: T): T {
   if (typeof v !== 'string') return v;
   return v.replace(/\r\n/g, '\n').replace(/\r/g, '\n') as unknown as T;
+}
+
+/**
+ * «Источник» для позиции с СОБСТВЕННОЙ ценой (не usedExternal — та ветка уже описана
+ * foundBy). Разбор по приёмке 18.09 (ход 3, проект 15, позиции 6929/6948): пусто или
+ * «искали, не нашли» рядом с реальной ценой счёта — не годится.
+ *
+ * source='price_list' в matched_items накрывает ТРИ разных механизма — различаем по
+ * match_type (см. routes/priceSearch.ts::syncOneSourceVariants):
+ *   - 'web_search'      — цена сайта, выбранная галочкой (Ф12) → «сайт»
+ *   - 'supplier_price'  — прайс поставщика файлом (Ф13)        → «прайс поставщика»
+ *   - остальное (обычные тиры матчера: exact_article/learned_rule/...) — обычный
+ *     прайс-лист файлом, тоже → «прайс поставщика» (по заданию оркестратора).
+ */
+function priceSourceLabel(row: ExportRow): string {
+  if (row.usedExternal) return row.foundBy;
+  let base: string;
+  if (row.priceSource === 'invoice') base = 'счёт';
+  else if (row.priceSource === 'price_list') base = row.priceMatchType === 'web_search' ? 'сайт' : 'прайс поставщика';
+  else return ''; // нет выбранного варианта — не должно случаться при price != null, но не гадаем
+  return row.typeLabel === 'Аналог' ? `${base}, аналог` : base;
 }
 
 /**
@@ -100,6 +121,21 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
       sheetRows[0][LINK_COL] = 'Ссылка';
     }
 
+    // A (приёмка 18.09, ход 3): строку, на которую метят ≥2 позиции С ЦЕНОЙ — осколки
+    // splitMonsterRow (excelParser.ts), rowMatcher.ts делит её между ними намеренно — не
+    // считаем ничьей однозначно. Спец. 31, строка 88: позиции 7005/7006/7007 с ценами
+    // 1200 и 3400 обе метят её; без этой проверки одна цена молча писалась поверх другой
+    // (осталось 3400, 1200 пропало бесследно). Обе уходят на «Не нашли строку» — потери
+    // при этом нет: строка есть, просто выбрать, чья это цена, автоматически нельзя.
+    const pricedByRow = new Map<number, number>();
+    for (const item of items) {
+      const priceRow = priceById.get(item.id);
+      if (!priceRow || priceRow.price == null) continue;
+      const rowIdx = matched.get(item.id);
+      if (rowIdx === undefined) continue;
+      pricedByRow.set(rowIdx, (pricedByRow.get(rowIdx) || 0) + 1);
+    }
+
     const notFoundRows: Array<[string | null, string, number | null, string]> = [];
 
     for (const item of items) {
@@ -107,7 +143,7 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
       if (!priceRow || priceRow.price == null) continue; // без цены — писать нечего
 
       const rowIdx = matched.get(item.id);
-      if (rowIdx === undefined) {
+      if (rowIdx === undefined || (pricedByRow.get(rowIdx) || 0) > 1) {
         notFoundRows.push([
           normalizeCellNewlines(priceRow.position_number),
           normalizeCellNewlines(priceRow.name),
@@ -118,7 +154,7 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
       }
       sheetRows[rowIdx][PRICE_COL] = priceRow.price;
       sheetRows[rowIdx][SUPPLIER_COL] = normalizeCellNewlines(priceRow.supplier);
-      sheetRows[rowIdx][SOURCE_COL] = normalizeCellNewlines(priceRow.foundBy);
+      sheetRows[rowIdx][SOURCE_COL] = normalizeCellNewlines(priceSourceLabel(priceRow));
       sheetRows[rowIdx][LINK_COL] = normalizeCellNewlines(priceRow.url);
     }
 

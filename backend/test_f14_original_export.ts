@@ -24,6 +24,18 @@
  *      Отдельно, независимо от XLSX.read, проверяем СЫРОЙ XML внутри xlsx (через `cfb`, тот же
  *      пакет, что использует сам `xlsx` для распаковки) на отсутствие подстроки `_x000d_` —
  *      это и есть прямое доказательство дефекта/его отсутствия на уровне файла, а не значения.
+ *   А (пять ходов 18.09, ход 3 — «цена в чужой строке»): если ≥2 позиции с ценой (осколки
+ *      splitMonsterRow, excelParser.ts) метят ОДНУ строку raw_data (rowMatcher.ts делит её
+ *      между ними намеренно), писать любую из цен в общую строку значит одну сохранить,
+ *      другую молча стереть. Воспроизведено: спец. 31 (проект 15), строка 88, позиции
+ *      7005/7006/7007 — двум из них даём синтетическую цену (вставкой счёта через
+ *      invoices/invoice_items/matched_items), проверяем: строка формы без цены, ОБЕ позиции
+ *      на листе «Не нашли строку».
+ *   Б (тот же ход — «Источник» рядом со счётом/прайсом): пусто или «искали, не нашли» рядом
+ *      с реальной ценой счёта — не годится. Проверяем по факту: позиция 6929 (проект 15,
+ *      реальный счёт РОВЕН-Самара, без правок в БД) → «счёт»; позиция 7553 (проект 16) с
+ *      выбранным вариантом прайса Русклимата (Ф13, тот же CSV и приём, что test_f13) → «прайс
+ *      поставщика».
  */
 import { execFileSync } from 'child_process';
 import os from 'os';
@@ -31,6 +43,7 @@ import path from 'path';
 import fs from 'fs';
 
 const SRC_DB = path.resolve(process.argv[2] || path.resolve(__dirname, '..', 'database', 'budget_automation.db'));
+const CSV_PATH = path.resolve(process.argv[3] || 'C:/Users/home/Downloads/rusklimat_prais_arta_2026-09-17.csv');
 const tmpDb = path.join(os.tmpdir(), `f14_original_${process.pid}_${Date.now()}.db`);
 fs.copyFileSync(SRC_DB, tmpDb);
 process.env.DATABASE_PATH = tmpDb;
@@ -41,9 +54,12 @@ const XLSX = require('xlsx');
 const CFB = require('cfb');
 const { getDatabase, closeDatabase } = require('./src/database/connection');
 const exportRouter = require('./src/routes/export').default;
+const matchingRouter = require('./src/routes/matching').default;
+const priceListsRouter = require('./src/routes/priceLists').default;
 const exportOriginalModule = require('./src/routes/exportOriginal');
 const exportOriginalRouter = exportOriginalModule.default;
 const normalizeCellNewlines = exportOriginalModule.normalizeCellNewlines as <T>(v: T) => T;
+const { matchItemsToRawRows } = require('./src/services/rowMatcher');
 
 let pass = 0;
 let fail = 0;
@@ -60,15 +76,27 @@ function findHandler(router: any, routePath: string, method: string): any {
   throw new Error(`обработчик ${method} ${routePath} не найден`);
 }
 
-async function call(router: any, routePath: string, method: string, params: any, body: any = {}, query: any = {}): Promise<any> {
+async function call(router: any, routePath: string, method: string, params: any, body: any = {}, query: any = {}, file: any = undefined): Promise<any> {
   const res: any = { statusCode: 200, headers: {} };
   res.status = (c: number) => { res.statusCode = c; return res; };
   res.json = (b: any) => { res.payload = b; return res; };
   res.setHeader = (k: string, v: string) => { res.headers[k] = v; return res; };
   res.send = (b: any) => { res.buffer = b; return res; };
-  await findHandler(router, routePath, method)({ params, query, body } as any, res);
+  const req: any = { params, query, body };
+  if (file) req.file = file;
+  await findHandler(router, routePath, method)(req, res);
   if (res.statusCode !== 200) throw new Error(`${method} ${routePath} → ${res.statusCode} ${JSON.stringify(res.payload)}`);
   return res;
+}
+
+async function uploadSupplierPrice(projectId: number, supplier: string, csvPath: string): Promise<any> {
+  const buffer = fs.readFileSync(csvPath);
+  const res = await call(
+    priceListsRouter, '/api/projects/:id/supplier-price', 'post',
+    { id: String(projectId) }, { supplier }, {},
+    { originalname: path.basename(csvPath), buffer },
+  );
+  return res.payload;
 }
 
 const db = getDatabase();
@@ -193,6 +221,112 @@ async function main(): Promise<void> {
       { filledInForm, notFoundCount, pricedInExport });
 
     console.log(`   найдено ${filledInForm}, не нашли ${notFoundCount}, позиций с ценой в /export ${pricedInExport}`);
+  }
+
+  // === А. цена в чужой строке — splitMonsterRow-осколки не делят одну строку молча ===
+  console.log('\n=== А. цена в чужой строке (пять ходов 18.09, ход 3) ===');
+  {
+    const pid = 15;
+    const spec = db.prepare('SELECT id, raw_data FROM specifications WHERE project_id = ?').get(pid) as { id: number; raw_data: string };
+    const rawRows: unknown[][] = JSON.parse(spec.raw_data);
+    const width = rawRows.reduce((w, r) => Math.max(w, r.length), 0);
+    const itemsAll = db.prepare('SELECT id, name FROM specification_items WHERE specification_id = ? ORDER BY id').all(spec.id) as Array<{ id: number; name: string }>;
+    const { matched: matchedAll } = matchItemsToRawRows(rawRows, itemsAll);
+
+    const byRow = new Map<number, number[]>();
+    for (const it of itemsAll) {
+      const r = matchedAll.get(it.id);
+      if (r !== undefined) {
+        if (!byRow.has(r)) byRow.set(r, []);
+        byRow.get(r)!.push(it.id);
+      }
+    }
+    const sharedEntry = [...byRow.entries()].find(([, ids]) => ids.length >= 2);
+    if (!sharedEntry) {
+      check('нашли общую строку (splitMonsterRow) для теста А — данные не изменились?', false);
+    } else {
+      const [sharedRow, sharedIds] = sharedEntry;
+      const [idA, idB] = sharedIds;
+      const nameA = itemsAll.find((i) => i.id === idA)!.name;
+      const nameB = itemsAll.find((i) => i.id === idB)!.name;
+      console.log(`   общая строка ${sharedRow} (спец. ${spec.id}, проект ${pid}), позиции ${idA} «${nameA}» / ${idB} «${nameB}»`);
+
+      // Даём обеим позициям цену — вставкой синтетического счёта через существующие таблицы,
+      // как удобнее (без API-раунд-трипа загрузки Excel).
+      const invId = Number(db.prepare(
+        'INSERT INTO invoices (project_id, invoice_number, file_name) VALUES (?, ?, ?)',
+      ).run(pid, 'TEST-F14-A', 'test_f14_synthetic.xlsx').lastInsertRowid);
+      const ii1 = Number(db.prepare(
+        'INSERT INTO invoice_items (invoice_id, name, price, quantity) VALUES (?, ?, ?, ?)',
+      ).run(invId, 'synthetic A', 1200, 1).lastInsertRowid);
+      const ii2 = Number(db.prepare(
+        'INSERT INTO invoice_items (invoice_id, name, price, quantity) VALUES (?, ?, ?, ?)',
+      ).run(invId, 'synthetic B', 3400, 1).lastInsertRowid);
+      db.prepare(
+        `INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
+         VALUES (?, ?, 1.0, 'test_synthetic', 1, 1, 'invoice')`,
+      ).run(idA, ii1);
+      db.prepare(
+        `INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
+         VALUES (?, ?, 1.0, 'test_synthetic', 1, 1, 'invoice')`,
+      ).run(idB, ii2);
+
+      const res = await call(exportOriginalRouter, '/api/projects/:id/export-original', 'get', { id: String(pid) });
+      const formRows = sheetAoa(res.buffer, 'Форма');
+      const notFound = sheetAoa(res.buffer, 'Не нашли строку');
+
+      check(`строка ${sharedRow} формы без цены (общая на ${sharedIds.length} позиции)`,
+        formRows[sharedRow][width] == null, formRows[sharedRow]);
+
+      const hasA = notFound.slice(1).some((r) => r[1] === nameA && Math.abs(Number(r[2]) - 1200) < 0.01);
+      const hasB = notFound.slice(1).some((r) => r[1] === nameB && Math.abs(Number(r[2]) - 3400) < 0.01);
+      check(`обе позиции (${idA} — 1200, ${idB} — 3400) на «Не нашли строку»`, hasA && hasB,
+        { hasA, hasB, notFound: notFound.slice(1) });
+    }
+  }
+
+  // === Б. «Источник» по факту для цены не из интернета: счёт / прайс поставщика / сайт ===
+  console.log('\n=== Б. Источник рядом со счётом/прайсом (пять ходов 18.09, ход 3) ===');
+  {
+    // Б1: реальные данные, без изменений в БД — позиция 6929, счёт РОВЕН-Самара
+    const pid = 15;
+    const spec = db.prepare('SELECT id, raw_data FROM specifications WHERE project_id = ?').get(pid) as { id: number; raw_data: string };
+    const rawRows: unknown[][] = JSON.parse(spec.raw_data);
+    const width = rawRows.reduce((w, r) => Math.max(w, r.length), 0);
+    const items = db.prepare('SELECT id, name FROM specification_items WHERE specification_id = ? ORDER BY id').all(spec.id) as Array<{ id: number; name: string }>;
+    const { matched } = matchItemsToRawRows(rawRows, items);
+
+    const res15 = await call(exportOriginalRouter, '/api/projects/:id/export-original', 'get', { id: String(pid) });
+    const formRows15 = sheetAoa(res15.buffer, 'Форма');
+    const row6929 = matched.get(6929);
+    check('позиция 6929 (реальный счёт РОВЕН-Самара) → Источник = «счёт»',
+      row6929 !== undefined && formRows15[row6929][width + 2] === 'счёт',
+      row6929 !== undefined ? formRows15[row6929] : 'строка не найдена');
+
+    // Б2: Ф13 — прайс поставщика файлом, выбранный вариант (проект 16, позиция 7553, тот же
+    // CSV/приём, что test_f13_supplier_price.ts).
+    await uploadSupplierPrice(16, 'Русклимат', CSV_PATH);
+    const table16 = (await call(matchingRouter, '/api/projects/:id/matching', 'get', { id: '16' })).payload.items as any[];
+    const row7553 = table16.find((r) => r.specItem.id === 7553);
+    const rusklimat = (row7553?.siteVariants ?? []).find((v: any) => Math.abs((v.price ?? 0) - 128880.07) < 0.01);
+    if (!rusklimat) {
+      check('нашли вариант Русклимата для позиции 7553 — данные не изменились?', false, row7553);
+    } else {
+      await call(matchingRouter, '/api/matching/select/:id', 'put', { id: String(rusklimat.id) });
+
+      const spec16 = db.prepare('SELECT id, raw_data FROM specifications WHERE project_id = 16').get() as { id: number; raw_data: string };
+      const rawRows16: unknown[][] = JSON.parse(spec16.raw_data);
+      const width16 = rawRows16.reduce((w, r) => Math.max(w, r.length), 0);
+      const items16 = db.prepare('SELECT id, name FROM specification_items WHERE specification_id = ? ORDER BY id').all(spec16.id) as Array<{ id: number; name: string }>;
+      const { matched: matched16 } = matchItemsToRawRows(rawRows16, items16);
+      const row7553idx = matched16.get(7553);
+
+      const res16 = await call(exportOriginalRouter, '/api/projects/:id/export-original', 'get', { id: '16' });
+      const formRows16 = sheetAoa(res16.buffer, 'Форма');
+      check('позиция 7553 (выбран прайс Русклимата, Ф13) → Источник = «прайс поставщика»',
+        row7553idx !== undefined && formRows16[row7553idx][width16 + 2] === 'прайс поставщика',
+        row7553idx !== undefined ? formRows16[row7553idx] : 'строка не найдена');
+    }
   }
 
   console.log(`\n==== ${pass} passed, ${fail} failed ====`);

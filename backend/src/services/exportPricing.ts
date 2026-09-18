@@ -102,6 +102,13 @@ export interface ExportRow {
   foundBy: string;
   url: string; // '' when none / not a safe web link
   usedExternal: boolean;
+  // Ф14 (правка Б, приёмка 18.09): сырой источник выбранного варианта — счёт/прайс-лист и
+  // МЕХАНИЗМ, которым он туда попал (web_search — сайт выбран галочкой Ф12, supplier_price —
+  // прайс поставщика файлом Ф13, иначе — обычный тир матчера). null при usedExternal (там нет
+  // выбранного варианта вовсе) и при отсутствии цены. НЕ используется в export.ts — /export
+  // остаётся прежним; только routes/exportOriginal.ts строит по этим полям текст «Источник».
+  priceSource: 'invoice' | 'price_list' | null;
+  priceMatchType: string | null;
 }
 
 export type ExportMode = 'best' | 'original' | 'analog';
@@ -166,6 +173,7 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
            COALESCE(ii.article, pli.article) as article,
            s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat,
            COALESCE(m.is_analog, 0) as is_analog,
+           m.source as match_source, m.match_type as match_type,
            er.price as ext_price, er.supplier_name as ext_supplier,
            er.source_url as ext_url, er.offers as ext_offers, er.price_max as ext_price_max,
            er.found_by as ext_found_by, er.mark as ext_mark,
@@ -190,6 +198,7 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
     article: string | null; supplier_name: string | null;
     vat_rate: number | null; prices_include_vat: number | null;
     is_analog: number;
+    match_source: 'invoice' | 'price_list' | null; match_type: string | null;
     ext_price: number | null; ext_supplier: string | null;
     ext_url: string | null; ext_offers: number | null; ext_price_max: number | null;
     ext_found_by: string | null; ext_mark: string | null;
@@ -237,6 +246,11 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
       // не видит, что по ней можно перейти. Видимый адрес читается как ссылка сам по себе.
       url: usedExternal && isWebLink(item.ext_url) ? item.ext_url! : '',
       usedExternal,
+      // Не выбранного варианта (m нет) — источник неизвестен, а не «счёт» по умолчанию:
+      // LEFT JOIN отдаёт NULL, а не 'invoice' — COALESCE в этом SQL стоит только в условиях
+      // JOIN'ов, самой колонке m.source мы её здесь сознательно не подмешиваем.
+      priceSource: usedExternal ? null : item.match_source,
+      priceMatchType: usedExternal ? null : item.match_type,
     };
   });
 }
