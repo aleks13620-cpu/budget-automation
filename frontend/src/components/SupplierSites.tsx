@@ -23,6 +23,18 @@ const SOURCE_LABELS: Record<string, string> = {
   search: 'Общий поиск в интернете',
 };
 
+// Новый поставщик приходит без подключённого источника (source_key) — предлагать
+// api/open_price/site_discount означало бы обещать то, чего система для него не делает.
+const ADD_SOURCE_OPTIONS: Array<[string, string]> = [
+  ['search', SOURCE_LABELS.search],
+  ['price_file', SOURCE_LABELS.price_file],
+];
+
+// Скидка реально применяется воркером только для этих двух источников с подключённым ключом.
+function discountApplies(site: SupplierSite): boolean {
+  return site.source_key != null && (site.price_source === 'open_price' || site.price_source === 'site_discount');
+}
+
 function errorText(e: unknown, fallback: string): string {
   const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
   return err || fallback;
@@ -92,20 +104,37 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
         )}
       </td>
       <td>
-        <input
-          type="number"
-          min={0}
-          max={90}
-          step={0.5}
-          value={discountInput}
-          disabled={isApi}
-          title={isApi ? 'цена уже персональная' : undefined}
-          onChange={e => setDiscountInput(e.target.value)}
-          onBlur={saveDiscount}
-          onKeyDown={e => { if (e.key === 'Enter') saveDiscount(); }}
-          style={{ width: '70px' }}
-        />
-        {discountError && <div style={{ color: '#dc2626', fontSize: '0.75rem' }}>{discountError}</div>}
+        {isApi ? (
+          <input
+            type="number"
+            value={discountInput}
+            disabled
+            title="цена уже персональная"
+            style={{ width: '70px' }}
+          />
+        ) : discountApplies(site) ? (
+          <>
+            <input
+              type="number"
+              min={0}
+              max={90}
+              step={0.5}
+              value={discountInput}
+              onChange={e => setDiscountInput(e.target.value)}
+              onBlur={saveDiscount}
+              onKeyDown={e => { if (e.key === 'Enter') saveDiscount(); }}
+              style={{ width: '70px' }}
+            />
+            {discountError && <div style={{ color: '#dc2626', fontSize: '0.75rem' }}>{discountError}</div>}
+          </>
+        ) : (
+          <span
+            className="muted"
+            title="к ценам общего поиска и прайсам файлом скидка не применяется"
+          >
+            —
+          </span>
+        )}
       </td>
     </tr>
   );
@@ -115,6 +144,7 @@ export function SupplierSites() {
   const [open, setOpen] = useState(false);
   const [sites, setSites] = useState<SupplierSite[] | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const [newName, setNewName] = useState('');
   const [newDomain, setNewDomain] = useState('');
@@ -122,14 +152,20 @@ export function SupplierSites() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState('');
 
+  const load = () => {
+    setLoading(true);
+    setLoadError('');
+    api.get('/supplier-sites')
+      .then(({ data }) => setSites(data))
+      .catch(e => setLoadError(errorText(e, 'Не удалось загрузить список поставщиков')))
+      .finally(() => setLoading(false));
+  };
+
+  // Грузим один раз при открытии блока. При ошибке НЕ повторяем сами — иначе 401/сеть
+  // держит компонент в цикле запросов; повтор — кнопкой «Повторить» или новым открытием.
   useEffect(() => {
-    if (open && sites === null && !loading) {
-      setLoading(true);
-      api.get('/supplier-sites')
-        .then(({ data }) => setSites(data))
-        .finally(() => setLoading(false));
-    }
-  }, [open, sites, loading]);
+    if (open && sites === null && !loading && !loadError) load();
+  }, [open, sites, loading, loadError]);
 
   const handleAdd = async () => {
     if (!newName.trim()) {
@@ -167,6 +203,12 @@ export function SupplierSites() {
       {open && (
         <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#f8f9fa', borderRadius: '6px' }}>
           {loading && <p className="muted">Загрузка...</p>}
+          {loadError && (
+            <p style={{ color: '#dc2626', fontSize: '0.85rem' }}>
+              {loadError}{' '}
+              <button className="btn btn-secondary btn-sm" onClick={load}>Повторить</button>
+            </p>
+          )}
           {sites && (
             <>
               <table style={{ fontSize: '0.85rem' }}>
@@ -206,7 +248,7 @@ export function SupplierSites() {
                   style={{ maxWidth: '180px' }}
                 />
                 <select value={newSource} onChange={e => setNewSource(e.target.value)}>
-                  {Object.entries(SOURCE_LABELS).map(([key, label]) => (
+                  {ADD_SOURCE_OPTIONS.map(([key, label]) => (
                     <option key={key} value={key}>{label}</option>
                   ))}
                 </select>
