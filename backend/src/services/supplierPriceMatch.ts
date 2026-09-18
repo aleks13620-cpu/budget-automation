@@ -58,6 +58,26 @@ function seriesOf(productCode: string | null): string | null {
   return n.length >= 3 ? n : null;
 }
 
+// Ф13.1: исполнение кандидата — код изделия в его наименовании, от вхождения серии (product_code)
+// до диаметра/давления (« DN», « PN», запятая, конец строки). Решено оркестратором (ветка
+// chore/commit-price-harvester, коммит cfc86bd) — так «Кран шаровой BVR» не путает BVR-AR/-CR/-DR
+// c BVR-R: у каждого суффикса свой ключ, а «ЗДМ 03.16.100» отличим от «ЗДМ 04.16.100».
+// Серию ищем в исходном (не нормализованном) имени тем же допуском на разделители, что и norm():
+// иначе «РИДАН-ЗДМ» не найдётся в «РИДАН ЗДМ 03.16.100» (дефис в коде, пробел в названии).
+const EXEC_END_RE = /\s(?:DN|PN)|,/i;
+
+function executionKeyOf(candidateName: string, productCode: string | null): string | null {
+  const code = (productCode || '').trim();
+  if (!code) return null;
+  const pattern = code.split('').map(ch => escapeRegExp(ch)).join('[\\s\\-_./]*');
+  const m = new RegExp(pattern, 'i').exec(candidateName);
+  if (!m) return null;
+  const rest = candidateName.slice(m.index);
+  const end = EXEC_END_RE.exec(rest);
+  const seg = end ? rest.slice(0, end.index) : rest;
+  return seg.trim().replace(/\s+/g, ' ').toUpperCase();
+}
+
 export interface SpecForMatch {
   id: number;
   name: string;
@@ -106,7 +126,10 @@ export function findSupplierPrice(spec: SpecForMatch, price: SupplierPriceRow[])
     }
   }
   if (cand.length === 0) return { status: 'нет диаметра/размера в прайсе', candidates: [] };
-  return { status: 'найдено', candidates: [...cand].sort((a, c) => a.price - c.price) };
+  const sorted = [...cand].sort((a, c) => a.price - c.price);
+  const execKeys = new Set(sorted.map(p => executionKeyOf(p.name, spec.product_code) ?? p.name.toUpperCase()));
+  if (execKeys.size > 1) return { status: 'неоднозначное исполнение', candidates: sorted };
+  return { status: 'найдено', candidates: sorted };
 }
 
 // --- Разбор файла прайса (CSV ';' или XLSX) в память, без сохранения на диск. ---
@@ -231,6 +254,18 @@ export function matchSupplierPriceToProject(
   let withBrand = 0;
   const now = nowIso();
   const upsert = db.prepare(UPSERT_EXTERNAL_PRICE);
+  const foundSpecIds = new Set<number>();
+
+  // Ф13.1: срез этого поставщика по проекту заменяется целиком, а не дополняется. Позиция,
+  // найденная в прошлой загрузке, но не подтверждённая в этой (пропала из прайса, стало
+  // неоднозначное исполнение) — не должна остаться висеть под старой датой и снова победить
+  // в syncSiteVariants. Выбранный Иваном вариант (is_selected) не трогаем — как в syncSiteVariants.
+  const staleGuard = db.prepare(`
+    SELECT m.is_selected AS sel, m.is_confirmed AS conf
+    FROM price_list_items pli JOIN matched_items m ON m.price_list_item_id = pli.id
+    WHERE pli.row_index = ?
+  `);
+  const deleteStale = db.prepare(`DELETE FROM external_prices WHERE id = ?`);
 
   const run = db.transaction(() => {
     for (const s of specs) {
@@ -238,6 +273,7 @@ export function matchSupplierPriceToProject(
       if (status !== 'нет марки у поставщика') withBrand++;
       if (status !== 'найдено' || candidates.length === 0) continue;
       found++;
+      foundSpecIds.add(s.id);
       const best = candidates[0];
       const row: Record<string, unknown> = {
         business_key: `supplier_price|${s.id}|${snapshotDate}`,
@@ -259,6 +295,16 @@ export function matchSupplierPriceToProject(
       const params: Record<string, string | number | null> = {};
       for (const field of PRICE_FIELDS) params[field] = toBindable(row[field], now, field);
       upsert.run(params);
+    }
+
+    const staleRows = db.prepare(
+      `SELECT id, spec_item_id FROM external_prices WHERE project_id = ? AND source = 'supplier_price' AND supplier_name = ?`,
+    ).all(projectId, supplierName) as Array<{ id: number; spec_item_id: number }>;
+    for (const stale of staleRows) {
+      if (foundSpecIds.has(stale.spec_item_id)) continue;
+      const guard = staleGuard.get(stale.id) as { sel: number; conf: number } | undefined;
+      if (guard && (guard.sel || guard.conf)) continue;
+      deleteStale.run(stale.id);
     }
   });
   run();
