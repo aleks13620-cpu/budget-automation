@@ -150,6 +150,22 @@ function initializeDatabase(): void {
       // Значение у уже сохранённых конфигов (на проде их 1) досчитывается лениво, при первом
       // обращении — см. findParserConfigByHeader в routes/specifications.ts.
       'ALTER TABLE specification_parser_configs ADD COLUMN header_signature TEXT',
+      // Ф10 — поставщики Арты (глобальный справочник, не по проекту): откуда берётся цена,
+      // галочка «искать» и скидка договора, которые снабженец Иван правит руками. Воркер
+      // поиска цен получает список через sites в /api/price-search/jobs/next.
+      `CREATE TABLE IF NOT EXISTS supplier_sites (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        name           TEXT NOT NULL UNIQUE,
+        domain         TEXT,
+        price_source   TEXT NOT NULL,
+        source_key     TEXT,
+        search_enabled INTEGER NOT NULL DEFAULT 1,
+        discount_pct   REAL NOT NULL DEFAULT 0,
+        note           TEXT,
+        sort_order     INTEGER,
+        created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
+        updated_at     TEXT DEFAULT CURRENT_TIMESTAMP
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
@@ -327,6 +343,25 @@ function initializeDatabase(): void {
         cins.run(abbr, full, cat, 'seed');
       }
     }
+
+    // Ф10 — 8 стартовых поставщиков Арты. INSERT OR IGNORE по name (UNIQUE): повторный старт
+    // не плодит строк и не затирает правку Ивана (search_enabled/discount_pct) — только
+    // добавляет отсутствующие имена.
+    const sins = db.prepare(
+      `INSERT OR IGNORE INTO supplier_sites
+        (name, domain, price_source, source_key, discount_pct, note, sort_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    );
+    ([
+      ['Русклимат', 'rusklimat.com', 'api', 'rusklimat_api', 0, 'Цена партнёра Арты из API', 1],
+      ['Сантехкомплект', 'santech.ru', 'open_price', 'santech_price', 0, 'Открытый прайс, базовая цена предоплаты', 2],
+      ['Терем', 'teremopt.ru', 'open_price', 'terem_price', 0, 'Открытый прайс, базовая цена', 3],
+      ['Неватом', 'nevatom.ru', 'site_discount', 'nevatom_site', 38, 'Цена сайта минус скидка договора (счёт № 86999 от 05.08.2026)', 4],
+      ['ЭТМ', 'etm.ru', 'search', null, 0, 'Через общий поиск в интернете', 5],
+      ['Проконсим', 'proconsim.ru', 'search', null, 0, 'Через общий поиск в интернете', 6],
+      ['Лунда', 'lunda.ru', 'price_file', null, 0, 'Прайс файлом от менеджера', 7],
+      ['ELF Group', 'samara.elfgroup.ru', 'price_file', null, 0, 'Ждём выгрузку YML от менеджера', 8],
+    ] as Array<[string, string, string, string | null, number, string, number]>).forEach(row => sins.run(...row));
 
     // Verify tables
     const tables = db.prepare(`

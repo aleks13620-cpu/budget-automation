@@ -363,7 +363,11 @@ router.post('/api/price-search/jobs/next', (req: Request, res: Response) => {
     const items = db.prepare('SELECT * FROM specification_items WHERE project_id = ?')
       .all(job.project_id);
 
-    res.json({ job: { id: job.id, projectId: job.project_id }, items });
+    // Ф10: полный список поставщиков Арты, включая выключенные — воркер сам смотрит
+    // search_enabled, а сервер не решает за него, у кого искать.
+    const sites = db.prepare('SELECT * FROM supplier_sites ORDER BY sort_order, id').all();
+
+    res.json({ job: { id: job.id, projectId: job.project_id }, items, sites });
   } catch (error) {
     console.error('POST /api/price-search/jobs/next error:', error);
     res.status(500).json({ error: 'Ошибка при выдаче задания на поиск цен' });
