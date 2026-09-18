@@ -77,12 +77,13 @@ async function main(): Promise<void> {
   check('повторный init не затирает правку Ивана (search_enabled=0, discount_pct=45)',
     nevatomAfter.search_enabled === 0 && nevatomAfter.discount_pct === 45, nevatomAfter);
 
-  console.log('\n=== 2. PUT скидка 38→40 и обратно (Неватом) ===');
-  const put40 = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
+  console.log('\n=== 2. PUT скидка 0→40 и обратно (Сантехкомплект — подключён, open_price) ===');
+  const santehId0 = (db.prepare('SELECT id FROM supplier_sites WHERE name = ?').get('Сантехкомплект') as any).id;
+  const put40 = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(santehId0) }, { discount_pct: 40 });
   check(`200, discount_pct=40 (факт ${put40.statusCode} ${put40.payload?.discount_pct})`,
     put40.statusCode === 200 && put40.payload.discount_pct === 40, put40.payload);
-  const putBack = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 45 });
-  check(`обратно 45 (факт ${putBack.payload?.discount_pct})`, putBack.payload.discount_pct === 45);
+  const putBack = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(santehId0) }, { discount_pct: 0 });
+  check(`обратно 0 (факт ${putBack.payload?.discount_pct})`, putBack.payload.discount_pct === 0);
 
   console.log('\n=== 3. 400-е ===');
   const bad95 = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 95 });
@@ -118,11 +119,10 @@ async function main(): Promise<void> {
   const badDiscountEtm = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { discount_pct: 10 });
   check(`скидка у ЭТМ (не подключён) -> 400 (факт ${badDiscountEtm.statusCode})`, badDiscountEtm.statusCode === 400, badDiscountEtm.payload);
 
-  const okDiscountNevatom40 = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
-  check(`скидка у Неватома (подключён, site_discount) 40 -> 200 (факт ${okDiscountNevatom40.statusCode} ${okDiscountNevatom40.payload?.discount_pct})`,
-    okDiscountNevatom40.statusCode === 200 && okDiscountNevatom40.payload.discount_pct === 40, okDiscountNevatom40.payload);
-  // возвращаем как было для раздела 5 (не влияет на дальнейшие проверки, но не оставляем сюрприз)
-  db.prepare('UPDATE supplier_sites SET discount_pct = 45 WHERE id = ?').run(nevatomId);
+  // Неватом запаркован (решение CEO 18.09): source_key=NULL, скидка 38 хранится, но сервер её не меняет.
+  const badDiscountNevatom = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
+  check(`скидка у Неватома (не подключён) -> 400 (факт ${badDiscountNevatom.statusCode})`,
+    badDiscountNevatom.statusCode === 400, badDiscountNevatom.payload);
 
   console.log('\n=== 4. POST новой строки ===');
   const created = await call(supplierSitesRouter, '/api/supplier-sites', 'post', {}, { name: 'Новый поставщик', domain: 'new.ru', price_source: 'search' });
