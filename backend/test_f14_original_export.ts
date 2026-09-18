@@ -15,6 +15,15 @@
  *   0 (не в плане, но заявлено оркестратором отдельно): /api/projects/:id/export до и после
  *      выноса логики в exportPricing.ts даёт ОДИНАКОВЫЕ значения ячеек — чистый рефакторинг,
  *      не смена поведения. Старый export.ts берётся из git (b369075, прод-ветка до Ф14).
+ *   4 (приёмка 18.09 — дефект \r\n → «_x000d_»): сравнение ячеек «Форма» ведём с raw_data,
+ *      нормализованным \r\n/\r → \n (то же самое делает routes/exportOriginal.ts перед записью)
+ *      — сравнение «сырое значение к сырому значению» (как было в первой версии теста) НЕ ловит
+ *      дефект: xlsx.read() сам разворачивает `_x000D_` обратно в \r при чтении СВОИМ же ридером,
+ *      так что счёт различий по значениям остаётся 0 даже при испорченном файле (LibreOffice
+ *      этот токен не разворачивает и показывает его буквально — см. отчёт оркестратора).
+ *      Отдельно, независимо от XLSX.read, проверяем СЫРОЙ XML внутри xlsx (через `cfb`, тот же
+ *      пакет, что использует сам `xlsx` для распаковки) на отсутствие подстроки `_x000d_` —
+ *      это и есть прямое доказательство дефекта/его отсутствия на уровне файла, а не значения.
  */
 import { execFileSync } from 'child_process';
 import os from 'os';
@@ -29,9 +38,12 @@ process.env.ENABLE_OPENROUTER_LLM_MATCHING = '';
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const XLSX = require('xlsx');
+const CFB = require('cfb');
 const { getDatabase, closeDatabase } = require('./src/database/connection');
 const exportRouter = require('./src/routes/export').default;
-const exportOriginalRouter = require('./src/routes/exportOriginal').default;
+const exportOriginalModule = require('./src/routes/exportOriginal');
+const exportOriginalRouter = exportOriginalModule.default;
+const normalizeCellNewlines = exportOriginalModule.normalizeCellNewlines as <T>(v: T) => T;
 
 let pass = 0;
 let fail = 0;
@@ -69,6 +81,24 @@ function sheetAoa(buf: Buffer, sheetName: string): any[][] {
   const ws = wb.Sheets[sheetName];
   if (!ws) throw new Error(`лист «${sheetName}» не найден (есть: ${wb.SheetNames.join(', ')})`);
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null });
+}
+
+/**
+ * Ищет подстроку `_x000d_` (без учёта регистра) в СЫРОМ XML внутри xlsx-архива — на уровне
+ * файла, а не разобранного XLSX.read()-значения (тот разворачивает `_x000D_` обратно в \r,
+ * маскируя дефект — см. заголовок файла). `cfb` — тот же пакет, которым `xlsx` сам
+ * распаковывает zip/CFB-контейнер, отдельной зависимости не заводим.
+ */
+function findX000dInRawXml(buf: Buffer): string[] {
+  const cfb = CFB.read(buf, { type: 'buffer' });
+  const hits: string[] = [];
+  cfb.FileIndex.forEach((entry: any, i: number) => {
+    const name: string = cfb.FullPaths[i];
+    if (!name.endsWith('.xml') || !entry.content) return;
+    const text: string = Buffer.isBuffer(entry.content) ? entry.content.toString('utf8') : String(entry.content);
+    if (text.toLowerCase().includes('_x000d_')) hits.push(name);
+  });
+  return hits;
 }
 
 /**
@@ -120,21 +150,26 @@ async function main(): Promise<void> {
     check(`строк в «Форма» = raw_data (${formRows.length} = ${rawRows.length})`, formRows.length === rawRows.length,
       { formRows: formRows.length, rawRows: rawRows.length });
 
-    let cellsUnchanged = true;
+    // Эталон — raw_data с \r\n/\r → \n (то же самое делает exportOriginal.ts перед записью).
+    // Сравниваем с ГОТОВЫМ ФАЙЛОМ (formRows читаны из res.buffer), не с значением до записи.
+    let diffCount = 0;
     let firstDiff: unknown = null;
     for (let r = 0; r < rawRows.length; r++) {
       for (let c = 0; c < rawRows[r].length; c++) {
-        const orig = rawRows[r][c] ?? null;
+        const orig = normalizeCellNewlines(rawRows[r][c] ?? null);
         const got = formRows[r]?.[c] ?? null;
         // числа могут прийти из XLSX/JSON немного по-разному типизированными (число vs строка) —
-        // сравниваем как строки, лишь бы ЗНАЧЕНИЕ не поменялось.
+        // сравниваем как строки, лишь бы ЗНАЧЕНИЕ (после нормализации переноса строки) не поменялось.
         if (String(orig) !== String(got)) {
-          cellsUnchanged = false;
+          diffCount++;
           if (firstDiff === null) firstDiff = { r, c, orig, got };
         }
       }
     }
-    check('исходные ячейки не изменены ни в одной позиции', cellsUnchanged, firstDiff);
+    check(`исходные ячейки не изменены ни в одной позиции (различий: ${diffCount})`, diffCount === 0, firstDiff);
+
+    const x000dHits = findX000dInRawXml(res.buffer);
+    check(`в сыром XML файла нет «_x000d_» (найдено файлов: ${x000dHits.length})`, x000dHits.length === 0, x000dHits);
 
     const headerRow = formRows[0] || [];
     check('4 наших колонки справа: заголовки',

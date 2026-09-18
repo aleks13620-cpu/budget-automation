@@ -7,6 +7,21 @@ import { matchItemsToRawRows } from '../services/rowMatcher';
 const router = Router();
 
 /**
+ * Ячейки исходного листа Арты иногда несут перенос строки Windows (\r\n) внутри одной
+ * ячейки (напр. «Клапан\r\nKPNZ-90-1100*500-...»). Библиотека `xlsx` при записи такой
+ * строки экранирует \r как текстовый токен `_x000D_` (конвенция Excel для управляющих
+ * символов в XML) — сам SheetJS разворачивает его обратно при чтении СВОИМ же ридером,
+ * но LibreOffice (и, потенциально, не любой Excel) этого не делает и показывает токен
+ * буквально (найдено оркестратором на PDF, стр. 10–12 проекта 16). \n внутри ячейки XML
+ * не экранируется и переносится нормально — поэтому просто убираем \r, ничего другого
+ * в значении не трогаем.
+ */
+export function normalizeCellNewlines<T>(v: T): T {
+  if (typeof v !== 'string') return v;
+  return v.replace(/\r\n/g, '\n').replace(/\r/g, '\n') as unknown as T;
+}
+
+/**
  * Ф14 — «Скачать форму Арты с ценами»: та же исходная спецификация (raw_data), которую
  * прислала Арта, БЕЗ изменений в исходных ячейках, плюс 4 наших колонки справа
  * (Цена/Поставщик/Источник/Ссылка) в строке КАЖДОЙ найденной позиции. Позиции, чью строку
@@ -71,8 +86,9 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
     const LINK_COL = width + 3;
 
     // Копия исходных строк как есть — не мутируем raw_data, только дописываем справа.
+    // \r\n/\r → \n (см. normalizeCellNewlines) — единственное, что меняем в исходном значении.
     const sheetRows: (string | number | null)[][] = rawRows.map((row) => {
-      const copy = row.slice() as (string | number | null)[];
+      const copy = (row as (string | number | null)[]).map(normalizeCellNewlines);
       while (copy.length < width + 4) copy.push(null);
       return copy;
     });
@@ -92,13 +108,18 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
 
       const rowIdx = matched.get(item.id);
       if (rowIdx === undefined) {
-        notFoundRows.push([priceRow.position_number, priceRow.name, priceRow.price, priceRow.supplier]);
+        notFoundRows.push([
+          normalizeCellNewlines(priceRow.position_number),
+          normalizeCellNewlines(priceRow.name),
+          priceRow.price,
+          normalizeCellNewlines(priceRow.supplier),
+        ]);
         continue;
       }
       sheetRows[rowIdx][PRICE_COL] = priceRow.price;
-      sheetRows[rowIdx][SUPPLIER_COL] = priceRow.supplier;
-      sheetRows[rowIdx][SOURCE_COL] = priceRow.foundBy;
-      sheetRows[rowIdx][LINK_COL] = priceRow.url;
+      sheetRows[rowIdx][SUPPLIER_COL] = normalizeCellNewlines(priceRow.supplier);
+      sheetRows[rowIdx][SOURCE_COL] = normalizeCellNewlines(priceRow.foundBy);
+      sheetRows[rowIdx][LINK_COL] = normalizeCellNewlines(priceRow.url);
     }
 
     const wb = XLSX.utils.book_new();
