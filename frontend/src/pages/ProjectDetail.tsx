@@ -711,12 +711,20 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
             </p>
 
             {specGroups?.layer1.lastRunDate && (
-              <p style={{ margin: '0.6rem 0 0' }}>
+              <p style={{ margin: '0.6rem 0 0', display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button
                   className="btn btn-secondary btn-sm"
                   onClick={() => window.open(apiUrlWithToken(`/api/projects/${projectId}/export`), '_blank')}
                 >
                   Скачать выгрузку с ценами
+                </button>
+                {/* Ф14: та же форма, что прислала Арта (raw_data), без изменений в исходных
+                    ячейках, плюс 4 колонки цены справа — Ивану не нужно переносить руками. */}
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => window.open(apiUrlWithToken(`/api/projects/${projectId}/export-original`), '_blank')}
+                >
+                  Скачать форму Арты с ценами
                 </button>
               </p>
             )}
