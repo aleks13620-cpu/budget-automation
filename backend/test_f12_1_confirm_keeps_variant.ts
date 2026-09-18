@@ -13,10 +13,25 @@
  *      /export-original по-прежнему отдают цену и поставщика Русклимата.
  *   2. позиция БЕЗ выбранного варианта: /confirm ведёт себя прежним образом байт в байт —
  *      подтверждённый матч сам становится is_selected=1.
+ *
+ * Пять ходов 18.09 (после первой правки Ф12.1) нашли блокер: раз подтверждённый счёт на
+ * позиции с выбранным вариантом остаётся is_selected=0, то места, которые ищут «главный»
+ * матч ТОЛЬКО по is_selected, теряют его подтверждённость:
+ *   3а. frontend/src/components/MatchTable.tsx getBestMatchOf — воспроизведено на ответе
+ *       GET /matching (проект 15, позиция 6934): вариант сайта выбран, подтверждён
+ *       АЛЬТЕРНАТИВНЫЙ (не изначально выбранный) счёт → главной строкой должен остаться этот
+ *       подтверждённый счёт, а не первый неподтверждённый кандидат.
+ *   3б. GET /api/projects/:id/summary — та же позиция 6934 должна засчитаться подтверждённой
+ *       (изменение в matching.ts: `any_confirmed`/`match_source`, ограничено случаем «выбран
+ *       именно price_list-вариант», чтобы не задеть иные позиции).
+ *   3в. без варианта — /summary той же операции (подтверждение альтернативного счёта) даёт
+ *       БАЙТ В БАЙТ тот же результат, что origin/main (ad539dd) — сравнение со старым кодом,
+ *       как в test_f14_original_export.ts (критерий 0).
  */
 import os from 'os';
 import path from 'path';
 import fs from 'fs';
+import { execFileSync } from 'child_process';
 
 const CSV_PATH = path.resolve(process.argv[2]);
 const SRC_DB = path.resolve(process.argv[3] || path.resolve(__dirname, '..', 'database', 'budget_automation.db'));
@@ -73,16 +88,38 @@ function matchRow(id: number): { is_confirmed: number; is_selected: number; is_a
 }
 
 let seq = 0;
-function insertUnconfirmedCandidate(label: string, specItemId: number = SPEC_ID): { invoiceItemId: number; matchId: number } {
+function insertUnconfirmedCandidate(label: string, specItemId: number = SPEC_ID, projectId: number = PID): { invoiceItemId: number; matchId: number } {
   seq++;
   const sup = db.prepare(`INSERT INTO suppliers (name) VALUES (?) RETURNING id`).get(`Тест Ф12.1 (${label})`) as any;
   const inv = db.prepare(`INSERT INTO invoices (project_id, supplier_id, invoice_number, invoice_date, total_amount)
-                          VALUES (?, ?, ?, date('now'), 0) RETURNING id`).get(PID, sup.id, `Ф121-${seq}`) as any;
+                          VALUES (?, ?, ?, date('now'), 0) RETURNING id`).get(projectId, sup.id, `Ф121-${seq}`) as any;
   const ii = db.prepare(`INSERT INTO invoice_items (invoice_id, name, unit, quantity, price, amount)
                          VALUES (?, ?, 'шт', 1, 100, 100) RETURNING id`).get(inv.id, `тестовая строка счёта ${label}`) as any;
   const mi = db.prepare(`INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type, is_confirmed, is_selected, source)
                          VALUES (?, ?, 0.9, 'name_similarity', 0, 0, 'invoice') RETURNING id`).get(specItemId, ii.id) as any;
   return { invoiceItemId: ii.id, matchId: mi.id };
+}
+
+// Воспроизводит getBestMatchOf из frontend/src/components/MatchTable.tsx (Ф12.1-фолоуап):
+// выбранный матч, иначе подтверждённый (не теряем подтверждённость альтернативы, когда
+// is_selected занят вариантом цены), иначе первый кандидат.
+function getBestMatchOf(row: any): any {
+  return row.matches.find((m: any) => m.isSelected) || row.matches.find((m: any) => m.isConfirmed) || row.matches[0] || null;
+}
+
+// Старый matching.ts (origin/main = ad539dd, до обеих правок Ф12.1) — временная копия только
+// для сравнения «/summary для позиции без варианта не изменился». Кладётся в routes/, потому
+// что там же лежит оригинал (относительные импорты должны резолвиться туда же), удаляется в
+// finally — в коммит не идёт. Тот же приём, что test_f14_original_export.ts (критерий 0).
+function loadBaselineMatchingRouter(): { router: any; filePath: string } {
+  const baselinePath = path.join(__dirname, 'src', 'routes', '_f121_baseline_matching.ts');
+  const content = execFileSync('git', ['show', 'ad539dd:backend/src/routes/matching.ts'], {
+    cwd: path.resolve(__dirname, '..'),
+    encoding: 'utf8',
+  });
+  fs.writeFileSync(baselinePath, content, 'utf8');
+  delete require.cache[require.resolve('./src/routes/_f121_baseline_matching')];
+  return { router: require('./src/routes/_f121_baseline_matching').default, filePath: baselinePath };
 }
 
 async function exportRow(specItemId: number): Promise<{ price: any; supplier: any }> {
@@ -199,6 +236,62 @@ async function main(): Promise<void> {
     const mPlain = matchRow(plain.matchId);
     check(`без варианта: /confirm подтвердил (is_confirmed=${mPlain.is_confirmed}) И сам стал выбранным (is_selected=${mPlain.is_selected}) — прежнее поведение`,
       mPlain.is_confirmed === 1 && mPlain.is_selected === 1);
+  }
+
+  // === 3а/3б. Блокер пяти ходов 18.09: реальный репро — проект 15, позиция 6934 ===
+  console.log('\n=== 3а/3б. позиция 6934 (проект 15): подтверждение альтернативного счёта при выбранном варианте ===');
+  const PID2 = 15;
+  const SPEC2 = 6934;
+  const P2 = { id: String(PID2) };
+  const table15 = async () => (await call(matchingRouter, '/api/projects/:id/matching', 'get', P2)).payload.items as any[];
+  const summary15 = async () => (await call(matchingRouter, '/api/projects/:id/summary', 'get', P2)).payload;
+
+  const items15_0 = await table15();
+  const row6934_0 = items15_0.find(r => r.specItem.id === SPEC2);
+  if (!row6934_0 || (row6934_0.siteVariants?.length ?? 0) === 0 || row6934_0.matches.length < 2) {
+    check('нашли позицию 6934 (проект 15) с вариантом сайта и ≥2 кандидатами счёта — данные не изменились?', false, row6934_0);
+  } else {
+    const variant15 = row6934_0.siteVariants[0];
+    const initiallySelected = row6934_0.matches.find((m: any) => m.isSelected) ?? row6934_0.matches[0];
+    const alternate = row6934_0.matches.find((m: any) => m.id !== initiallySelected.id) ?? row6934_0.matches[0];
+
+    await call(matchingRouter, '/api/matching/select/:id', 'put', { id: String(variant15.id) });
+    await call(matchingRouter, '/api/matching/:id/confirm', 'put', { id: String(alternate.id) });
+
+    const row6934_1 = (await table15()).find(r => r.specItem.id === SPEC2);
+    const best = getBestMatchOf(row6934_1);
+    check(`(а) getBestMatchOf (GET /matching): главная строка = подтверждённый альтернативный счёт ${alternate.id} (факт best.id=${best?.id}, best.isConfirmed=${best?.isConfirmed})`,
+      best?.id === alternate.id && best?.isConfirmed === true, { best, alternate, initiallySelected });
+
+    const item6934 = (await summary15()).sections.flatMap((s: any) => s.items).find((i: any) => i.specId === SPEC2);
+    check(`(б) /summary: позиция 6934 засчитана подтверждённой (isConfirmed=${item6934?.isConfirmed})`,
+      item6934?.isConfirmed === true, item6934);
+  }
+
+  // === 3в. Без варианта — /summary той же операции = origin/main (сравнение со старым кодом) ===
+  console.log('\n=== 3в. без варианта: /summary после подтверждения альтернативы = origin/main ===');
+  const items15_2 = await table15();
+  const noVariantRow15 = items15_2.find(r => r.specItem.id !== SPEC2 && (r.siteVariants?.length ?? 0) === 0);
+  if (!noVariantRow15) {
+    check('нашлась позиция без варианта в проекте 15 для сценария 3в', false);
+  } else {
+    const specId3 = noVariantRow15.specItem.id;
+    const candA = insertUnconfirmedCandidate('baseline-A', specId3, PID2);
+    const candB = insertUnconfirmedCandidate('baseline-B', specId3, PID2);
+    await call(matchingRouter, '/api/matching/select/:id', 'put', { id: String(candB.matchId) }); // сначала выбран Б
+    await call(matchingRouter, '/api/matching/:id/confirm', 'put', { id: String(candA.matchId) }); // подтверждён альтернативный А
+
+    const baseline = loadBaselineMatchingRouter();
+    try {
+      const oldItem = (await call(baseline.router, '/api/projects/:id/summary', 'get', P2)).payload
+        .sections.flatMap((s: any) => s.items).find((i: any) => i.specId === specId3);
+      const newItem = (await call(matchingRouter, '/api/projects/:id/summary', 'get', P2)).payload
+        .sections.flatMap((s: any) => s.items).find((i: any) => i.specId === specId3);
+      check(`без варианта: /summary позиции ${specId3} совпадает с origin/main (${JSON.stringify(newItem)})`,
+        JSON.stringify(oldItem) === JSON.stringify(newItem), { oldItem, newItem });
+    } finally {
+      fs.rmSync(baseline.filePath, { force: true });
+    }
   }
 
   console.log(`\n==== ${pass} passed, ${fail} failed ====`);

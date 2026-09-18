@@ -105,9 +105,13 @@ const ALT_MAX = 2; // show 2 alternatives below the best (top-3 total visible)
 // matches whose confidence is at least this (operator still reviews before confirm).
 const CONFIDENCE_SELECT_THRESHOLD = 0.8;
 
-// The displayed top-1 for a row: the selected price, else the first candidate.
+// The displayed top-1 for a row: the selected price, else the confirmed invoice
+// match (Ф12.1: confirming an alternative candidate no longer selects it when a
+// price variant is already selected — is_selected stays 0 on that candidate, but
+// it's still confirmed and must stay "the" main row, not fall back to matches[0]),
+// else the first candidate.
 function getBestMatchOf(row: MatchRow): MatchItem | null {
-  return row.matches.find(m => m.isSelected) || row.matches[0] || null;
+  return row.matches.find(m => m.isSelected) || row.matches.find(m => m.isConfirmed) || row.matches[0] || null;
 }
 
 // The rows actually rendered (with a checkbox) for a section group: dup-group
@@ -276,9 +280,11 @@ export function MatchTable({ groupedItems, onRefresh, onManualMatch, projectId }
 
   // Top-1 matches across all currently-VISIBLE rows that have a match and are
   // not already confirmed — the candidates for quick mass-selection.
-  // Ф12-фикс В: строку с уже выбранным вариантом-сайтом/прайсом исключаем — массовое
-  // подтверждение зовёт bulk/confirm → clearSelectedForSpec, который снимает is_selected
-  // со всех строк позиции, включая выбранный вариант.
+  // Ф12-фикс В / Ф12.1: строку с уже выбранным вариантом-сайтом/прайсом по-прежнему
+  // исключаем из массового подтверждения — так Иван не путает подтверждение счёта с
+  // переключением выбранной цены. С Ф12.1 backend (confirmMatchKeepingVariant) сам не
+  // снимает is_selected варианта при bulk/confirm, так что этот фильтр — уже не
+  // единственная защита, а доп. UX (не предлагать confirm там, где Иван явно выбрал цену).
   const selectableBestMatches: MatchItem[] = groupedItems
     .flatMap(getVisibleRows)
     .filter(r => !r.siteVariants?.some(v => v.isSelected))

@@ -1573,7 +1573,16 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
              s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat,
-             m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog
+             m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog,
+             COALESCE(m.source, 'invoice') as match_source,
+             -- Ф12.1: подтверждение счёта на позиции с выбранным вариантом цены оставляет
+             -- is_selected на варианте (matched_items.is_confirmed там всегда 0 для варианта) —
+             -- «выбранный матч» и «подтверждённый матч» разошлись. Если выбран именно вариант
+             -- (source='price_list'), считаем позицию подтверждённой ещё и по факту наличия
+             -- подтверждённого счёта/прайса среди ЕЁ матчей (см. getBestMatchOf в MatchTable.tsx).
+             -- Ограничено случаем «выбран вариант», чтобы не задеть иные (не по этой задаче)
+             -- сценарии, где выбран один неподтверждённый матч, а confirm стоит на другом.
+             EXISTS (SELECT 1 FROM matched_items mc WHERE mc.specification_item_id = si.id AND mc.is_confirmed = 1) as any_confirmed
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
       LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
@@ -1588,7 +1597,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       section: string | null; price: number | null; invoice_quantity: number | null; invoice_amount: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
-      match_id: number | null; is_confirmed: number | null; is_analog: number;
+      match_id: number | null; is_confirmed: number | null; is_analog: number; match_source: string; any_confirmed: number;
     }>;
 
     // Group by section
@@ -1649,7 +1658,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
         invoiceName: row.invoice_name,
         article: row.article,
         supplierName: row.supplier_name,
-        isConfirmed: row.is_confirmed === 1,
+        isConfirmed: row.is_confirmed === 1 || (row.match_source === 'price_list' && row.any_confirmed === 1),
         hasMatch: row.match_id != null,
       });
     }
