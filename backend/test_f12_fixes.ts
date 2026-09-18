@@ -10,10 +10,14 @@
  *      supplier_price без счёта: автоподстановки в export.ts нет вовсе (там фильтр
  *      source='web_search') — без выбора цена в выгрузке пустая, выбор — единственный путь.
  *   В. позиция с выбранным вариантом и невыбранным кандидатом счёта confidence ≥ 0.8
- *      (CONFIDENCE_SELECT_THRESHOLD в MatchTable.tsx): «было» — bulk/confirm на таком matchId
- *      (что делал старый код без фильтра) сбрасывает is_selected варианта; «стало» — тот же
- *      matchId воспроизведением фронтового фильтра `.filter(r => !r.siteVariants?.some(isSelected))`
- *      в confirm-набор не попадает, is_selected варианта не трогается.
+ *      (CONFIDENCE_SELECT_THRESHOLD в MatchTable.tsx): фильтр фронта
+ *      `.filter(r => !r.siteVariants?.some(isSelected))` не пускает такой matchId в
+ *      confirm-набор «Подтвердить уверенные». Обновлено 18.09 (Ф12.1): раньше здесь же
+ *      проверялось, что вызов bulk/confirm НАПРЯМУЮ (без фронтового фильтра) сбрасывает
+ *      is_selected варианта — это и была дыра Ф12.1. Теперь корень пофикшен в бэкенде
+ *      (confirmMatchKeepingVariant в matching.ts), поэтому реальный bulk/confirm на таком
+ *      matchId подтверждает счёт и НЕ сбрасывает выбор варианта — фронтовый фильтр остаётся
+ *      как есть (доп. UX), но больше не единственная защита.
  */
 import os from 'os';
 import path from 'path';
@@ -149,27 +153,26 @@ async function main(): Promise<void> {
     check(`синтетический кандидат счёта: confidence ${cand.confidence} ≥ ${CONFIDENCE_SELECT_THRESHOLD}, не подтверждён, вариант выбран`,
       cand.confidence >= CONFIDENCE_SELECT_THRESHOLD && !cand.isConfirmed && row1.siteVariants.some((v: any) => v.isSelected));
 
-    // «было»: массовое подтверждение (bulk/confirm) без фильтра — как раньше отправлял фронт —
-    // подтверждает этот matchId и сбрасывает выбор варианта
-    const selBefore = (db.prepare('SELECT is_selected FROM matched_items WHERE id = ?').get(variant.id) as any).is_selected;
-    await call(matchingRouter, '/api/matching/bulk/confirm', 'post', {}, { matchIds: [mi.id] });
-    const selAfterOldBehavior = (db.prepare('SELECT is_selected FROM matched_items WHERE id = ?').get(variant.id) as any).is_selected;
-    check(`было: выбор варианта ${selBefore} → после bulk/confirm без фильтра ${selAfterOldBehavior} (сброшен)`,
-      selBefore === 1 && selAfterOldBehavior === 0);
-
-    // «стало»: воспроизводим фильтр фронта (MatchTable.tsx ~279-282) — строку с выбранным
-    // вариантом исключаем ДО выбора «лучшего» кандидата, поэтому matchId в confirm-набор не попадает
-    await call(matchingRouter, '/api/matching/select/:id', 'put', { id: String(variant.id) }); // вернуть выбор варианта
-    const items2 = await table();
+    // «фронт» (правка В, MatchTable.tsx ~279-282): строку с выбранным вариантом исключаем
+    // ДО выбора «лучшего» кандидата, поэтому matchId в confirm-набор фронта не попадает.
+    // Проверяем на items1 — mi ещё не подтверждён, значит фильтр реально может провалиться.
     const getBestMatchOf = (row: any) => row.matches.find((m: any) => m.isSelected) || row.matches[0] || null;
-    const selectableBestMatches = items2
+    const selectableBestMatches = items1
       .filter(r => !r.siteVariants?.some((v: any) => v.isSelected)) // ровно правка В
       .map(getBestMatchOf)
       .filter((m: any) => m != null && !m.isConfirmed);
     const confidentIds = selectableBestMatches.filter((m: any) => m.confidence >= CONFIDENCE_SELECT_THRESHOLD).map((m: any) => m.id);
-    check(`стало: matchId ${mi.id} НЕ в confirm-наборе (${confidentIds.length} шт.)`, !confidentIds.includes(mi.id));
-    const selAfterFix = (db.prepare('SELECT is_selected FROM matched_items WHERE id = ?').get(variant.id) as any).is_selected;
-    check(`стало: выбор варианта остался ${selAfterFix} (не звали bulk/confirm для этого matchId)`, selAfterFix === 1);
+    check(`фильтр фронта: matchId ${mi.id} НЕ в confirm-наборе (${confidentIds.length} шт.)`, !confidentIds.includes(mi.id));
+
+    // Ф12.1 (бэкенд): даже без фронтового фильтра — реальный bulk/confirm на mi.id (счёт
+    // той же позиции) подтверждает счёт, но НЕ сбрасывает выбор варианта (было: сбрасывал).
+    const selBefore = (db.prepare('SELECT is_selected FROM matched_items WHERE id = ?').get(variant.id) as any).is_selected;
+    await call(matchingRouter, '/api/matching/bulk/confirm', 'post', {}, { matchIds: [mi.id] });
+    const selAfter = (db.prepare('SELECT is_selected FROM matched_items WHERE id = ?').get(variant.id) as any).is_selected;
+    check(`Ф12.1: выбор варианта ${selBefore} → после bulk/confirm счёта ${selAfter} (не сброшен)`,
+      selBefore === 1 && selAfter === 1);
+    const miConfirmed = (db.prepare('SELECT is_confirmed FROM matched_items WHERE id = ?').get(mi.id) as any).is_confirmed;
+    check(`Ф12.1: счёт всё же подтверждён (is_confirmed=${miConfirmed})`, miConfirmed === 1);
   } else {
     check('нашлась третья позиция с вариантом для сценария В', false);
   }

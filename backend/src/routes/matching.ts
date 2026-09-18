@@ -85,6 +85,34 @@ function clearSelectedForSpec(db: ReturnType<typeof getDatabase>, specItemId: nu
   db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(specItemId);
 }
 
+// Ф12.1: подтверждение счёта (✓ / аналог / bulk / группа дублей) не должно перебивать
+// выбор Ивана — галочку на цене-варианте (сайт, прайс поставщика, ...). Если у позиции
+// уже выбран вариант (source='price_list', match_type — источник external_prices), счёт
+// только подтверждается (is_confirmed[+is_analog]), is_selected варианта не трогаем и
+// сам счёт остаётся невыбранным. Иначе — поведение прежнее байт в байт: подтверждённый
+// матч сам становится выбранным.
+function confirmMatchKeepingVariant(
+  db: ReturnType<typeof getDatabase>,
+  specItemId: number,
+  matchId: number,
+  analog: boolean,
+) {
+  const hasSelectedVariant = db.prepare(`
+    SELECT 1 FROM matched_items
+    WHERE specification_item_id = ? AND id != ? AND is_selected = 1
+      AND source = 'price_list' AND match_type IN (SELECT DISTINCT source FROM external_prices)
+  `).get(specItemId, matchId);
+
+  if (hasSelectedVariant) {
+    db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 0, is_analog = ? WHERE id = ?')
+      .run(analog ? 1 : 0, matchId);
+  } else {
+    clearSelectedForSpec(db, specItemId);
+    db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = ? WHERE id = ?')
+      .run(analog ? 1 : 0, matchId);
+  }
+}
+
 // Carry-task #15: duplicate detector in spec.
 // Group spec_items by normalized name + DN so the operator confirms once per group.
 // Synthesizes parent context for parameterized children (mirrors matcher.ts:226-238)
@@ -834,13 +862,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
-      ).run(match.specification_item_id);
-
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      ).run(matchId);
+      confirmMatchKeepingVariant(db, match.specification_item_id, matchId, false);
 
       {
         // Create or update matching rule (with supplier_id)
@@ -893,8 +915,7 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
           continue;
         }
 
-        clearSelectedForSpec(db, match.specification_item_id);
-        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?').run(matchId);
+        confirmMatchKeepingVariant(db, match.specification_item_id, matchId, false);
 
         {
           const specPattern = normalizeForMatching(match.spec_name);
@@ -975,10 +996,7 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
 
     const result = db.transaction(() => {
       // 1. Confirm leader with full rule + learner.
-      clearSelectedForSpec(db, leader.specification_item_id);
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      ).run(leaderMatchId);
+      confirmMatchKeepingVariant(db, leader.specification_item_id, leaderMatchId, false);
 
       const specPattern = normalizeForMatching(leader.spec_name);
       const invoicePattern = normalizeForMatching(leader.invoice_name as string);
@@ -1003,9 +1021,6 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
           AND COALESCE(invoice_item_id, price_list_item_id) = ?
           AND COALESCE(source, 'invoice') = ?
       `);
-      const updateConfirm = db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      );
 
       for (const followerSpecId of followerSpecIds) {
         const existing = findExistingConfirmed.get(followerSpecId) as { id: number } | undefined;
@@ -1022,8 +1037,7 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
           skipped.push(followerSpecId);
           continue;
         }
-        clearSelectedForSpec(db, followerSpecId);
-        updateConfirm.run(followerMatch.id);
+        confirmMatchKeepingVariant(db, followerSpecId, followerMatch.id, false);
         saveFeedback(
           db,
           'confirm_group_follower',
@@ -1191,13 +1205,7 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
     if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
-      ).run(match.specification_item_id);
-
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?'
-      ).run(matchId);
+      confirmMatchKeepingVariant(db, match.specification_item_id, matchId, true);
 
       {
         // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
@@ -1243,8 +1251,7 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
           continue;
         }
 
-        clearSelectedForSpec(db, match.specification_item_id);
-        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?').run(matchId);
+        confirmMatchKeepingVariant(db, match.specification_item_id, matchId, true);
 
         {
           const specPattern = normalizeForMatching(match.spec_name);
