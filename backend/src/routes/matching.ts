@@ -85,6 +85,34 @@ function clearSelectedForSpec(db: ReturnType<typeof getDatabase>, specItemId: nu
   db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(specItemId);
 }
 
+// Ф12.1: подтверждение счёта (✓ / аналог / bulk / группа дублей) не должно перебивать
+// выбор Ивана — галочку на цене-варианте (сайт, прайс поставщика, ...). Если у позиции
+// уже выбран вариант (source='price_list', match_type — источник external_prices), счёт
+// только подтверждается (is_confirmed[+is_analog]), is_selected варианта не трогаем и
+// сам счёт остаётся невыбранным. Иначе — поведение прежнее байт в байт: подтверждённый
+// матч сам становится выбранным.
+function confirmMatchKeepingVariant(
+  db: ReturnType<typeof getDatabase>,
+  specItemId: number,
+  matchId: number,
+  analog: boolean,
+) {
+  const hasSelectedVariant = db.prepare(`
+    SELECT 1 FROM matched_items
+    WHERE specification_item_id = ? AND id != ? AND is_selected = 1
+      AND source = 'price_list' AND match_type IN (SELECT DISTINCT source FROM external_prices)
+  `).get(specItemId, matchId);
+
+  if (hasSelectedVariant) {
+    db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 0, is_analog = ? WHERE id = ?')
+      .run(analog ? 1 : 0, matchId);
+  } else {
+    clearSelectedForSpec(db, specItemId);
+    db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = ? WHERE id = ?')
+      .run(analog ? 1 : 0, matchId);
+  }
+}
+
 // Carry-task #15: duplicate detector in spec.
 // Group spec_items by normalized name + DN so the operator confirms once per group.
 // Synthesizes parent context for parameterized children (mirrors matcher.ts:226-238)
@@ -834,13 +862,7 @@ router.put('/api/matching/:id/confirm', (req: Request, res: Response) => {
     if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
-      ).run(match.specification_item_id);
-
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      ).run(matchId);
+      confirmMatchKeepingVariant(db, match.specification_item_id, matchId, false);
 
       {
         // Create or update matching rule (with supplier_id)
@@ -893,8 +915,7 @@ router.post('/api/matching/bulk/confirm', (req: Request, res: Response) => {
           continue;
         }
 
-        clearSelectedForSpec(db, match.specification_item_id);
-        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?').run(matchId);
+        confirmMatchKeepingVariant(db, match.specification_item_id, matchId, false);
 
         {
           const specPattern = normalizeForMatching(match.spec_name);
@@ -975,10 +996,7 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
 
     const result = db.transaction(() => {
       // 1. Confirm leader with full rule + learner.
-      clearSelectedForSpec(db, leader.specification_item_id);
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      ).run(leaderMatchId);
+      confirmMatchKeepingVariant(db, leader.specification_item_id, leaderMatchId, false);
 
       const specPattern = normalizeForMatching(leader.spec_name);
       const invoicePattern = normalizeForMatching(leader.invoice_name as string);
@@ -1003,9 +1021,6 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
           AND COALESCE(invoice_item_id, price_list_item_id) = ?
           AND COALESCE(source, 'invoice') = ?
       `);
-      const updateConfirm = db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 0 WHERE id = ?'
-      );
 
       for (const followerSpecId of followerSpecIds) {
         const existing = findExistingConfirmed.get(followerSpecId) as { id: number } | undefined;
@@ -1022,8 +1037,7 @@ router.post('/api/projects/:id/matching/group-confirm', (req: Request, res: Resp
           skipped.push(followerSpecId);
           continue;
         }
-        clearSelectedForSpec(db, followerSpecId);
-        updateConfirm.run(followerMatch.id);
+        confirmMatchKeepingVariant(db, followerSpecId, followerMatch.id, false);
         saveFeedback(
           db,
           'confirm_group_follower',
@@ -1191,13 +1205,7 @@ router.post('/api/matching/:id/confirm-analog', (req: Request, res: Response) =>
     if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
-      ).run(match.specification_item_id);
-
-      db.prepare(
-        'UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?'
-      ).run(matchId);
+      confirmMatchKeepingVariant(db, match.specification_item_id, matchId, true);
 
       {
         // Create or update matching rule with lower confidence (analog = 0.75, with supplier_id)
@@ -1243,8 +1251,7 @@ router.post('/api/matching/bulk/confirm-analog', (req: Request, res: Response) =
           continue;
         }
 
-        clearSelectedForSpec(db, match.specification_item_id);
-        db.prepare('UPDATE matched_items SET is_confirmed = 1, is_selected = 1, is_analog = 1 WHERE id = ?').run(matchId);
+        confirmMatchKeepingVariant(db, match.specification_item_id, matchId, true);
 
         {
           const specPattern = normalizeForMatching(match.spec_name);
@@ -1566,7 +1573,16 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
              COALESCE(ii.name, pli.name) as invoice_name,
              COALESCE(ii.article, pli.article) as article,
              s.name as supplier_name, COALESCE(s.vat_rate, i.vat_rate) as vat_rate, s.prices_include_vat,
-             m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog
+             m.id as match_id, m.is_confirmed, COALESCE(m.is_analog, 0) as is_analog,
+             COALESCE(m.source, 'invoice') as match_source,
+             -- Ф12.1: подтверждение счёта на позиции с выбранным вариантом цены оставляет
+             -- is_selected на варианте (matched_items.is_confirmed там всегда 0 для варианта) —
+             -- «выбранный матч» и «подтверждённый матч» разошлись. Если выбран именно вариант
+             -- (source='price_list'), считаем позицию подтверждённой ещё и по факту наличия
+             -- подтверждённого счёта/прайса среди ЕЁ матчей (см. getBestMatchOf в MatchTable.tsx).
+             -- Ограничено случаем «выбран вариант», чтобы не задеть иные (не по этой задаче)
+             -- сценарии, где выбран один неподтверждённый матч, а confirm стоит на другом.
+             EXISTS (SELECT 1 FROM matched_items mc WHERE mc.specification_item_id = si.id AND mc.is_confirmed = 1) as any_confirmed
       FROM specification_items si
       LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1
       LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
@@ -1581,7 +1597,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
       section: string | null; price: number | null; invoice_quantity: number | null; invoice_amount: number | null; invoice_name: string | null;
       article: string | null; supplier_name: string | null;
       vat_rate: number | null; prices_include_vat: number | null;
-      match_id: number | null; is_confirmed: number | null; is_analog: number;
+      match_id: number | null; is_confirmed: number | null; is_analog: number; match_source: string; any_confirmed: number;
     }>;
 
     // Group by section
@@ -1642,7 +1658,7 @@ router.get('/api/projects/:id/summary', (req: Request, res: Response) => {
         invoiceName: row.invoice_name,
         article: row.article,
         supplierName: row.supplier_name,
-        isConfirmed: row.is_confirmed === 1,
+        isConfirmed: row.is_confirmed === 1 || (row.match_source === 'price_list' && row.any_confirmed === 1),
         hasMatch: row.match_id != null,
       });
     }
