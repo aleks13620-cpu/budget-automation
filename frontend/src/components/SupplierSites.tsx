@@ -99,7 +99,7 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
           </>
         ) : (
           <span className="muted" style={{ fontSize: '0.8rem' }}>
-            {site.price_source === 'price_file' ? 'ждём файл' : 'через общий поиск'}
+            {site.price_source === 'price_file' ? 'ждём файл' : site.price_source === 'search' ? 'через общий поиск' : 'не подключён'}
           </span>
         )}
       </td>
