@@ -101,6 +101,29 @@ async function main(): Promise<void> {
   const badUnknownId = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: '999999' }, { discount_pct: 10 });
   check(`чужой id -> 404 (факт ${badUnknownId.statusCode})`, badUnknownId.statusCode === 404, badUnknownId.payload);
 
+  console.log('\n=== 3б. правила «источник подключён / не подключён» (приёмка оркестратора) ===');
+  const badPostOpenPrice = await call(supplierSitesRouter, '/api/supplier-sites', 'post', {}, { name: 'Пробный', price_source: 'open_price' });
+  check(`POST price_source=open_price -> 400 (факт ${badPostOpenPrice.statusCode})`, badPostOpenPrice.statusCode === 400, badPostOpenPrice.payload);
+
+  const santehId = (db.prepare('SELECT id FROM supplier_sites WHERE name = ?').get('Сантехкомплект') as any).id;
+  const badPutConnected = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(santehId) }, { price_source: 'search' });
+  check(`PUT price_source у Сантехкомплекта (source_key задан) -> 400 (факт ${badPutConnected.statusCode})`,
+    badPutConnected.statusCode === 400, badPutConnected.payload);
+
+  const etmId = (db.prepare('SELECT id FROM supplier_sites WHERE name = ?').get('ЭТМ') as any).id;
+  const okPutUnconnected = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { price_source: 'price_file' });
+  check(`PUT price_source у ЭТМ (source_key=NULL) -> price_file, 200 (факт ${okPutUnconnected.statusCode} ${okPutUnconnected.payload?.price_source})`,
+    okPutUnconnected.statusCode === 200 && okPutUnconnected.payload.price_source === 'price_file', okPutUnconnected.payload);
+
+  const badDiscountEtm = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { discount_pct: 10 });
+  check(`скидка у ЭТМ (не подключён) -> 400 (факт ${badDiscountEtm.statusCode})`, badDiscountEtm.statusCode === 400, badDiscountEtm.payload);
+
+  const okDiscountNevatom40 = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
+  check(`скидка у Неватома (подключён, site_discount) 40 -> 200 (факт ${okDiscountNevatom40.statusCode} ${okDiscountNevatom40.payload?.discount_pct})`,
+    okDiscountNevatom40.statusCode === 200 && okDiscountNevatom40.payload.discount_pct === 40, okDiscountNevatom40.payload);
+  // возвращаем как было для раздела 5 (не влияет на дальнейшие проверки, но не оставляем сюрприз)
+  db.prepare('UPDATE supplier_sites SET discount_pct = 45 WHERE id = ?').run(nevatomId);
+
   console.log('\n=== 4. POST новой строки ===');
   const created = await call(supplierSitesRouter, '/api/supplier-sites', 'post', {}, { name: 'Новый поставщик', domain: 'new.ru', price_source: 'search' });
   check(`201, sort_order=9, source_key=null (факт ${created.statusCode} ${created.payload?.sort_order} ${created.payload?.source_key})`,
