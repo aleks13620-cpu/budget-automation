@@ -42,6 +42,31 @@ function priceSourceLabel(row: ExportRow): string {
   return row.typeLabel === 'Аналог' ? `${base}, аналог` : base;
 }
 
+const MIN_COL_WIDTH = 6;
+const MAX_COL_WIDTH = 60;
+
+/**
+ * Ф14.1 — ширина колонок листа = длина самой длинной строки текста в ней, зажатая в
+ * [MIN_COL_WIDTH, MAX_COL_WIDTH]: без этого длинные наименования обрезаются в Excel
+ * (лист «Форма» отдаёт исходные ячейки Арты как есть — они бывают длиннее любой
+ * разумной фиксированной ширины). Приём `!cols`/`wch` уже есть в export.ts — тут та же
+ * идея, но ширина считается по содержимому, а не задаётся вручную (колонки листа не
+ * фиксированы, как в export.ts, а зависят от исходного файла клиента). \n внутри ячейки
+ * переносит строку в Excel — считаем максимум по каждой строке разбивки, не по всей ячейке.
+ */
+function computeColWidths(rows: (string | number | null)[][], numCols: number): { wch: number }[] {
+  const widths = new Array(numCols).fill(MIN_COL_WIDTH);
+  for (const row of rows) {
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      if (cell == null) continue;
+      const maxLine = String(cell).split('\n').reduce((m, l) => Math.max(m, l.length), 0);
+      if (maxLine > widths[c]) widths[c] = maxLine;
+    }
+  }
+  return widths.map((w) => ({ wch: Math.min(MAX_COL_WIDTH, Math.max(MIN_COL_WIDTH, w)) }));
+}
+
 /**
  * Ф14 — «Скачать форму Арты с ценами»: та же исходная спецификация (raw_data), которую
  * прислала Арта, БЕЗ изменений в исходных ячейках, плюс 4 наших колонки справа
@@ -160,6 +185,7 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(sheetRows);
+    ws['!cols'] = computeColWidths(sheetRows, width + 4);
     XLSX.utils.book_append_sheet(wb, ws, 'Форма');
 
     const notFoundData: (string | number | null)[][] = [
@@ -167,6 +193,7 @@ router.get('/api/projects/:id/export-original', (req: Request, res: Response) =>
       ...notFoundRows,
     ];
     const wsNotFound = XLSX.utils.aoa_to_sheet(notFoundData);
+    wsNotFound['!cols'] = computeColWidths(notFoundData, notFoundData[0].length);
     XLSX.utils.book_append_sheet(wb, wsNotFound, 'Не нашли строку');
 
     const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

@@ -112,6 +112,20 @@ function sheetAoa(buf: Buffer, sheetName: string): any[][] {
 }
 
 /**
+ * Ф14.1 — `!cols` читаем из ГОТОВОГО файла (res.buffer через XLSX.read), не из объекта
+ * листа до записи: критерий требует ширину именно в выгруженном xlsx. `cellStyles: true`
+ * обязателен — без него сам SheetJS не разбирает `<cols>` обратно в `ws['!cols']` при
+ * чтении (проверено отдельно: XML внутри файла содержит ширины в любом случае, это
+ * особенность парсера конкретно этой библиотеки на чтение, не дефект записи).
+ */
+function sheetCols(buf: Buffer, sheetName: string): Array<{ wch?: number }> {
+  const wb = XLSX.read(buf, { type: 'buffer', cellStyles: true });
+  const ws = wb.Sheets[sheetName];
+  if (!ws) throw new Error(`лист «${sheetName}» не найден (есть: ${wb.SheetNames.join(', ')})`);
+  return ws['!cols'] || [];
+}
+
+/**
  * Ищет подстроку `_x000d_` (без учёта регистра) в СЫРОМ XML внутри xlsx-архива — на уровне
  * файла, а не разобранного XLSX.read()-значения (тот разворачивает `_x000D_` обратно в \r,
  * маскируя дефект — см. заголовок файла). `cfb` — тот же пакет, которым `xlsx` сам
@@ -204,6 +218,22 @@ async function main(): Promise<void> {
       headerRow[width] === 'Цена, руб' && headerRow[width + 1] === 'Поставщик'
         && headerRow[width + 2] === 'Источник' && headerRow[width + 3] === 'Ссылка',
       headerRow.slice(width, width + 4));
+
+    // Ф14.1 — ширина колонок: у обоих листов !cols на КАЖДУЮ колонку, ширины в [6, 60].
+    const formCols = sheetCols(res.buffer, 'Форма');
+    check(`«Форма»: !cols на все ${width + 4} колонки (есть: ${formCols.length})`, formCols.length === width + 4, formCols);
+    check('«Форма»: все ширины в [6, 60]',
+      formCols.every((c) => typeof c.wch === 'number' && c.wch >= 6 && c.wch <= 60), formCols);
+
+    const notFoundCols = sheetCols(res.buffer, 'Не нашли строку');
+    check(`«Не нашли строку»: !cols на все 4 колонки (есть: ${notFoundCols.length})`, notFoundCols.length === 4, notFoundCols);
+    check('«Не нашли строку»: все ширины в [6, 60]',
+      notFoundCols.every((c) => typeof c.wch === 'number' && c.wch >= 6 && c.wch <= 60), notFoundCols);
+
+    if (pid === 16) {
+      check('«Арта ОВ» (проект 16): колонка «"Наименование в спецификации"» (индекс 1) ≥ 40',
+        (formCols[1]?.wch ?? 0) >= 40, formCols[1]);
+    }
 
     // критерий 2/3: заполненные цены на «Форма» + строки на «Не нашли строку» = позиций с ценой в /export
     const exportBuf = (await call(exportRouter, '/api/projects/:id/export', 'get', { id: String(pid) })).buffer;
