@@ -85,6 +85,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const [priceSearchStatus, setPriceSearchStatus] = useState<string>('idle');
   const [priceSearchNote, setPriceSearchNote] = useState<string>('');
   const [priceSearchPosting, setPriceSearchPosting] = useState(false);
+  // Ф11: по умолчанию стоит — как сегодня, весь интернет. Снята — только сайты поставщиков
+  // из списка ниже с галочкой «Искать».
+  const [searchInternet, setSearchInternet] = useState(true);
   const [specItems, setSpecItems] = useState<any[]>([]);
   const [specItemsLoading, setSpecItemsLoading] = useState(false);
   const [deliveryTotal, setDeliveryTotal] = useState<number | null>(null);
@@ -317,7 +320,7 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
   const handleFindPrices = async () => {
     setPriceSearchPosting(true);
     try {
-      await api.post(`/projects/${projectId}/price-search`);
+      await api.post(`/projects/${projectId}/price-search`, { searchInternet });
       setPriceSearchStatus('queued');
       setPriceSearchNote('');
       pollPriceSearch();
@@ -702,6 +705,19 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 ? 'Идёт поиск...'
                 : 'Найти цены в интернете'}
             </button>
+            <label style={{ display: 'block', margin: '0.4rem 0 0', fontSize: '0.9rem' }}>
+              <input
+                type="checkbox"
+                checked={searchInternet}
+                onChange={e => setSearchInternet(e.target.checked)}
+              />{' '}
+              Искать по всему интернету
+            </label>
+            <p className="muted" style={{ margin: '0.1rem 0 0', fontSize: '0.8rem' }}>
+              {searchInternet
+                ? ''
+                : 'Ищем только на сайтах поставщиков из списка ниже с галочкой «Искать».'}
+            </p>
             <p className="muted" style={{ margin: '0.4rem 0 0', fontSize: '0.85rem' }}>
               {priceSearchText(priceSearchStatus, priceSearchNote)
                 || (!specGroups

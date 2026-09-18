@@ -166,6 +166,10 @@ function initializeDatabase(): void {
         created_at     TEXT DEFAULT CURRENT_TIMESTAMP,
         updated_at     TEXT DEFAULT CURRENT_TIMESTAMP
       )`,
+      // Ф11 — галочка Ивана «Искать по всему интернету» на кнопке «Найти цены»: снята — воркер
+      // ищет только на сайтах поставщиков с price_source='search' и search_enabled=1, а не по
+      // всему интернету. DEFAULT 1 = как сегодня, старые задания не меняют поведение.
+      'ALTER TABLE price_search_jobs ADD COLUMN search_internet INTEGER NOT NULL DEFAULT 1',
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }

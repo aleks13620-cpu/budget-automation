@@ -88,18 +88,19 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
         {site.note && <div className="muted" style={{ fontSize: '0.75rem' }}>{site.note}</div>}
       </td>
       <td>
-        {site.source_key != null ? (
+        {site.source_key != null || site.price_source === 'search' ? (
           <>
             <input
               type="checkbox"
               checked={!!site.search_enabled}
               onChange={e => toggleSearch(e.target.checked)}
+              title="Сайт участвует в поиске, когда галочка «весь интернет» снята"
             />
             {checkError && <div style={{ color: '#dc2626', fontSize: '0.75rem' }}>{checkError}</div>}
           </>
         ) : (
           <span className="muted" style={{ fontSize: '0.8rem' }}>
-            {site.price_source === 'price_file' ? 'ждём файл' : site.price_source === 'search' ? 'через общий поиск' : 'не подключён'}
+            {site.price_source === 'price_file' ? 'ждём файл' : 'не подключён'}
           </span>
         )}
       </td>
@@ -110,7 +111,7 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
             value={discountInput}
             disabled
             title="цена уже персональная"
-            style={{ width: '70px' }}
+            style={{ width: '70px', background: '#e9ecef', cursor: 'not-allowed' }}
           />
         ) : discountApplies(site) ? (
           <>

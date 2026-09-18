@@ -17,6 +17,7 @@ type Job = {
   finished_at: string | null;
   rows_written: number | null;
   message: string | null;
+  search_internet: number;
 };
 
 // Поля UPSERT'а external_prices — ровно те же и в том же порядке, что в
@@ -285,10 +286,15 @@ router.post('/api/projects/:id/price-search', (req: Request, res: Response) => {
       return res.status(400).json({ error: 'В проекте нет позиций спецификации' });
     }
 
+    // Ф11: снятая галочка «Искать по всему интернету» — воркер ищет только на сайтах
+    // поставщиков (supplier_sites, price_source='search' и search_enabled=1). Нет поля в теле
+    // (старый фронт/повторный вызов) — как сегодня, весь интернет.
+    const searchInternet = req.body?.searchInternet === false ? 0 : 1;
+
     const result = db.prepare(
-      `INSERT INTO price_search_jobs (project_id, status, requested_at)
-       VALUES (?, 'queued', ?)`
-    ).run(projectId, nowIso());
+      `INSERT INTO price_search_jobs (project_id, status, requested_at, search_internet)
+       VALUES (?, 'queued', ?, ?)`
+    ).run(projectId, nowIso(), searchInternet);
 
     res.json({ jobId: Number(result.lastInsertRowid), status: 'queued', items });
   } catch (error) {
@@ -367,7 +373,11 @@ router.post('/api/price-search/jobs/next', (req: Request, res: Response) => {
     // search_enabled, а сервер не решает за него, у кого искать.
     const sites = db.prepare('SELECT * FROM supplier_sites ORDER BY sort_order, id').all();
 
-    res.json({ job: { id: job.id, projectId: job.project_id }, items, sites });
+    res.json({
+      job: { id: job.id, projectId: job.project_id, searchInternet: !!job.search_internet },
+      items,
+      sites,
+    });
   } catch (error) {
     console.error('POST /api/price-search/jobs/next error:', error);
     res.status(500).json({ error: 'Ошибка при выдаче задания на поиск цен' });
