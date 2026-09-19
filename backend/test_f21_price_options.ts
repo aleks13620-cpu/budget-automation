@@ -42,6 +42,7 @@ const priceSearchRouter = require('./src/routes/priceSearch').default;
 const { UPSERT_EXTERNAL_PRICE, PRICE_FIELDS, toBindable, nowIso } = require('./src/routes/priceSearch');
 const { classifySpecPositions } = require('./src/services/specClassifier');
 const { acquireMatchingRun, releaseMatchingRun } = require('./src/services/matchingRunLock');
+const { rememberPrevInvoiceMatch, restorePrevInvoiceMatch } = require('./src/routes/priceOptions');
 
 let pass = 0;
 let fail = 0;
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
     `SELECT id FROM external_prices WHERE business_key = 'f21_review_p1_rep_7428'`
   ).get() as { id: number };
 
-  console.log('\n=== ревью п.2: синтетика — цена счёта у позиции 7382 (единственный invoice-матч) ===');
+  console.log('\n=== ревью п.2: синтетика — цена счёта у позиции 7382, ДВА неподтверждённых invoice-матча (паттерн проекта 15) ===');
   db.prepare(`INSERT OR IGNORE INTO suppliers (name) VALUES ('Синтетика Счёт ООО')`).run();
   const invSupplierId = (db.prepare(`SELECT id FROM suppliers WHERE name = 'Синтетика Счёт ООО'`).get() as { id: number }).id;
   const invoiceId = Number(db.prepare(
@@ -164,8 +165,20 @@ async function main(): Promise<void> {
   const invoiceMatchId = Number(db.prepare(`
     INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type,
                                match_reason, is_confirmed, is_selected, source)
-    VALUES (7382, ?, 1.0, 'invoice', 'ревью теста', 0, 1, 'invoice')
+    VALUES (7382, ?, 1.0, 'invoice', 'ревью теста, выбранный', 0, 1, 'invoice')
   `).run(invoiceItemId).lastInsertRowid);
+  // Второй invoice-матч той же позиции — неподтверждённый, НЕ выбранный (is_selected=0). Старое
+  // правило-угадывание (findInvoiceRestoreCandidate) при ≥2 неподтверждённых кандидатах сдавалось
+  // (null — как в 12/30 и 29/43 на проектах 14/15); новый механизм просто помнит invoiceMatchId,
+  // количество кандидатов ему не мешает.
+  const invoiceItemId2 = Number(db.prepare(
+    `INSERT INTO invoice_items (invoice_id, name, price, quantity) VALUES (?, 'ревью п.2, другая строка счёта', 9999, 1)`
+  ).run(invoiceId).lastInsertRowid);
+  db.prepare(`
+    INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type,
+                               match_reason, is_confirmed, is_selected, source)
+    VALUES (7382, ?, 0.5, 'invoice', 'ревью теста, второй кандидат', 0, 0, 'invoice')
+  `).run(invoiceItemId2);
 
   console.log('\n=== ревью п.3: синтетика — на позиции 7383 выбран ОБЫЧНЫЙ прайс-лист (не вариант экрана) ===');
   const someExternalId = (db.prepare(`SELECT id FROM external_prices WHERE project_id = 16 LIMIT 1`).get() as { id: number }).id;
@@ -313,21 +326,57 @@ async function main(): Promise<void> {
   check(`invoice_supplier = 'Синтетика Счёт ООО' (факт ${item7382?.invoice_supplier})`, item7382?.invoice_supplier === 'Синтетика Счёт ООО', item7382);
   check('selected_option_id = null (счёт — не выбор Ивана, экран его не подменяет)', item7382?.selected_option_id === null, item7382);
 
-  console.log('\n=== ревью п.2: выбор варианта прячет цену счёта, сброс — единственный invoice-матч — возвращает её ===');
-  const web7382 = item7382?.options.find((o: any) => o.source === 'web_search');
-  check('у позиции 7382 есть web_search-вариант', !!web7382, item7382);
-  if (web7382) {
-    const putVar = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: web7382.option_id });
-    check('PUT вариантом на 7382 → 200', putVar.statusCode === 200, putVar.payload);
+  console.log('\n=== п.4 дозадания: ≥2 неподтверждённых invoice-матча — выбор варианта, ПОВТОРНАЯ смена варианта, сброс возвращает ИСХОДНЫЙ счёт ===');
+  const webOptions7382 = item7382?.options.filter((o: any) => o.source === 'web_search') ?? [];
+  check('у позиции 7382 есть ≥2 web_search-вариантов (для проверки повторной смены)', webOptions7382.length >= 2, webOptions7382);
+  if (webOptions7382.length >= 2) {
+    const putVar = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: webOptions7382[0].option_id });
+    check('PUT первым вариантом на 7382 → 200', putVar.statusCode === 200, putVar.payload);
     check('после выбора варианта invoice_price = null (счёт больше не активен)', putVar.payload?.item?.invoice_price === null, putVar.payload);
-    check('invoice_restorable = true (единственный invoice-матч)', putVar.payload?.item?.invoice_restorable === true, putVar.payload);
+    check('invoice_restorable = true (запомнили счёт при ≥2 неподтверждённых кандидатах — новому правилу их число не мешает)',
+      putVar.payload?.item?.invoice_restorable === true, putVar.payload);
+
+    // Повторная смена варианта ДО сброса — исходный запомненный счёт не должен затереться
+    // (INSERT OR IGNORE в rememberPrevInvoiceMatch).
+    const putVar2 = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: webOptions7382[1].option_id });
+    check('PUT вторым (другим) вариантом на 7382 → 200', putVar2.statusCode === 200, putVar2.payload);
+    check('invoice_restorable по-прежнему true после повторной смены', putVar2.payload?.item?.invoice_restorable === true, putVar2.payload);
+    const prevRowAfter2ndSwitch = db.prepare('SELECT match_id FROM price_option_prev_match WHERE specification_item_id = 7382').get() as { match_id: number } | undefined;
+    check(`запомненный match_id НЕ перезаписан повторной сменой (ожидание ${invoiceMatchId}, факт ${prevRowAfter2ndSwitch?.match_id})`,
+      prevRowAfter2ndSwitch?.match_id === invoiceMatchId, prevRowAfter2ndSwitch);
 
     const putReset = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: null });
     check('PUT сброс (option_id:null) → selected_option_id = null', putReset.payload?.item?.selected_option_id === null, putReset.payload);
-    check(`ревью п.2: сброс вернул цену счёта — invoice_price = 12345.67 (факт ${putReset.payload?.item?.invoice_price})`,
+    check(`ревью п.2/п.4: сброс вернул цену счёта — invoice_price = 12345.67 (факт ${putReset.payload?.item?.invoice_price})`,
       putReset.payload?.item?.invoice_price === 12345.67, putReset.payload);
     const restoredSel = db.prepare(`SELECT id FROM matched_items WHERE specification_item_id = 7382 AND is_selected = 1`).get() as { id: number } | undefined;
-    check(`восстановлен ТОТ ЖЕ match_id счёта (ожидание ${invoiceMatchId}, факт ${restoredSel?.id})`, restoredSel?.id === invoiceMatchId, restoredSel);
+    check(`восстановлен ТОТ ЖЕ match_id счёта, что был ДО первого выбора варианта (ожидание ${invoiceMatchId}, факт ${restoredSel?.id})`,
+      restoredSel?.id === invoiceMatchId, restoredSel);
+    const prevRowGone = db.prepare('SELECT 1 FROM price_option_prev_match WHERE specification_item_id = 7382').get();
+    check('запись price_option_prev_match удалена после восстановления', !prevRowGone);
+  }
+
+  console.log('\n=== п.4 дозадания: SQL-проверка на копии проектов 14/15 — «выбор варианта → сброс» восстанавливает ТОТ ЖЕ match_id у ВСЕХ invoice-выбранных позиций ===');
+  for (const projectId of [14, 15]) {
+    const invoiceSelected = db.prepare(`
+      SELECT m.id AS match_id, m.specification_item_id AS spec_item_id
+      FROM matched_items m
+      JOIN specification_items si ON si.id = m.specification_item_id
+      WHERE si.project_id = ? AND m.is_selected = 1 AND m.source = 'invoice'
+    `).all(projectId) as Array<{ match_id: number; spec_item_id: number }>;
+    let restoredSame = 0;
+    for (const row of invoiceSelected) {
+      // Симулируем «выбор варианта → сброс» на реальном коде (не переизобретаем правило):
+      // rememberPrevInvoiceMatch запоминает текущий is_selected=1 invoice-матч, затем имитируем
+      // выбор price_list-варианта (is_selected переезжает), затем restorePrevInvoiceMatch.
+      rememberPrevInvoiceMatch(db, row.spec_item_id);
+      db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(row.spec_item_id);
+      restorePrevInvoiceMatch(db, row.spec_item_id);
+      const after = db.prepare('SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1').get(row.spec_item_id) as { id: number } | undefined;
+      if (after?.id === row.match_id) restoredSame++;
+    }
+    check(`проект ${projectId}: восстановлен ТОТ ЖЕ match_id у ВСЕХ invoice-выбранных позиций — ${restoredSame}/${invoiceSelected.length}`,
+      restoredSame === invoiceSelected.length, { total: invoiceSelected.length, restoredSame });
   }
 
   console.log('\n=== ревью п.3: обычный прайс-лист не путается с вариантом экрана ===');

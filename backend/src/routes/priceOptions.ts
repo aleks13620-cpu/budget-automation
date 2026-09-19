@@ -203,7 +203,7 @@ export interface PriceOptionItem {
   /** П.3: представитель выбрал обычный (не этого экрана) прайс-лист — цена оттуда, экран её не
    *  считает своим вариантом (auto_option_id обнулён). */
   other_selected_label: string | null;
-  /** П.2: «сбросить выбор» вернёт цену счёта представителя (findInvoiceRestoreCandidate) —
+  /** П.2: «сбросить выбор» вернёт запомненный (price_option_prev_match) счёт представителя —
    *  фронт меняет подпись ссылки на «вернуть цену из счёта». Только когда selected_option_id
    *  не null (есть что сбрасывать). */
   invoice_restorable: boolean;
@@ -314,6 +314,16 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
     `).all(projectId) as Array<{ id: number }>).map(r => r.id)
   );
 
+  // П.2 дозадания: «вернуть цену из счёта» запоминает исходный invoice-матч (price_option_prev_match),
+  // не угадывает его. invoice_restorable представителя = у него есть запомненная строка.
+  const prevMatchByMember = new Set<number>(
+    (db.prepare(`
+      SELECT ppm.specification_item_id AS id FROM price_option_prev_match ppm
+      JOIN specification_items si ON si.id = ppm.specification_item_id
+      WHERE si.project_id = ?
+    `).all(projectId) as Array<{ id: number }>).map(r => r.id)
+  );
+
   let searched = 0, withPrice = 0, ownPrice = 0, selectedCount = 0;
   const notSearched: Array<{ spec_item_id: number; name: string }> = [];
   const items: PriceOptionItem[] = [];
@@ -403,7 +413,7 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
       invoice_price: invoiceByMember.get(p.id)?.price ?? null,
       invoice_supplier: invoiceByMember.get(p.id)?.supplier ?? null,
       other_selected_label: otherSelectedByMember.get(p.id) ?? null,
-      invoice_restorable: selectedOptionId != null && findInvoiceRestoreCandidate(db, p.id) != null,
+      invoice_restorable: selectedOptionId != null && prevMatchByMember.has(p.id),
       skipped: skipByMember.has(p.id),
       options,
     });
@@ -427,22 +437,30 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   };
 }
 
-// П.2: «вернуть цену из счёта» при сбросе варианта — invoice-матч, который стоял ДО выбора
-// варианта, нигде не хранится отдельной таблицей, поэтому правило восстанавливает его по факту:
-// подтверждённый (is_confirmed=1) матч побеждает; иначе, если у члена РОВНО один invoice-матч —
-// это и есть прежний выбор (спутать не с чем); при ≥2 неподтверждённых — не гадаем, null (как
-// сегодня — позиция остаётся без цены). Проверено SQL на копии прода (проекты 14/15,
-// 19.09.2026): из 30/43 инвойс-выбранных позиций правило точно восстанавливает тот же match.id
-// у 18/14, для остальных возвращает null (неоднозначно) — НИ РАЗУ не восстановило другую строку.
-function findInvoiceRestoreCandidate(db: ReturnType<typeof getDatabase>, memberId: number): number | null {
-  const rows = db.prepare(`
-    SELECT id, is_confirmed FROM matched_items
-    WHERE specification_item_id = ? AND source = 'invoice' AND invoice_item_id IS NOT NULL
-  `).all(memberId) as Array<{ id: number; is_confirmed: number }>;
-  if (rows.length === 0) return null;
-  const confirmed = rows.find(r => r.is_confirmed === 1);
-  if (confirmed) return confirmed.id;
-  return rows.length === 1 ? rows[0].id : null;
+// П.2 дозадания: запоминаем invoice-матч, который стоял ДО первого выбора варианта — не
+// угадываем его. OR IGNORE: если у члена уже есть запомненная строка (вторая, третья смена
+// варианта подряд), исходный выбор не перезаписывается более свежим (на момент второй смены
+// is_selected уже указывает на price_list-вариант, а не на счёт).
+export function rememberPrevInvoiceMatch(db: ReturnType<typeof getDatabase>, memberId: number): void {
+  const current = db.prepare(
+    `SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1 AND source = 'invoice'`
+  ).get(memberId) as { id: number } | undefined;
+  if (!current) return;
+  db.prepare(
+    'INSERT OR IGNORE INTO price_option_prev_match (specification_item_id, match_id) VALUES (?, ?)'
+  ).run(memberId, current.id);
+}
+
+// Сброс варианта — вернуть запомненный счёт, если он ещё существует (matched_items не удалён),
+// и забыть запись. Иначе ничего не восстанавливаем (позиция остаётся без цены, как раньше).
+export function restorePrevInvoiceMatch(db: ReturnType<typeof getDatabase>, memberId: number): void {
+  const prev = db.prepare(
+    'SELECT match_id FROM price_option_prev_match WHERE specification_item_id = ?'
+  ).get(memberId) as { match_id: number } | undefined;
+  if (!prev) return;
+  const stillExists = db.prepare('SELECT id FROM matched_items WHERE id = ?').get(prev.match_id);
+  if (stillExists) setSelectedMatch(db, memberId, prev.match_id);
+  db.prepare('DELETE FROM price_option_prev_match WHERE specification_item_id = ?').run(memberId);
 }
 
 // Член позиции без своей находки под выбранное предложение (тот же source/url/поставщик/цена,
@@ -543,10 +561,8 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
         for (const memberId of members) {
           unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
           db.prepare('DELETE FROM price_option_skip WHERE specification_item_id = ?').run(memberId);
-          // П.2: сброс варианта возвращает цену счёта, если её можно восстановить однозначно
-          // (findInvoiceRestoreCandidate) — иначе позиция остаётся без цены, как раньше.
-          const restoreId = findInvoiceRestoreCandidate(db, memberId);
-          if (restoreId != null) setSelectedMatch(db, memberId, restoreId);
+          // П.2 дозадания: сброс варианта возвращает ЗАПОМНЕННЫЙ (не угаданный) счёт.
+          restorePrevInvoiceMatch(db, memberId);
         }
       })();
     } else if (typeof option_id === 'number') {
@@ -563,6 +579,9 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
 
       db.transaction(() => {
         for (const memberId of members) {
+          // П.2 дозадания: запомнить исходный счёт ДО setSelectedMatch — иначе к моменту записи
+          // is_selected уже переехал бы на price_list-вариант, и current окажется пустым.
+          rememberPrevInvoiceMatch(db, memberId);
           const extId = memberId === chosen.spec_item_id
             ? chosen.id
             : ensureMemberEquivalent(db, projectId, memberId, chosen);

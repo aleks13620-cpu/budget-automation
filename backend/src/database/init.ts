@@ -178,6 +178,16 @@ function initializeDatabase(): void {
         specification_item_id INTEGER PRIMARY KEY REFERENCES specification_items(id) ON DELETE CASCADE,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`,
+      // Ф21 (дозадание): «вернуть цену из счёта» запоминает, а не угадывает — matched_items
+      // source='invoice', выбранный ДО первого выбора варианта на экране «Цены по позициям».
+      // INSERT OR IGNORE в PUT (см. priceOptions.ts) не даёт повторной смене варианта затереть
+      // исходный запомненный счёт; строка удаляется при сбросе (option_id:null), когда счёт
+      // возвращён.
+      `CREATE TABLE IF NOT EXISTS price_option_prev_match (
+        specification_item_id INTEGER PRIMARY KEY REFERENCES specification_items(id) ON DELETE CASCADE,
+        match_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
