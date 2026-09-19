@@ -28,6 +28,7 @@ process.env.ENABLE_OPENROUTER_LLM_MATCHING = '';
 
 /* eslint-disable @typescript-eslint/no-var-requires */
 const { getDatabase, closeDatabase } = require('./src/database/connection');
+require('./src/database/init').initializeDatabase(); // как сервер при старте: миграции (Ф21 — price_option_skip)
 const { parseCsvPriceFile, findSupplierPrice, matchSupplierPriceToProject } = require('./src/services/supplierPriceMatch');
 const { syncSiteVariants } = require('./src/routes/priceSearch');
 const priceListsRouter = require('./src/routes/priceLists').default;

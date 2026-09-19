@@ -43,6 +43,7 @@ process.env.ENABLE_OPENROUTER_LLM_MATCHING = '';
 /* eslint-disable @typescript-eslint/no-var-requires */
 const XLSX = require('xlsx');
 const { getDatabase, closeDatabase } = require('./src/database/connection');
+require('./src/database/init').initializeDatabase(); // как сервер при старте: миграции (Ф21 — price_option_skip)
 const priceListsRouter = require('./src/routes/priceLists').default;
 const matchingRouter = require('./src/routes/matching').default;
 const exportRouter = require('./src/routes/export').default;
