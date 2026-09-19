@@ -112,17 +112,25 @@ async function main(): Promise<void> {
     badPutConnected.statusCode === 400, badPutConnected.payload);
 
   const etmId = (db.prepare('SELECT id FROM supplier_sites WHERE name = ?').get('ЭТМ') as any).id;
+
+  // Ф21.2: скидка Арты разрешена у любого price_source кроме api — ЭТМ (price_source=search,
+  // source_key=NULL) не исключение, source_key на правило больше не влияет. Проверяем ДО
+  // смены price_source ниже, пока ЭТМ ещё реально 'search'.
+  const discountEtm = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { discount_pct: 15 });
+  check(`скидка 15% у ЭТМ (search, не подключён) -> 200 и сохранилась (факт ${discountEtm.statusCode} ${discountEtm.payload?.discount_pct})`,
+    discountEtm.statusCode === 200 && discountEtm.payload.discount_pct === 15, discountEtm.payload);
+  const etmReloaded = db.prepare('SELECT discount_pct FROM supplier_sites WHERE id = ?').get(etmId) as any;
+  check(`скидка ЭТМ сохранилась в базе (факт ${etmReloaded.discount_pct})`, etmReloaded.discount_pct === 15, etmReloaded);
+
   const okPutUnconnected = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { price_source: 'price_file' });
   check(`PUT price_source у ЭТМ (source_key=NULL) -> price_file, 200 (факт ${okPutUnconnected.statusCode} ${okPutUnconnected.payload?.price_source})`,
     okPutUnconnected.statusCode === 200 && okPutUnconnected.payload.price_source === 'price_file', okPutUnconnected.payload);
 
-  const badDiscountEtm = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(etmId) }, { discount_pct: 10 });
-  check(`скидка у ЭТМ (не подключён) -> 400 (факт ${badDiscountEtm.statusCode})`, badDiscountEtm.statusCode === 400, badDiscountEtm.payload);
-
-  // Неватом запаркован (решение CEO 18.09): source_key=NULL, скидка 38 хранится, но сервер её не меняет.
-  const badDiscountNevatom = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
-  check(`скидка у Неватома (не подключён) -> 400 (факт ${badDiscountNevatom.statusCode})`,
-    badDiscountNevatom.statusCode === 400, badDiscountNevatom.payload);
+  // Неватом запаркован (решение CEO 18.09): source_key=NULL, но price_source=site_discount —
+  // не api, поэтому скидка по новому правилу разрешена (в поиск сайт всё равно не включён).
+  const discountNevatom = await call(supplierSitesRouter, '/api/supplier-sites/:id', 'put', { id: String(nevatomId) }, { discount_pct: 40 });
+  check(`скидка у Неватома (не подключён, не api) -> 200 (факт ${discountNevatom.statusCode})`,
+    discountNevatom.statusCode === 200, discountNevatom.payload);
 
   console.log('\n=== 4. POST новой строки ===');
   const created = await call(supplierSitesRouter, '/api/supplier-sites', 'post', {}, { name: 'Новый поставщик', domain: 'new.ru', price_source: 'search' });

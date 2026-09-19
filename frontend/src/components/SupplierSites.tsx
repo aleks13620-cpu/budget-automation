@@ -30,11 +30,6 @@ const ADD_SOURCE_OPTIONS: Array<[string, string]> = [
   ['price_file', SOURCE_LABELS.price_file],
 ];
 
-// Скидка реально применяется воркером только для этих двух источников с подключённым ключом.
-function discountApplies(site: SupplierSite): boolean {
-  return site.source_key != null && (site.price_source === 'open_price' || site.price_source === 'site_discount');
-}
-
 function errorText(e: unknown, fallback: string): string {
   const err = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
   return err || fallback;
@@ -106,14 +101,8 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
       </td>
       <td>
         {isApi ? (
-          <input
-            type="number"
-            value={discountInput}
-            disabled
-            title="цена уже персональная"
-            style={{ width: '70px', background: '#e9ecef', cursor: 'not-allowed' }}
-          />
-        ) : discountApplies(site) ? (
+          <span className="muted" style={{ fontSize: '0.8rem' }}>цена уже ваша</span>
+        ) : (
           <>
             <input
               type="number"
@@ -128,13 +117,6 @@ function SiteRow({ site, onChange }: { site: SupplierSite; onChange: (updated: S
             />
             {discountError && <div style={{ color: '#dc2626', fontSize: '0.75rem' }}>{discountError}</div>}
           </>
-        ) : (
-          <span
-            className="muted"
-            title="к ценам общего поиска и прайсам файлом скидка не применяется"
-          >
-            —
-          </span>
         )}
       </td>
     </tr>

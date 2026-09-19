@@ -22,14 +22,6 @@ function isUnconnectedSource(value: PriceSource): boolean {
 }
 const UNCONNECTED_SOURCES_MESSAGE = 'Для нового поставщика доступно: общий поиск или прайс файлом';
 
-// Источники, у которых скидка договора применяется к цене САЙТА (open_price — базовая цена,
-// site_discount — цена сайта минус скидка); у api цена уже персональная, у search/price_file
-// скидку прикладывать не к чему — там либо общий поиск, либо прайс от менеджера как есть.
-const DISCOUNT_ELIGIBLE_SOURCES = ['open_price', 'site_discount'] as const;
-function isDiscountEligible(source: PriceSource, sourceKey: string | null): boolean {
-  return sourceKey !== null && (DISCOUNT_ELIGIBLE_SOURCES as readonly string[]).includes(source);
-}
-
 type SupplierSiteRow = {
   id: number;
   name: string;
@@ -86,11 +78,11 @@ router.put('/api/supplier-sites/:id', (req: Request, res: Response) => {
     const effectiveSource: PriceSource = price_source !== undefined ? price_source : existing.price_source;
 
     if (discount_pct !== undefined) {
+      // Ф21.2: скидка Арты разрешена при любом price_source, кроме api — там цена уже
+      // персональная. Расчёт «цена → скидка → предварительно» переехал на экран/выгрузку,
+      // источник и подключение (source_key) на это правило больше не влияют.
       if (effectiveSource === 'api') {
         return res.status(400).json({ error: 'У API цена уже персональная' });
-      }
-      if (!isDiscountEligible(effectiveSource, existing.source_key)) {
-        return res.status(400).json({ error: 'К ценам общего поиска и прайсам файлом скидка не применяется' });
       }
       if (typeof discount_pct !== 'number' || !Number.isFinite(discount_pct) || discount_pct < 0 || discount_pct > 90) {
         return res.status(400).json({ error: 'Скидка должна быть числом от 0 до 90' });
