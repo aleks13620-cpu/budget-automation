@@ -11,8 +11,9 @@ import { FeedbackPage } from './pages/FeedbackPage';
 import { GlobalFeedbackPage } from './pages/GlobalFeedbackPage';
 import { MetricsDashboard } from './pages/MetricsDashboard';
 import { MainMetrics } from './pages/MainMetrics';
+import { PriceOptions } from './pages/PriceOptions';
 
-type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all' | 'metrics' | 'main-metrics';
+type Page = 'projects' | 'project' | 'invoice-preview' | 'matching' | 'unit-triggers' | 'spec-editor' | 'feedback' | 'feedback-all' | 'metrics' | 'main-metrics' | 'price-options';
 
 function App() {
   const [page, setPage] = useState<Page>('projects');
@@ -43,6 +44,10 @@ function App() {
 
   const goToMatching = () => {
     setPage('matching');
+  };
+
+  const goToPriceOptions = () => {
+    setPage('price-options');
   };
 
   const goToUnitTriggers = () => {
@@ -121,6 +126,12 @@ function App() {
             <span>Сопоставление</span>
           </>
         )}
+        {page === 'price-options' && (
+          <>
+            <span>/</span>
+            <span>Цены по позициям</span>
+          </>
+        )}
         {page === 'spec-editor' && (
           <>
             <span>/</span>
@@ -140,6 +151,7 @@ function App() {
           onInvoicePreview={goToInvoicePreview}
           onMatching={goToMatching}
           onSpecEditor={goToSpecEditor}
+          onPriceOptions={goToPriceOptions}
         />
       )}
 
@@ -189,6 +201,14 @@ function App() {
       {page === 'spec-editor' && specId && (
         <SpecificationEditor
           specId={specId}
+          onBack={() => goToProject(projectId!, projectName)}
+        />
+      )}
+
+      {page === 'price-options' && projectId && (
+        <PriceOptions
+          projectId={projectId}
+          projectName={projectName}
           onBack={() => goToProject(projectId!, projectName)}
         />
       )}

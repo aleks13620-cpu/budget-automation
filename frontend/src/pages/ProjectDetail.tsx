@@ -61,9 +61,10 @@ interface Props {
   onInvoicePreview: (invoiceId: number) => void;
   onMatching: () => void;
   onSpecEditor: (specId: number) => void;
+  onPriceOptions: () => void;
 }
 
-export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecEditor }: Props) {
+export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecEditor, onPriceOptions }: Props) {
   const [specifications, setSpecifications] = useState<Specification[]>([]);
   const [sections, setSections] = useState<string[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -704,6 +705,9 @@ export function ProjectDetail({ projectId, onInvoicePreview, onMatching, onSpecE
                 : priceSearchStatus === 'running'
                 ? 'Идёт поиск...'
                 : 'Найти цены в интернете'}
+            </button>{' '}
+            <button className="btn btn-secondary" onClick={onPriceOptions}>
+              Цены по позициям
             </button>
             <label style={{ display: 'block', margin: '0.4rem 0 0', fontSize: '0.9rem' }}>
               <input
