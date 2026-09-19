@@ -178,7 +178,7 @@ function sendMatchingRunning(res: Response, projectId: number) {
   return res.status(409).json({ error: 'Matching is running for this project', projectId });
 }
 
-function ensureMatchingNotRunning(projectId: number, res: Response): boolean {
+export function ensureMatchingNotRunning(projectId: number, res: Response): boolean {
   if (isMatchingRunActive(projectId)) {
     sendMatchingRunning(res, projectId);
     return false;

@@ -41,6 +41,7 @@ const priceOptionsRouter = require('./src/routes/priceOptions').default;
 const priceSearchRouter = require('./src/routes/priceSearch').default;
 const { UPSERT_EXTERNAL_PRICE, PRICE_FIELDS, toBindable, nowIso } = require('./src/routes/priceSearch');
 const { classifySpecPositions } = require('./src/services/specClassifier');
+const { acquireMatchingRun, releaseMatchingRun } = require('./src/services/matchingRunLock');
 
 let pass = 0;
 let fail = 0;
@@ -133,6 +134,57 @@ async function main(): Promise<void> {
       price: 2000 + seq, currency: 'RUB', status: 'found',
     });
   }
+
+  console.log('\n=== ревью п.1: позиция 7428/7446 — представитель 7428 дороже, у члена 7446 синтетика дешевле ===');
+  insertExternalPrice({
+    business_key: 'f21_review_p1_rep_7428', project_id: 16, spec_item_id: 7428,
+    query_name: 'ревью п.1 представитель', source: 'web_search', source_url: 'https://rep-price.example/item',
+    snapshot_date: today, supplier_name: 'Представитель', name: 'ревью п.1', unit: 'шт',
+    price: 50000, currency: 'RUB', status: 'found',
+  });
+  insertExternalPrice({
+    business_key: 'f21_review_p1_cheap_7446', project_id: 16, spec_item_id: 7446,
+    query_name: 'ревью п.1 не представитель, дешевле', source: 'web_search', source_url: 'https://not-representative-cheap.example/item',
+    snapshot_date: today, supplier_name: 'Не представитель, но дешевле', name: 'ревью п.1', unit: 'шт',
+    price: 100, currency: 'RUB', status: 'found',
+  });
+  const repRow7428 = db.prepare(
+    `SELECT id FROM external_prices WHERE business_key = 'f21_review_p1_rep_7428'`
+  ).get() as { id: number };
+
+  console.log('\n=== ревью п.2: синтетика — цена счёта у позиции 7382 (единственный invoice-матч) ===');
+  db.prepare(`INSERT OR IGNORE INTO suppliers (name) VALUES ('Синтетика Счёт ООО')`).run();
+  const invSupplierId = (db.prepare(`SELECT id FROM suppliers WHERE name = 'Синтетика Счёт ООО'`).get() as { id: number }).id;
+  const invoiceId = Number(db.prepare(
+    `INSERT INTO invoices (project_id, supplier_id, invoice_number, status) VALUES (16, ?, 'F21-REVIEW', 'processed')`
+  ).run(invSupplierId).lastInsertRowid);
+  const invoiceItemId = Number(db.prepare(
+    `INSERT INTO invoice_items (invoice_id, name, price, quantity) VALUES (?, 'ревью п.2', 12345.67, 1)`
+  ).run(invoiceId).lastInsertRowid);
+  const invoiceMatchId = Number(db.prepare(`
+    INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type,
+                               match_reason, is_confirmed, is_selected, source)
+    VALUES (7382, ?, 1.0, 'invoice', 'ревью теста', 0, 1, 'invoice')
+  `).run(invoiceItemId).lastInsertRowid);
+
+  console.log('\n=== ревью п.3: синтетика — на позиции 7383 выбран ОБЫЧНЫЙ прайс-лист (не вариант экрана) ===');
+  const someExternalId = (db.prepare(`SELECT id FROM external_prices WHERE project_id = 16 LIMIT 1`).get() as { id: number }).id;
+  db.prepare(`INSERT OR IGNORE INTO suppliers (name) VALUES ('Обычный Поставщик ООО')`).run();
+  const plSupplierId = (db.prepare(`SELECT id FROM suppliers WHERE name = 'Обычный Поставщик ООО'`).get() as { id: number }).id;
+  const plId = Number(db.prepare(
+    `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (16, ?, 'обычный_прайс.xlsx', '/uploads/обычный_прайс.xlsx', 'processed')`
+  ).run(plSupplierId).lastInsertRowid);
+  // row_index намеренно совпадает с ЧУЖИМ external_prices.id (someExternalId) — п.3 проверяет,
+  // что даже такое совпадение числа не спутает обычный прайс с вариантом экрана: решает
+  // file_path (не входит в OPTION_SOURCES), а не совпадение row_index.
+  const pliId = Number(db.prepare(
+    `INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, NULL, 'ревью п.3', 'шт', 999.99, ?)`
+  ).run(plId, someExternalId).lastInsertRowid);
+  const plMatchId = Number(db.prepare(`
+    INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
+                               match_reason, is_confirmed, is_selected, source)
+    VALUES (7383, ?, 1.0, 'price_list_manual', 'ревью теста', 0, 1, 'price_list')
+  `).run(pliId).lastInsertRowid);
 
   console.log('\n=== стейл-выбор: выбираем старую строку (08-26) у позиции 7385, свежий срез — 09-11 ===');
   const stalePut = await call(
@@ -238,6 +290,69 @@ async function main(): Promise<void> {
   check('строка 357 есть в options со stale:true', staleOpt?.stale === true, staleOpt);
   check('остальные (свежие) варианты позиции 7385 stale:false',
     item7385?.options.filter((o: any) => o.option_id !== 357).every((o: any) => o.stale === false));
+
+  console.log('\n=== ревью п.1: auto_option_id = своя строка представителя, а не минимум по всем members ===');
+  const item7428 = result16.items.find((it: any) => it.spec_item_id === 7428);
+  check('позиция 7428/7446 присутствует', !!item7428, item7428);
+  check(`auto_option_id = строка ПРЕДСТАВИТЕЛЯ 7428 (id=${repRow7428.id}), НЕ синтетический дешёвый вариант члена 7446 (факт ${item7428?.auto_option_id})`,
+    item7428?.auto_option_id === repRow7428.id, item7428);
+  // auto_note проверяем на позиции 7560/7589 (не 7428/7446): у 7446 своя web_search-строка ЕСТЬ
+  // (синтетика выше) — выгрузка возьмёт ЕЁ через ext_ranked по её собственному spec_item_id,
+  // член покрыт (пусть и другой ценой, не той, что на экране у представителя) — auto_note не
+  // должен пугать оператора там, где у экспорта и так будет цена. А вот у 7589 (см. «г. PUT на
+  // позицию с ≥2 members» ниже) своих web_search-строк нет вовсе и до выбора там варианта нет —
+  // ровно тот случай, когда auto_note обязан предупредить.
+  const item7560ForNote = result16.items.find((it: any) => it.spec_item_id === 7560);
+  check('auto_note у позиции 7560/7589 предупреждает о неполном покрытии (у 7589 нет своей web_search-строки, нет выбора)',
+    typeof item7560ForNote?.auto_note === 'string' && item7560ForNote.auto_note.includes('1 из 2'), item7560ForNote?.auto_note);
+
+  console.log('\n=== ревью п.2: invoice_price/invoice_supplier видны, пока Иван не выбрал вариант ===');
+  const item7382 = result16.items.find((it: any) => it.spec_item_id === 7382);
+  check('позиция 7382 присутствует', !!item7382, item7382);
+  check(`invoice_price = 12345.67 (факт ${item7382?.invoice_price})`, item7382?.invoice_price === 12345.67, item7382);
+  check(`invoice_supplier = 'Синтетика Счёт ООО' (факт ${item7382?.invoice_supplier})`, item7382?.invoice_supplier === 'Синтетика Счёт ООО', item7382);
+  check('selected_option_id = null (счёт — не выбор Ивана, экран его не подменяет)', item7382?.selected_option_id === null, item7382);
+
+  console.log('\n=== ревью п.2: выбор варианта прячет цену счёта, сброс — единственный invoice-матч — возвращает её ===');
+  const web7382 = item7382?.options.find((o: any) => o.source === 'web_search');
+  check('у позиции 7382 есть web_search-вариант', !!web7382, item7382);
+  if (web7382) {
+    const putVar = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: web7382.option_id });
+    check('PUT вариантом на 7382 → 200', putVar.statusCode === 200, putVar.payload);
+    check('после выбора варианта invoice_price = null (счёт больше не активен)', putVar.payload?.item?.invoice_price === null, putVar.payload);
+    check('invoice_restorable = true (единственный invoice-матч)', putVar.payload?.item?.invoice_restorable === true, putVar.payload);
+
+    const putReset = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: null });
+    check('PUT сброс (option_id:null) → selected_option_id = null', putReset.payload?.item?.selected_option_id === null, putReset.payload);
+    check(`ревью п.2: сброс вернул цену счёта — invoice_price = 12345.67 (факт ${putReset.payload?.item?.invoice_price})`,
+      putReset.payload?.item?.invoice_price === 12345.67, putReset.payload);
+    const restoredSel = db.prepare(`SELECT id FROM matched_items WHERE specification_item_id = 7382 AND is_selected = 1`).get() as { id: number } | undefined;
+    check(`восстановлен ТОТ ЖЕ match_id счёта (ожидание ${invoiceMatchId}, факт ${restoredSel?.id})`, restoredSel?.id === invoiceMatchId, restoredSel);
+  }
+
+  console.log('\n=== ревью п.3: обычный прайс-лист не путается с вариантом экрана ===');
+  const item7383 = result16.items.find((it: any) => it.spec_item_id === 7383);
+  check('позиция 7383 присутствует', !!item7383, item7383);
+  check(`other_selected_label = 'выбрана цена из прайса Обычный Поставщик ООО: 999,99 ₽' (факт ${JSON.stringify(item7383?.other_selected_label)})`,
+    item7383?.other_selected_label === 'выбрана цена из прайса Обычный Поставщик ООО: 999,99 ₽', item7383);
+  check('selected_option_id = null (обычный прайс — не вариант этого экрана)', item7383?.selected_option_id === null, item7383);
+  check('auto_option_id = null (есть явный выбор — пусть и обычным прайсом)', item7383?.auto_option_id === null, item7383);
+
+  console.log('\n=== ревью п.4: skip НЕ трогает обычный прайс-лист (снимает только варианты OPTION_SOURCES) ===');
+  const putSkip7383 = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7383' }, { skip: true });
+  check('PUT skip на 7383 → 200', putSkip7383.statusCode === 200, putSkip7383.payload);
+  const stillSelected = db.prepare(`SELECT is_selected FROM matched_items WHERE id = ?`).get(plMatchId) as { is_selected: number };
+  check(`обычный прайс остался выбранным после skip (is_selected=1, факт ${stillSelected.is_selected})`, stillSelected.is_selected === 1, stillSelected);
+  db.prepare(`DELETE FROM price_option_skip WHERE specification_item_id = 7383`).run();
+
+  console.log('\n=== ревью п.5: PUT блокируется во время matching (ensureMatchingNotRunning, тот же импорт, что matching.ts) ===');
+  acquireMatchingRun(16);
+  const putDuringRun = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7383' }, { skip: true });
+  check(`PUT во время активного matching → 409 (факт ${putDuringRun.statusCode})`, putDuringRun.statusCode === 409, putDuringRun.payload);
+  releaseMatchingRun(16);
+  const putAfterRun = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7383' }, { skip: true });
+  check(`PUT после освобождения matching → 200 (факт ${putAfterRun.statusCode})`, putAfterRun.statusCode === 200, putAfterRun.payload);
+  db.prepare(`DELETE FROM price_option_skip WHERE specification_item_id = 7383`).run();
 
   console.log('\n=== г. PUT: выбор варианта / сброс / skip (одна позиция) ===');
   const item7553 = result16.items.find((it: any) => it.spec_item_id === 7553);

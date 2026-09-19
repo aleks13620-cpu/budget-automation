@@ -5,6 +5,7 @@ import {
   getOrCreatePriceListMatchId, setSelectedMatch, WEB_MATCH_TYPE,
   UPSERT_EXTERNAL_PRICE, PRICE_FIELDS, toBindable, nowIso,
 } from './priceSearch';
+import { ensureMatchingNotRunning } from './matching';
 
 /**
  * Ф21.1 — «API вариантов цены». Снабженец Иван на одном экране видит у каждой позиции
@@ -38,6 +39,12 @@ const REASON_BY_GROUP: Record<string, string> = {
   'D. без марки': 'нет марки/артикула — искать не по чему',
 };
 
+// Источники экрана «Цены по позициям» — единственные, чьи price_list_items считаются вариантом
+// ЭТОГО экрана (row_index = external_prices.id, file_path = source, см. insertPriceListVariant
+// в priceSearch.ts). Обычный прайс-лист поставщика (файл, загруженный оператором) под эти
+// значения file_path никогда не попадает — имя файла другое.
+const OPTION_SOURCES = ['web_search', 'supplier_price', 'rusklimat_api', 'santech_price'] as const;
+
 function priceTypeForSource(source: string): PriceType {
   if (source === 'rusklimat_api' || source === 'supplier_price') return 'own';
   if (source === 'santech_price') return 'base';
@@ -48,6 +55,10 @@ type SiteRow = {
   id: number; name: string; domain: string | null; price_source: string;
   source_key: string | null; discount_pct: number;
 };
+
+function fmtRub(n: number): string {
+  return `${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+}
 
 function hostOf(url: string): string | null {
   try {
@@ -183,6 +194,19 @@ export interface PriceOptionItem {
   reason_not_searched: string | null;
   selected_option_id: number | null;
   auto_option_id: number | null;
+  /** П.1: непусто, если у части членов позиции выгрузка ничего не подставит без выбора. */
+  auto_note: string | null;
+  /** П.2: цена счёта, которую сейчас реально возьмёт выгрузка (exportPricing.ts), если Иван
+   *  вариант не выбирал — только когда у представителя выбран matched_items source='invoice'. */
+  invoice_price: number | null;
+  invoice_supplier: string | null;
+  /** П.3: представитель выбрал обычный (не этого экрана) прайс-лист — цена оттуда, экран её не
+   *  считает своим вариантом (auto_option_id обнулён). */
+  other_selected_label: string | null;
+  /** П.2: «сбросить выбор» вернёт цену счёта представителя (findInvoiceRestoreCandidate) —
+   *  фронт меняет подпись ссылки на «вернуть цену из счёта». Только когда selected_option_id
+   *  не null (есть что сбрасывать). */
+  invoice_restorable: boolean;
   skipped: boolean;
   options: PriceOption[];
 }
@@ -239,16 +263,47 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   // расходятся).
   const anySelectedByMember = new Set<number>();
   const selectedByMember = new Map<number, number>();
+  // П.3: matched_items(source='price_list') выбор — вариант ЭТОГО экрана, только если
+  // price_lists.file_path — один из 4 источников экрана (OPTION_SOURCES) И row_index указывает
+  // на СВОЮ строку external_prices того же проекта/позиции (та же связка, что использует
+  // getOrCreatePriceListMatchId/exportPricing.ts). Иначе — обычный прайс-лист поставщика,
+  // отдельный текст (otherSelectedByMember), не вариант экрана.
+  const otherSelectedByMember = new Map<number, string>();
+  // П.2: цена счёта, которую реально возьмёт выгрузка — только когда у представителя сейчас
+  // выбран matched_items source='invoice' (тот же join, что exportPricing.ts делает для строк
+  // с m.source='invoice').
+  const invoiceByMember = new Map<number, { price: number; supplier: string | null }>();
   const selectedRows = db.prepare(`
-    SELECT si.id AS spec_item_id, m.source AS m_source, pli.row_index AS row_index
+    SELECT si.id AS spec_item_id, m.source AS m_source, pli.row_index AS row_index,
+           pl.file_path AS file_path, pli.price AS pli_price, pls.name AS pl_supplier_name,
+           ep.id AS ep_id, ii.price AS invoice_price, isup.name AS invoice_supplier_name
     FROM matched_items m
     JOIN specification_items si ON si.id = m.specification_item_id
     LEFT JOIN price_list_items pli ON pli.id = m.price_list_item_id
+    LEFT JOIN price_lists pl ON pl.id = pli.price_list_id
+    LEFT JOIN suppliers pls ON pls.id = pl.supplier_id
+    LEFT JOIN external_prices ep ON ep.id = pli.row_index AND ep.project_id = si.project_id AND ep.spec_item_id = si.id
+    LEFT JOIN invoice_items ii ON (m.source = 'invoice') AND ii.id = m.invoice_item_id
+    LEFT JOIN invoices inv ON inv.id = ii.invoice_id
+    LEFT JOIN suppliers isup ON isup.id = inv.supplier_id
     WHERE si.project_id = ? AND m.is_selected = 1
-  `).all(projectId) as Array<{ spec_item_id: number; m_source: string; row_index: number | null }>;
+  `).all(projectId) as Array<{
+    spec_item_id: number; m_source: string; row_index: number | null; file_path: string | null;
+    pli_price: number | null; pl_supplier_name: string | null; ep_id: number | null;
+    invoice_price: number | null; invoice_supplier_name: string | null;
+  }>;
   for (const r of selectedRows) {
     anySelectedByMember.add(r.spec_item_id);
-    if (r.m_source === 'price_list' && r.row_index != null) selectedByMember.set(r.spec_item_id, r.row_index);
+    if (r.m_source === 'price_list' && r.row_index != null) {
+      const isOptionSource = r.file_path != null && (OPTION_SOURCES as readonly string[]).includes(r.file_path) && r.ep_id != null;
+      if (isOptionSource) {
+        selectedByMember.set(r.spec_item_id, r.row_index);
+      } else if (r.pli_price != null) {
+        otherSelectedByMember.set(r.spec_item_id, `выбрана цена из прайса ${r.pl_supplier_name || 'без названия'}: ${fmtRub(r.pli_price)}`);
+      }
+    } else if (r.m_source === 'invoice' && r.invoice_price != null) {
+      invoiceByMember.set(r.spec_item_id, { price: r.invoice_price, supplier: r.invoice_supplier_name });
+    }
   }
 
   const skipByMember = new Set<number>(
@@ -285,8 +340,6 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
     }
 
     let hasOwn = false;
-    let autoOptionId: number | null = null;
-    let autoPrice = Infinity;
     const options: PriceOption[] = [];
     for (const rows of groups.values()) {
       // Отображаемая строка группы — своя строка представителя, если у него есть это
@@ -295,22 +348,39 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
       const opt = buildOption(sites, display, false);
       if (opt.price_type === 'own') hasOwn = true;
       options.push(opt);
-      // Автоподстановка выгрузки (exportPricing.ts:130-167,213) — минимальная web_search-цена
-      // последнего среза; теперь минимум берём по всем members, а не только по представителю.
-      if (display.source === WEB_MATCH_TYPE && display.price < autoPrice) {
-        autoPrice = display.price;
-        autoOptionId = display.id;
-      }
     }
     if (hasOwn) ownPrice++;
+
+    // П.1: автоподстановка выгрузки — ровно та строка, которую подставит exportPricing.ts
+    // (ext_ranked) ПРЕДСТАВИТЕЛЮ: его собственные web_search-строки последнего среза, price ASC,
+    // id ASC. Минимум по ВСЕМ members (как было) обещал бы этому конкретному члену чужую цену,
+    // которую выгрузка на самом деле возьмёт с другого member — экран должен обещать то, что
+    // реально подставится.
+    const ownWebSearchRows = (optionsByMember.get(p.id) ?? [])
+      .filter(r => r.source === WEB_MATCH_TYPE)
+      .slice()
+      .sort((a, b) => a.price - b.price || a.id - b.id);
+    const autoOptionId = ownWebSearchRows.length > 0 ? ownWebSearchRows[0].id : null;
+
+    // auto_note: члены позиции, которым выгрузка НЕ подставит цену без явного выбора Ивана —
+    // нет своих web_search found-строк последнего среза И нет выбора/счёта (anySelectedByMember,
+    // источник-агностично — invoice тоже считается). Показываем только когда есть из чего
+    // выбирать (options.length>0) — иначе это не «выберите вариант», а «цена не найдена»
+    // (уже отдельным текстом).
+    const uncoveredMembers = p.memberIds.filter(mid =>
+      !anySelectedByMember.has(mid) && !(optionsByMember.get(mid) ?? []).some(r => r.source === WEB_MATCH_TYPE)
+    ).length;
+    const autoNote = options.length > 0 && uncoveredMembers > 0
+      ? `в выгрузке цена будет только у ${p.memberIds.length - uncoveredMembers} из ${p.memberIds.length} строк этой позиции — выберите вариант, чтобы заполнить все`
+      : null;
 
     const selectedOptionId = selectedByMember.get(p.id) ?? null;
     // Устаревший выбор: строка выбрана, но в последний срез уже не входит (свежий поиск её не
     // вернул) — не прячем результат прошлого выбора Ивана, добавляем отдельно со stale:true.
     if (selectedOptionId != null && !options.some(o => o.option_id === selectedOptionId)) {
       const staleRow = db.prepare(
-        'SELECT id, spec_item_id, source, source_url, supplier_name, price, snapshot_date FROM external_prices WHERE id = ?'
-      ).get(selectedOptionId) as OptionRow | undefined;
+        'SELECT id, spec_item_id, source, source_url, supplier_name, price, snapshot_date FROM external_prices WHERE id = ? AND project_id = ?'
+      ).get(selectedOptionId, projectId) as OptionRow | undefined;
       if (staleRow) options.push(buildOption(sites, staleRow, true));
     }
     if (selectedOptionId != null) selectedCount++;
@@ -329,6 +399,11 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
       reason_not_searched: isSearched ? null : (REASON_BY_GROUP[p.group] ?? 'не искали'),
       selected_option_id: selectedOptionId,
       auto_option_id: !anySelectedByMember.has(p.id) ? autoOptionId : null,
+      auto_note: autoNote,
+      invoice_price: invoiceByMember.get(p.id)?.price ?? null,
+      invoice_supplier: invoiceByMember.get(p.id)?.supplier ?? null,
+      other_selected_label: otherSelectedByMember.get(p.id) ?? null,
+      invoice_restorable: selectedOptionId != null && findInvoiceRestoreCandidate(db, p.id) != null,
       skipped: skipByMember.has(p.id),
       options,
     });
@@ -350,6 +425,24 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
     items,
     not_searched_items: notSearched,
   };
+}
+
+// П.2: «вернуть цену из счёта» при сбросе варианта — invoice-матч, который стоял ДО выбора
+// варианта, нигде не хранится отдельной таблицей, поэтому правило восстанавливает его по факту:
+// подтверждённый (is_confirmed=1) матч побеждает; иначе, если у члена РОВНО один invoice-матч —
+// это и есть прежний выбор (спутать не с чем); при ≥2 неподтверждённых — не гадаем, null (как
+// сегодня — позиция остаётся без цены). Проверено SQL на копии прода (проекты 14/15,
+// 19.09.2026): из 30/43 инвойс-выбранных позиций правило точно восстанавливает тот же match.id
+// у 18/14, для остальных возвращает null (неоднозначно) — НИ РАЗУ не восстановило другую строку.
+function findInvoiceRestoreCandidate(db: ReturnType<typeof getDatabase>, memberId: number): number | null {
+  const rows = db.prepare(`
+    SELECT id, is_confirmed FROM matched_items
+    WHERE specification_item_id = ? AND source = 'invoice' AND invoice_item_id IS NOT NULL
+  `).all(memberId) as Array<{ id: number; is_confirmed: number }>;
+  if (rows.length === 0) return null;
+  const confirmed = rows.find(r => r.is_confirmed === 1);
+  if (confirmed) return confirmed.id;
+  return rows.length === 1 ? rows[0].id : null;
 }
 
 // Член позиции без своей находки под выбранное предложение (тот же source/url/поставщик/цена,
@@ -416,6 +509,7 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
 
     const project = db.prepare('SELECT id FROM projects WHERE id = ?').get(projectId);
     if (!project) return res.status(404).json({ error: 'Проект не найден' });
+    if (!ensureMatchingNotRunning(projectId, res)) return;
 
     const positions = classifySpecPositions({ projectId }, db);
     const position = positions.find(p => p.memberIds.includes(clickedId));
@@ -424,22 +518,35 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
 
     const { option_id, skip } = req.body ?? {};
 
+    // П.4: снимаем is_selected только у price_list-вариантов ЭТОГО экрана (file_path — один из
+    // OPTION_SOURCES) — обычный, вручную выбранный прайс-лист поставщика этот UPDATE не трогает.
+    const unselectOptionSourceMatch = db.prepare(`
+      UPDATE matched_items SET is_selected = 0
+      WHERE specification_item_id = ? AND source = 'price_list' AND id IN (
+        SELECT m2.id FROM matched_items m2
+        JOIN price_list_items pli2 ON pli2.id = m2.price_list_item_id
+        JOIN price_lists pl2 ON pl2.id = pli2.price_list_id
+        WHERE m2.specification_item_id = ? AND m2.is_selected = 1
+          AND pl2.file_path IN (${OPTION_SOURCES.map(() => '?').join(',')})
+      )
+    `);
+
     if (skip === true) {
       db.transaction(() => {
         for (const memberId of members) {
-          db.prepare(
-            `UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ? AND source = 'price_list'`
-          ).run(memberId);
+          unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
           db.prepare('INSERT OR IGNORE INTO price_option_skip (specification_item_id) VALUES (?)').run(memberId);
         }
       })();
     } else if (option_id === null) {
       db.transaction(() => {
         for (const memberId of members) {
-          db.prepare(
-            `UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ? AND source = 'price_list'`
-          ).run(memberId);
+          unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
           db.prepare('DELETE FROM price_option_skip WHERE specification_item_id = ?').run(memberId);
+          // П.2: сброс варианта возвращает цену счёта, если её можно восстановить однозначно
+          // (findInvoiceRestoreCandidate) — иначе позиция остаётся без цены, как раньше.
+          const restoreId = findInvoiceRestoreCandidate(db, memberId);
+          if (restoreId != null) setSelectedMatch(db, memberId, restoreId);
         }
       })();
     } else if (typeof option_id === 'number') {

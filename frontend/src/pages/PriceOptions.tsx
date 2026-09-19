@@ -36,6 +36,11 @@ interface PriceOptionItem {
   reason_not_searched: string | null;
   selected_option_id: number | null;
   auto_option_id: number | null;
+  auto_note: string | null;
+  invoice_price: number | null;
+  invoice_supplier: string | null;
+  other_selected_label: string | null;
+  invoice_restorable: boolean;
   skipped: boolean;
   options: PriceOption[];
 }
@@ -290,13 +295,29 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
                       style={{ fontSize: '0.8rem', color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }}
                       onClick={() => applyChoice(item.spec_item_id, { option_id: null })}
                     >
-                      сбросить выбор
+                      {item.invoice_restorable ? 'вернуть цену из счёта' : 'сбросить выбор'}
                     </span>
                   )}
                 </div>
 
+                {item.auto_note && (
+                  <p className="muted" style={{ fontSize: '0.75rem', margin: '0.15rem 0' }}>{item.auto_note}</p>
+                )}
+
                 {!item.searched && (
                   <p className="muted" style={{ fontSize: '0.8rem', margin: '0.25rem 0' }}>{item.reason_not_searched}</p>
+                )}
+
+                {item.selected_option_id == null && !item.skipped && item.invoice_price != null && (
+                  <p style={{ fontSize: '0.8rem', margin: '0.25rem 0', background: '#eff6ff', padding: '0.3rem 0.5rem', borderRadius: '4px' }}>
+                    Сейчас в выгрузке — цена из счёта: {fmtPrice(item.invoice_price)}{item.invoice_supplier ? ` (${item.invoice_supplier})` : ''}
+                  </p>
+                )}
+
+                {item.other_selected_label && (
+                  <p style={{ fontSize: '0.8rem', margin: '0.25rem 0', background: '#eff6ff', padding: '0.3rem 0.5rem', borderRadius: '4px' }}>
+                    {item.other_selected_label}
+                  </p>
                 )}
 
                 {item.options.length === 0 ? (
@@ -375,7 +396,7 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
                   </table>
                 )}
 
-                {checkedId === null && item.options.length > 0 && (
+                {checkedId === null && item.options.length > 0 && item.invoice_price == null && (
                   <p className="muted" style={{ fontSize: '0.75rem', margin: '0.25rem 0 0' }}>цена не выбрана</p>
                 )}
               </div>
