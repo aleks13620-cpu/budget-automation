@@ -20,6 +20,7 @@ import gigachatRoutes from './routes/gigachat';
 import metricsDashboardRoutes, { invalidateDashboardCache } from './routes/metricsDashboard';
 import priceSearchRoutes from './routes/priceSearch';
 import supplierSitesRoutes from './routes/supplierSites';
+import priceOptionsRoutes from './routes/priceOptions';
 
 dotenv.config();
 
@@ -107,6 +108,7 @@ app.use(gigachatRoutes);
 app.use(metricsDashboardRoutes);
 app.use(priceSearchRoutes);
 app.use(supplierSitesRoutes);
+app.use(priceOptionsRoutes);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

@@ -93,6 +93,103 @@ export function syncSiteVariants(db: ReturnType<typeof getDatabase>, projectId: 
   for (const source of sources) syncOneSourceVariants(db, projectId, source);
 }
 
+type WantedRow = {
+  id: number; spec_item_id: number; supplier_name: string | null; source_url: string;
+  name: string; article: string | null; unit: string | null; price: number;
+};
+
+// Одна найденная цена (по источнику) → позиция «чужого» прайс-листа + вариант в сопоставлении.
+// Вынесено из syncOneSourceVariants: тот же код нужен Ф21.1 (PUT /price-options/:specItemId),
+// когда оператор выбирает вариант, который ещё не rn=1 своего источника/среза и в
+// price_list_items его пока нет. Возвращает id созданной строки matched_items.
+export function insertPriceListVariant(
+  db: ReturnType<typeof getDatabase>,
+  projectId: number,
+  source: string,
+  w: WantedRow,
+): number {
+  const findSupplier = db.prepare('SELECT id FROM suppliers WHERE name = ?');
+  const insertSupplier = db.prepare('INSERT OR IGNORE INTO suppliers (name) VALUES (?)');
+  const findList = db.prepare('SELECT id FROM price_lists WHERE project_id = ? AND file_path = ? AND supplier_id = ?');
+  const insertList = db.prepare(
+    `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, ?, ?, ?)`
+  );
+  const insertItem = db.prepare(
+    'INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+  const matchReason = source === WEB_MATCH_TYPE ? 'Цена с сайта' : 'Цена из прайса поставщика';
+  const insertMatch = db.prepare(`
+    INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
+                               match_reason, is_confirmed, is_selected, source)
+    VALUES (?, ?, 1.0, ?, ?, 0, 0, 'price_list')
+  `);
+  let seller = (w.supplier_name || '').trim();
+  if (!seller) { try { seller = new URL(w.source_url).hostname; } catch { seller = 'сайт без названия'; } }
+  insertSupplier.run(seller);
+  const supplierId = (findSupplier.get(seller) as { id: number }).id;
+  const list = findList.get(projectId, source, supplierId) as { id: number } | undefined;
+  const listName = source === WEB_MATCH_TYPE ? `Сайт ${seller}` : seller;
+  const listId = list?.id
+    ?? Number(insertList.run(projectId, supplierId, listName, source, source).lastInsertRowid);
+  const itemId = Number(insertItem.run(listId, w.article, w.name, w.unit, w.price, w.id).lastInsertRowid);
+  return Number(insertMatch.run(w.spec_item_id, itemId, source, matchReason).lastInsertRowid);
+}
+
+// Ф21.1: найти (или создать) вариант matched_items(source='price_list') для конкретной строки
+// external_prices — оператор мог выбрать не rn=1 своего источника/среза, и syncOneSourceVariants
+// её ещё не заводил. Пара price_list_item+matched_items ищется по row_index = external_prices.id
+// внутри прайс-листа этого source и проекта — тот же ключ, что использует syncOneSourceVariants.
+export function getOrCreatePriceListMatchId(
+  db: ReturnType<typeof getDatabase>,
+  projectId: number,
+  extPriceId: number,
+): number {
+  const ext = db.prepare(`
+    SELECT id, spec_item_id, source, supplier_name, source_url, name, article, unit, price
+    FROM external_prices WHERE id = ? AND project_id = ? AND status = 'found' AND price IS NOT NULL
+  `).get(extPriceId, projectId) as WantedRow & { source: string } | undefined;
+  if (!ext) throw new Error(`external_prices ${extPriceId} не найдена в проекте ${projectId} или без цены`);
+
+  const existing = db.prepare(`
+    SELECT pli.id AS pli_id, m.id AS match_id
+    FROM price_list_items pli
+    JOIN price_lists pl ON pl.id = pli.price_list_id
+    LEFT JOIN matched_items m ON m.price_list_item_id = pli.id AND m.source = 'price_list'
+    WHERE pl.project_id = ? AND pl.file_path = ? AND pli.row_index = ?
+  `).get(projectId, ext.source, ext.id) as { pli_id: number; match_id: number | null } | undefined;
+
+  if (existing?.match_id) return existing.match_id;
+  if (existing) {
+    // price_list_item есть, а matched_items — нет (не должно случаться в норме, но не падаем):
+    // достроить только недостающую половину.
+    const matchReason = ext.source === WEB_MATCH_TYPE ? 'Цена с сайта' : 'Цена из прайса поставщика';
+    return Number(db.prepare(`
+      INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
+                                 match_reason, is_confirmed, is_selected, source)
+      VALUES (?, ?, 1.0, ?, ?, 0, 0, 'price_list')
+    `).run(ext.spec_item_id, existing.pli_id, ext.source, matchReason).lastInsertRowid);
+  }
+  return insertPriceListVariant(db, projectId, ext.source, ext);
+}
+
+// Единственный выбранный вариант позиции — ровно код, который был инлайн в PUT
+// /api/matching/select/:id (routes/matching.ts). Вынесено, чтобы Ф21.1
+// (PUT /api/projects/:id/price-options/:specItemId) выбирала вариант тем же способом,
+// а не второй копией этих двух UPDATE.
+export function setSelectedMatch(
+  db: ReturnType<typeof getDatabase>,
+  specificationItemId: number,
+  matchId: number,
+): void {
+  db.prepare(
+    'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
+  ).run(specificationItemId);
+
+  db.prepare(
+    'UPDATE matched_items SET is_selected = 1 WHERE id = ?'
+  ).run(matchId);
+}
+
 // match_type = source: подпись слоя 1 (WEB_MATCH_TYPE = 'web_search', ниже) продолжает считать
 // только автопоиск по интернету — прайсы поставщиков в неё не попадают (критерий 4 Ф12).
 function syncOneSourceVariants(db: ReturnType<typeof getDatabase>, projectId: number, source: string): void {
@@ -150,33 +247,9 @@ function syncOneSourceVariants(db: ReturnType<typeof getDatabase>, projectId: nu
       }
     }
 
-    const findSupplier = db.prepare('SELECT id FROM suppliers WHERE name = ?');
-    const insertSupplier = db.prepare('INSERT OR IGNORE INTO suppliers (name) VALUES (?)');
-    const findList = db.prepare('SELECT id FROM price_lists WHERE project_id = ? AND file_path = ? AND supplier_id = ?');
-    const insertList = db.prepare(
-      `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, ?, ?, ?)`
-    );
-    const insertItem = db.prepare(
-      'INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, ?, ?, ?, ?, ?)'
-    );
-    const matchReason = source === WEB_MATCH_TYPE ? 'Цена с сайта' : 'Цена из прайса поставщика';
-    const insertMatch = db.prepare(`
-      INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type,
-                                 match_reason, is_confirmed, is_selected, source)
-      VALUES (?, ?, 1.0, ?, ?, 0, 0, 'price_list')
-    `);
     for (const w of wanted) {
       if (seen.has(w.id)) continue;
-      let seller = (w.supplier_name || '').trim();
-      if (!seller) { try { seller = new URL(w.source_url).hostname; } catch { seller = 'сайт без названия'; } }
-      insertSupplier.run(seller);
-      const supplierId = (findSupplier.get(seller) as { id: number }).id;
-      const list = findList.get(projectId, source, supplierId) as { id: number } | undefined;
-      const listName = source === WEB_MATCH_TYPE ? `Сайт ${seller}` : seller;
-      const listId = list?.id
-        ?? Number(insertList.run(projectId, supplierId, listName, source, source).lastInsertRowid);
-      const itemId = Number(insertItem.run(listId, w.article, w.name, w.unit, w.price, w.id).lastInsertRowid);
-      insertMatch.run(w.spec_item_id, itemId, source, matchReason);
+      insertPriceListVariant(db, projectId, source, w);
     }
 
     db.prepare(`

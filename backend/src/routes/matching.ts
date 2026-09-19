@@ -10,7 +10,7 @@ import { isGeminiMatchingEnabled } from '../services/llmMatcher';
 import { acquireMatchingRun, releaseMatchingRun, isMatchingRunActive, setMatchingResult, getMatchingResult, clearMatchingResult } from '../services/matchingRunLock';
 import { recordMetricSnapshot, getMetricsHistory, getOverview } from '../services/metricSnapshots';
 import { notifyFeedback } from '../services/telegramNotify';
-import { syncSiteVariants, WEB_MATCH_TYPE } from './priceSearch';
+import { syncSiteVariants, WEB_MATCH_TYPE, setSelectedMatch } from './priceSearch';
 
 const upload = multer({ storage: multer.memoryStorage() });
 const LLM_MATCH_TYPE = 'llm_suggestion';
@@ -1294,13 +1294,7 @@ router.put('/api/matching/select/:id', (req: Request, res: Response) => {
     if (!ensureMatchingNotRunning(match.project_id, res)) return;
 
     db.transaction(() => {
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?'
-      ).run(match.specification_item_id);
-
-      db.prepare(
-        'UPDATE matched_items SET is_selected = 1 WHERE id = ?'
-      ).run(matchId);
+      setSelectedMatch(db, match.specification_item_id, matchId);
     })();
 
     // Learning-metrics: switching the selected match changes tier composition — capture it.

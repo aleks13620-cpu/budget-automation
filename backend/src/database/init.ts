@@ -170,6 +170,14 @@ function initializeDatabase(): void {
       // ищет только на сайтах поставщиков с price_source='search' и search_enabled=1, а не по
       // всему интернету. DEFAULT 1 = как сегодня, старые задания не меняют поведение.
       'ALTER TABLE price_search_jobs ADD COLUMN search_internet INTEGER NOT NULL DEFAULT 1',
+      // Ф21.1 — Иван пометил позицию «не брать цену» на экране вариантов цены. Отдельная
+      // таблица, а не колонка на specification_items: пометка про подбор цены, а не про саму
+      // позицию спецификации, и живёт своим циклом (снимается выбором варианта). Выгрузку
+      // не меняет — это Ф21.4.
+      `CREATE TABLE IF NOT EXISTS price_option_skip (
+        specification_item_id INTEGER PRIMARY KEY REFERENCES specification_items(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
     ];
     for (const sql of migrations) {
       try { db.exec(sql); } catch { /* column already exists */ }
