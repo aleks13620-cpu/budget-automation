@@ -324,6 +324,7 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
                               <input
                                 type="radio"
                                 name={`item-${item.spec_item_id}`}
+                                aria-label={`${opt.supplier_label}, ${fmtPrice(opt.prelim_price)}`}
                                 checked={checkedId === optKey}
                                 disabled={savingItem === item.spec_item_id}
                                 onChange={() => applyChoice(item.spec_item_id, { option_id: opt.option_id })}
@@ -362,6 +363,7 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
                           <input
                             type="radio"
                             name={`item-${item.spec_item_id}`}
+                            aria-label="Не брать цену"
                             checked={checkedId === 'skip'}
                             disabled={savingItem === item.spec_item_id}
                             onChange={() => applyChoice(item.spec_item_id, { skip: true })}
@@ -385,10 +387,10 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
       {data.not_searched_items.length > 0 && (
         <div className="section">
           <p className="muted">
-            {data.not_searched_items.length} позиций описаны словами — по ним поиск не шёл.{' '}
-            <span style={{ color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => setShowNotSearched(v => !v)}>
+            Описаны словами, по ним поиск не шёл: {data.not_searched_items.length} поз.{' '}
+            <button type="button" style={{ color: '#2563eb', cursor: 'pointer', textDecoration: 'underline', background: 'none', border: 'none', padding: 0, font: 'inherit' }} onClick={() => setShowNotSearched(v => !v)}>
               {showNotSearched ? 'скрыть список' : 'показать список'}
-            </span>
+            </button>
           </p>
           {showNotSearched && (
             <ul style={{ fontSize: '0.85rem', margin: '0.4rem 0 0', paddingLeft: '1.2rem' }}>
