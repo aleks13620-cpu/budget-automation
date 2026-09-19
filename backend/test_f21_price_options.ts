@@ -39,10 +39,12 @@ const { getDatabase, closeDatabase } = require('./src/database/connection');
 const { initializeDatabase } = require('./src/database/init');
 const priceOptionsRouter = require('./src/routes/priceOptions').default;
 const priceSearchRouter = require('./src/routes/priceSearch').default;
+const matchingRouter = require('./src/routes/matching').default;
 const { UPSERT_EXTERNAL_PRICE, PRICE_FIELDS, toBindable, nowIso } = require('./src/routes/priceSearch');
 const { classifySpecPositions } = require('./src/services/specClassifier');
 const { acquireMatchingRun, releaseMatchingRun } = require('./src/services/matchingRunLock');
 const { rememberPrevInvoiceMatch, restorePrevInvoiceMatch } = require('./src/routes/priceOptions');
+const { getOrCreatePriceListMatchId: getOrCreatePriceListMatchIdForSim } = require('./src/routes/priceSearch');
 
 let pass = 0;
 let fail = 0;
@@ -174,11 +176,11 @@ async function main(): Promise<void> {
   const invoiceItemId2 = Number(db.prepare(
     `INSERT INTO invoice_items (invoice_id, name, price, quantity) VALUES (?, 'ревью п.2, другая строка счёта', 9999, 1)`
   ).run(invoiceId).lastInsertRowid);
-  db.prepare(`
+  const invoiceMatchId2 = Number(db.prepare(`
     INSERT INTO matched_items (specification_item_id, invoice_item_id, confidence, match_type,
                                match_reason, is_confirmed, is_selected, source)
     VALUES (7382, ?, 0.5, 'invoice', 'ревью теста, второй кандидат', 0, 0, 'invoice')
-  `).run(invoiceItemId2);
+  `).run(invoiceItemId2).lastInsertRowid);
 
   console.log('\n=== ревью п.3: синтетика — на позиции 7383 выбран ОБЫЧНЫЙ прайс-лист (не вариант экрана) ===');
   const someExternalId = (db.prepare(`SELECT id FROM external_prices WHERE project_id = 16 LIMIT 1`).get() as { id: number }).id;
@@ -364,19 +366,81 @@ async function main(): Promise<void> {
       JOIN specification_items si ON si.id = m.specification_item_id
       WHERE si.project_id = ? AND m.is_selected = 1 AND m.source = 'invoice'
     `).all(projectId) as Array<{ match_id: number; spec_item_id: number }>;
+    // matched_items(source='price_list') требует ЖИВОЙ price_list_item_id (CHECK constraint) —
+    // одна синтетическая строка-«вариант» на проект, переиспользуется под все позиции проекта
+    // (уникальность matched_items.price_list_item_id ничем не ограничена).
+    db.prepare(`INSERT OR IGNORE INTO suppliers (name) VALUES ('Симуляция варианта дозадания 2')`).run();
+    const simSupplierId = (db.prepare(`SELECT id FROM suppliers WHERE name = 'Симуляция варианта дозадания 2'`).get() as { id: number }).id;
+    const simPlId = Number(db.prepare(
+      `INSERT INTO price_lists (project_id, supplier_id, file_name, file_path, status) VALUES (?, ?, 'sim.xlsx', '/sim.xlsx', 'processed')`
+    ).run(projectId, simSupplierId).lastInsertRowid);
+    const simPliId = Number(db.prepare(
+      `INSERT INTO price_list_items (price_list_id, article, name, unit, price, row_index) VALUES (?, NULL, 'симуляция', 'шт', 1, 1)`
+    ).run(simPlId).lastInsertRowid);
+
     let restoredSame = 0;
     for (const row of invoiceSelected) {
-      // Симулируем «выбор варианта → сброс» на реальном коде (не переизобретаем правило):
-      // rememberPrevInvoiceMatch запоминает текущий is_selected=1 invoice-матч, затем имитируем
-      // выбор price_list-варианта (is_selected переезжает), затем restorePrevInvoiceMatch.
+      // Симулируем «выбор варианта → сброс» на реальном коде (не переизобретаем правило), тем же
+      // порядком шагов, что и PUT в priceOptions.ts: remember (пока счёт ещё is_selected=1) →
+      // экран выбирает вариант (новая matched_items-строка становится is_selected=1,
+      // chosen_match_id обновляется на неё — как делает PUT после setSelectedMatch) → читаем
+      // is_selected ДО сброса → restore.
       rememberPrevInvoiceMatch(db, row.spec_item_id);
       db.prepare('UPDATE matched_items SET is_selected = 0 WHERE specification_item_id = ?').run(row.spec_item_id);
-      restorePrevInvoiceMatch(db, row.spec_item_id);
+      const variantMatchId = Number(db.prepare(`
+        INSERT INTO matched_items (specification_item_id, price_list_item_id, confidence, match_type, match_reason, is_confirmed, is_selected, source)
+        VALUES (?, ?, 1.0, 'price_list', 'симуляция выбора варианта на экране', 0, 1, 'price_list')
+      `).run(row.spec_item_id, simPliId).lastInsertRowid);
+      db.prepare('UPDATE price_option_prev_match SET chosen_match_id = ? WHERE specification_item_id = ?').run(variantMatchId, row.spec_item_id);
+      restorePrevInvoiceMatch(db, row.spec_item_id, variantMatchId);
       const after = db.prepare('SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1').get(row.spec_item_id) as { id: number } | undefined;
       if (after?.id === row.match_id) restoredSame++;
     }
     check(`проект ${projectId}: восстановлен ТОТ ЖЕ match_id у ВСЕХ invoice-выбранных позиций — ${restoredSame}/${invoiceSelected.length}`,
       restoredSame === invoiceSelected.length, { total: invoiceSelected.length, restoredSame });
+  }
+
+  console.log('\n=== дозадание 2: выбор варианта Б на СТАРОМ экране сопоставления (/api/matching/select) не откатывается «вернуть цену из счёта» ===');
+  {
+    // Стартовое состояние 7382 после предыдущих блоков — счёт восстановлен (см. проверки выше).
+    const before = await getOptions(16);
+    const item7382Before = before.items.find((it: any) => it.spec_item_id === 7382);
+    check('перед сценарием дозадания 2 у 7382 снова активен счёт (invoice_price не null)', item7382Before?.invoice_price != null, item7382Before);
+    const webOptsD2 = item7382Before?.options.filter((o: any) => o.source === 'web_search') ?? [];
+    check('у 7382 есть варианты А и Б (≥2 web_search)', webOptsD2.length >= 2, webOptsD2);
+
+    if (webOptsD2.length >= 2 && item7382Before?.invoice_price != null) {
+      // Шаг 1 — Иван выбирает вариант А на экране Ф21.
+      const putA = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: webOptsD2[0].option_id });
+      check('шаг 1: PUT вариантом А на 7382 → 200', putA.statusCode === 200, putA.payload);
+      check('шаг 1: invoice_restorable=true сразу после выбора варианта А', putA.payload?.item?.invoice_restorable === true, putA.payload);
+
+      // Шаг 2 — Иван на СТАРОМ экране сопоставления выбирает вариант Б через РЕАЛЬНЫЙ
+      // /api/matching/select/:id (matching.ts) — в обход priceOptions.ts, ровно как в отчёте
+      // ревью. matchIdB получаем тем же способом, что использует сам экран Ф21 для превращения
+      // варианта в matched_items-строку (getOrCreatePriceListMatchId), но здесь — НЕ через PUT
+      // priceOptions, а напрямую, как обычный кандидат старого экрана.
+      const matchIdB = getOrCreatePriceListMatchIdForSim(db, 16, webOptsD2[1].option_id);
+      const putSelectB = await call(matchingRouter, '/api/matching/select/:id', 'put', { id: String(matchIdB) }, {});
+      check('шаг 2: PUT /api/matching/select/:id (старый экран, вариант Б) → 200', putSelectB.statusCode === 200, putSelectB.payload);
+
+      // Шаг 3 — GET экрана Ф21: invoice_restorable ОБЯЗАН стать false (выбор сделан не этим
+      // экраном — chosen_match_id указывает на матч варианта А, is_selected уже на варианте Б).
+      const afterSelect = await getOptions(16);
+      const item7382AfterSelect = afterSelect.items.find((it: any) => it.spec_item_id === 7382);
+      check('шаг 3: invoice_restorable=false — выбор сделан НЕ экраном Ф21 (это и был баг ревью)',
+        item7382AfterSelect?.invoice_restorable === false, item7382AfterSelect);
+      check(`шаг 3: selected_option_id = вариант Б (${webOptsD2[1].option_id}), не вариант А`,
+        item7382AfterSelect?.selected_option_id === webOptsD2[1].option_id, item7382AfterSelect);
+
+      // Шаг 4 — «вернуть цену из счёта» (PUT option_id:null) НЕ должен откатывать выбор варианта
+      // Б: prev протухла (isPrevRestoreValid=false), должен сработать обычный сброс.
+      const putNullD2 = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: null });
+      check('шаг 4: PUT option_id:null → 200', putNullD2.statusCode === 200, putNullD2.payload);
+      const afterNullD2 = db.prepare('SELECT id FROM matched_items WHERE specification_item_id = 7382 AND is_selected = 1').get() as { id: number } | undefined;
+      check(`шаг 4: is_selected остался на выборе варианта Б из /select (matchIdB=${matchIdB}), НЕ откатился молча на счёт (match_id=${invoiceMatchId})`,
+        afterNullD2?.id === matchIdB, afterNullD2);
+    }
   }
 
   console.log('\n=== ревью п.3: обычный прайс-лист не путается с вариантом экрана ===');

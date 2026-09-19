@@ -183,9 +183,16 @@ function initializeDatabase(): void {
       // INSERT OR IGNORE в PUT (см. priceOptions.ts) не даёт повторной смене варианта затереть
       // исходный запомненный счёт; строка удаляется при сбросе (option_id:null), когда счёт
       // возвращён.
+      // chosen_match_id (дозадание 2) — matched_items.id, который поставил САМ экран Ф21 (не
+      // угадка). Восстановление разрешено только когда is_selected=1 сейчас указывает именно
+      // на chosen_match_id: если Иван поменял выбор в другом месте (старый экран сопоставления
+      // /api/matching/select, прогон матчера) — is_selected уехал на чужой match_id, prev
+      // автоматически считается протухшей, никакой правки matching.ts/select не нужно. Таблица
+      // ещё нигде не выложена — колонка сразу в CREATE, без ALTER.
       `CREATE TABLE IF NOT EXISTS price_option_prev_match (
         specification_item_id INTEGER PRIMARY KEY REFERENCES specification_items(id) ON DELETE CASCADE,
         match_id INTEGER NOT NULL,
+        chosen_match_id INTEGER,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`,
     ];

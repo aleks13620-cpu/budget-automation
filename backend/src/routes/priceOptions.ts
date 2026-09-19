@@ -273,8 +273,13 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   // выбран matched_items source='invoice' (тот же join, что exportPricing.ts делает для строк
   // с m.source='invoice').
   const invoiceByMember = new Map<number, { price: number; supplier: string | null }>();
+  // Дозадание 2: matched_items.id текущего is_selected=1 — независимо от источника. Нужен,
+  // чтобы отличить «is_selected всё ещё указывает на то, что поставил экран Ф21» (chosen_match_id
+  // в price_option_prev_match) от «выбор сменили в другом месте» (старый /api/matching/select,
+  // прогон матчера) — тогда prev протухла, откат запрещён.
+  const currentMatchIdByMember = new Map<number, number>();
   const selectedRows = db.prepare(`
-    SELECT si.id AS spec_item_id, m.source AS m_source, pli.row_index AS row_index,
+    SELECT si.id AS spec_item_id, m.id AS match_row_id, m.source AS m_source, pli.row_index AS row_index,
            pl.file_path AS file_path, pli.price AS pli_price, pls.name AS pl_supplier_name,
            ep.id AS ep_id, ii.price AS invoice_price, isup.name AS invoice_supplier_name
     FROM matched_items m
@@ -288,12 +293,13 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
     LEFT JOIN suppliers isup ON isup.id = inv.supplier_id
     WHERE si.project_id = ? AND m.is_selected = 1
   `).all(projectId) as Array<{
-    spec_item_id: number; m_source: string; row_index: number | null; file_path: string | null;
+    spec_item_id: number; match_row_id: number; m_source: string; row_index: number | null; file_path: string | null;
     pli_price: number | null; pl_supplier_name: string | null; ep_id: number | null;
     invoice_price: number | null; invoice_supplier_name: string | null;
   }>;
   for (const r of selectedRows) {
     anySelectedByMember.add(r.spec_item_id);
+    currentMatchIdByMember.set(r.spec_item_id, r.match_row_id);
     if (r.m_source === 'price_list' && r.row_index != null) {
       const isOptionSource = r.file_path != null && (OPTION_SOURCES as readonly string[]).includes(r.file_path) && r.ep_id != null;
       if (isOptionSource) {
@@ -315,13 +321,17 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   );
 
   // П.2 дозадания: «вернуть цену из счёта» запоминает исходный invoice-матч (price_option_prev_match),
-  // не угадывает его. invoice_restorable представителя = у него есть запомненная строка.
-  const prevMatchByMember = new Set<number>(
+  // не угадывает его. Дозадание 2: chosen_match_id — matched_items.id, который поставил САМ
+  // экран (не угадка) — откат разрешён, только пока is_selected всё ещё указывает на него
+  // (см. isPrevRestoreValid ниже).
+  const prevMatchByMember = new Map<number, { matchId: number; chosenMatchId: number | null }>(
     (db.prepare(`
-      SELECT ppm.specification_item_id AS id FROM price_option_prev_match ppm
+      SELECT ppm.specification_item_id AS id, ppm.match_id AS match_id, ppm.chosen_match_id AS chosen_match_id
+      FROM price_option_prev_match ppm
       JOIN specification_items si ON si.id = ppm.specification_item_id
       WHERE si.project_id = ?
-    `).all(projectId) as Array<{ id: number }>).map(r => r.id)
+    `).all(projectId) as Array<{ id: number; match_id: number; chosen_match_id: number | null }>)
+      .map(r => [r.id, { matchId: r.match_id, chosenMatchId: r.chosen_match_id }])
   );
 
   let searched = 0, withPrice = 0, ownPrice = 0, selectedCount = 0;
@@ -399,6 +409,13 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
     // (напр. supplier_price попал в группу A/D, но цену показать всё равно нужно).
     if (!isSearched && options.length === 0) continue;
 
+    // Дозадание 2: откат разрешён, только пока is_selected представителя всё ещё указывает на
+    // chosen_match_id (то, что поставил САМ экран) и исходный invoice-матч ещё жив. Выбор в
+    // другом месте (старый /api/matching/select, прогон матчера) сдвигает is_selected — prev
+    // автоматически протухает, без правок matching.ts.
+    const prevRow = prevMatchByMember.get(p.id);
+    const invoiceRestorable = !!prevRow && isPrevRestoreValid(db, prevRow, currentMatchIdByMember.get(p.id));
+
     items.push({
       spec_item_id: p.id,
       member_ids: p.memberIds,
@@ -413,7 +430,7 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
       invoice_price: invoiceByMember.get(p.id)?.price ?? null,
       invoice_supplier: invoiceByMember.get(p.id)?.supplier ?? null,
       other_selected_label: otherSelectedByMember.get(p.id) ?? null,
-      invoice_restorable: selectedOptionId != null && prevMatchByMember.has(p.id),
+      invoice_restorable: selectedOptionId != null && invoiceRestorable,
       skipped: skipByMember.has(p.id),
       options,
     });
@@ -437,10 +454,37 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   };
 }
 
+// Дозадание 2: откат «вернуть цену из счёта» разрешён, только пока is_selected члена ВСЁ ЕЩЁ
+// указывает ровно на то, что поставил САМ экран (chosen_match_id) — а не на выбор, сделанный
+// где-то ещё (старый /api/matching/select, прогон матчера). Плюс исходный invoice-матч должен
+// быть ещё жив (matched_items не удалён, напр. переимпортом счёта). currentMatchId — id строки
+// matched_items, у которой is_selected=1 СЕЙЧАС (undefined, если ничего не выбрано).
+function isPrevRestoreValid(
+  db: ReturnType<typeof getDatabase>,
+  prev: { matchId: number; chosenMatchId: number | null },
+  currentMatchId: number | undefined,
+): boolean {
+  if (prev.chosenMatchId == null || currentMatchId !== prev.chosenMatchId) return false;
+  return !!db.prepare('SELECT 1 FROM matched_items WHERE id = ?').get(prev.matchId);
+}
+
+// Дозадание 2: prev считается протухшей (кто-то сменил выбор мимо экрана Ф21), когда запись
+// есть, chosen_match_id уже проставлен, но is_selected сейчас указывает на другую строку. В этом
+// случае «сброс» с Ф21 не имеет права снимать is_selected — тот выбор сделан не здесь (см. PUT
+// option_id:null). Нет записи вовсе (никогда не было счёта под откат) — не протухла, обычный путь.
+function hasStalePrevMatch(db: ReturnType<typeof getDatabase>, memberId: number, currentMatchId: number | undefined): boolean {
+  const prev = db.prepare(
+    'SELECT chosen_match_id FROM price_option_prev_match WHERE specification_item_id = ?'
+  ).get(memberId) as { chosen_match_id: number | null } | undefined;
+  if (!prev) return false;
+  return prev.chosen_match_id != null && prev.chosen_match_id !== currentMatchId;
+}
+
 // П.2 дозадания: запоминаем invoice-матч, который стоял ДО первого выбора варианта — не
 // угадываем его. OR IGNORE: если у члена уже есть запомненная строка (вторая, третья смена
 // варианта подряд), исходный выбор не перезаписывается более свежим (на момент второй смены
-// is_selected уже указывает на price_list-вариант, а не на счёт).
+// is_selected уже указывает на price_list-вариант, а не на счёт). chosen_match_id (то, что
+// экран поставил СЕЙЧАС) обновляет вызывающий код после setSelectedMatch — здесь его ещё нет.
 export function rememberPrevInvoiceMatch(db: ReturnType<typeof getDatabase>, memberId: number): void {
   const current = db.prepare(
     `SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1 AND source = 'invoice'`
@@ -451,15 +495,24 @@ export function rememberPrevInvoiceMatch(db: ReturnType<typeof getDatabase>, mem
   ).run(memberId, current.id);
 }
 
-// Сброс варианта — вернуть запомненный счёт, если он ещё существует (matched_items не удалён),
-// и забыть запись. Иначе ничего не восстанавливаем (позиция остаётся без цены, как раньше).
-export function restorePrevInvoiceMatch(db: ReturnType<typeof getDatabase>, memberId: number): void {
+// Сброс варианта — вернуть запомненный счёт, только если prev ещё валидна (isPrevRestoreValid:
+// is_selected всё ещё на chosen_match_id экрана, счёт не удалён). Иначе prev протухла — обычный
+// сброс без отката (позиция остаётся на том выборе, что сделан в другом месте, как есть).
+// Запись price_option_prev_match в любом случае удаляется — она разовая, до первого сброса.
+// currentMatchIdBeforeReset обязателен вызывающему коду: is_selected нужно прочитать ДО того,
+// как сам сброс (unselectOptionSourceMatch в PUT) его очистит — иначе проверка всегда видит
+// «ничего не выбрано» и откат не срабатывает никогда.
+export function restorePrevInvoiceMatch(
+  db: ReturnType<typeof getDatabase>,
+  memberId: number,
+  currentMatchIdBeforeReset: number | undefined,
+): void {
   const prev = db.prepare(
-    'SELECT match_id FROM price_option_prev_match WHERE specification_item_id = ?'
-  ).get(memberId) as { match_id: number } | undefined;
+    'SELECT match_id, chosen_match_id FROM price_option_prev_match WHERE specification_item_id = ?'
+  ).get(memberId) as { match_id: number; chosen_match_id: number | null } | undefined;
   if (!prev) return;
-  const stillExists = db.prepare('SELECT id FROM matched_items WHERE id = ?').get(prev.match_id);
-  if (stillExists) setSelectedMatch(db, memberId, prev.match_id);
+  const valid = isPrevRestoreValid(db, { matchId: prev.match_id, chosenMatchId: prev.chosen_match_id }, currentMatchIdBeforeReset);
+  if (valid) setSelectedMatch(db, memberId, prev.match_id);
   db.prepare('DELETE FROM price_option_prev_match WHERE specification_item_id = ?').run(memberId);
 }
 
@@ -559,10 +612,23 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
     } else if (option_id === null) {
       db.transaction(() => {
         for (const memberId of members) {
-          unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
+          // Дозадание 2: is_selected нужно прочитать ДО unselectOptionSourceMatch — тот его
+          // очищает, и валидность отката (isPrevRestoreValid) больше нечем будет проверить.
+          const currentBeforeReset = db.prepare(
+            'SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1'
+          ).get(memberId) as { id: number } | undefined;
+          // Дозадание 2: если prev протухла (кто-то выбрал ДРУГОЕ вне экрана Ф21 — например,
+          // /api/matching/select — и is_selected уже не chosen_match_id), «сброс» с этого экрана
+          // не трогает is_selected вообще: тот выбор сделан не здесь, и Ф21 его не откатывает,
+          // как не откатывает и восстановление счёта (см. isPrevRestoreValid внутри
+          // restorePrevInvoiceMatch ниже). Иначе — обычный путь: снимаем текущий вариант ЭТОГО
+          // экрана (OPTION_SOURCES), как раньше.
+          if (!hasStalePrevMatch(db, memberId, currentBeforeReset?.id)) {
+            unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
+          }
           db.prepare('DELETE FROM price_option_skip WHERE specification_item_id = ?').run(memberId);
           // П.2 дозадания: сброс варианта возвращает ЗАПОМНЕННЫЙ (не угаданный) счёт.
-          restorePrevInvoiceMatch(db, memberId);
+          restorePrevInvoiceMatch(db, memberId, currentBeforeReset?.id);
         }
       })();
     } else if (typeof option_id === 'number') {
@@ -587,6 +653,11 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
             : ensureMemberEquivalent(db, projectId, memberId, chosen);
           const matchId = getOrCreatePriceListMatchId(db, projectId, extId);
           setSelectedMatch(db, memberId, matchId);
+          // Дозадание 2: chosen_match_id = то, что поставил СЕЙЧАС именно этот PUT — не только
+          // на первой записи (INSERT OR IGNORE выше её не создаёт при повторной смене), а на
+          // КАЖДОЙ смене варианта, иначе следующая проверка isPrevRestoreValid сочтёт prev
+          // протухшей уже после первой же повторной смены варианта.
+          db.prepare('UPDATE price_option_prev_match SET chosen_match_id = ? WHERE specification_item_id = ?').run(matchId, memberId);
           db.prepare('DELETE FROM price_option_skip WHERE specification_item_id = ?').run(memberId);
         }
       })();
