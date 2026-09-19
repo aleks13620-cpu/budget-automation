@@ -57,6 +57,13 @@ export interface ClassifiedPosition {
   group: SpecGroup;
   mark: string | null;
   markSrc: MarkSource | null;
+  /**
+   * Все id specification_items с тем же dedupKey (включая сам id представителя), т.е. точные
+   * дубли, схлопнутые в эту одну позицию. Ф21.1 (routes/priceOptions.ts): у каждого дубля своя
+   * строка external_prices/matched_items, а показывать и выбирать нужно одной позицией —
+   * без этого поля вызывающему негде взять список дублей, кроме повтора дедупа руками.
+   */
+  memberIds: number[];
 }
 
 // марка = токен с буквами И цифрами, длиной от 4, допускает дефис/точку/косую
@@ -248,16 +255,20 @@ export function classifySpecPositions(
 
   const byId = new Map<number, SpecItemRow>(rows.map((r) => [r.id, r]));
   const out: ClassifiedPosition[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, ClassifiedPosition>();
 
   for (const r of rows) {
     if (!r.quantity) continue;
     const fullName = buildFullName(r, byId);
     const key = dedupKey(r, fullName);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const existing = seen.get(key);
+    if (existing) { existing.memberIds.push(r.id); continue; }
     const { group, mark, markSrc } = classifySpecItem(r, fullName);
-    out.push({ id: r.id, projectId: r.project_id ?? null, fullName, group, mark, markSrc });
+    const position: ClassifiedPosition = {
+      id: r.id, projectId: r.project_id ?? null, fullName, group, mark, markSrc, memberIds: [r.id],
+    };
+    out.push(position);
+    seen.set(key, position);
   }
   return out;
 }

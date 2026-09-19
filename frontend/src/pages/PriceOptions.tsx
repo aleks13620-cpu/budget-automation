@@ -20,10 +20,15 @@ interface PriceOption {
   snapshot_date: string;
   url: string;
   is_own_supplier: boolean;
+  /** Выбранный ранее вариант, чья строка выпала из последнего среза — не спрятан, только помечен. */
+  stale: boolean;
 }
 
 interface PriceOptionItem {
   spec_item_id: number;
+  /** Все specification_items.id, схлопнутые в эту позицию (точные дубли) — на экране не
+   *  используется напрямую, выбор на дубли применяет бэкенд по PUT одной позиции. */
+  member_ids: number[];
   name: string;
   mark: string | null;
   qty: number | null;
@@ -60,10 +65,15 @@ function fmtPrice(n: number): string {
   return n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
 }
 
+// ДД.ММ.ГГГГ — и для snapshot_date ('2026-09-12'), и для last_search_at (полный ISO с 'Z').
+// UTC-геттеры: снимок хранится датой без времени, локальная зона не должна сдвигать день.
 function fmtDate(iso: string | null): string {
   if (!iso) return 'поиска ещё не было';
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('ru-RU');
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}.${mm}.${d.getUTCFullYear()}`;
 }
 
 export function PriceOptions({ projectId, projectName, onBack }: Props) {
@@ -329,12 +339,17 @@ export function PriceOptions({ projectId, projectName, onBack }: Props) {
                               {isAuto && (
                                 <span className="muted" style={{ marginLeft: '0.4rem', fontSize: '0.7rem' }}>подставится сама</span>
                               )}
+                              {opt.stale && (
+                                <span style={{ marginLeft: '0.4rem', fontSize: '0.7rem', color: '#b45309' }}>
+                                  из прошлого поиска {fmtDate(opt.snapshot_date)}
+                                </span>
+                              )}
                             </td>
                             <td>
                               <span style={{ padding: '0.1rem 0.4rem', borderRadius: '4px', background: legend.bg, color: legend.color, fontSize: '0.75rem', fontWeight: 600 }}>
                                 {legend.label}
                               </span>
-                              <div className="muted" style={{ fontSize: '0.7rem' }}>{opt.snapshot_date}</div>
+                              <div className="muted" style={{ fontSize: '0.7rem' }}>{fmtDate(opt.snapshot_date)}</div>
                             </td>
                             <td>{fmtPrice(opt.base_price)}</td>
                             <td>{opt.discount_pct ? `${opt.discount_pct}%` : '—'}</td>
