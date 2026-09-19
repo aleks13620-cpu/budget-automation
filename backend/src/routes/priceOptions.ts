@@ -468,17 +468,6 @@ function isPrevRestoreValid(
   return !!db.prepare('SELECT 1 FROM matched_items WHERE id = ?').get(prev.matchId);
 }
 
-// Дозадание 2: prev считается протухшей (кто-то сменил выбор мимо экрана Ф21), когда запись
-// есть, chosen_match_id уже проставлен, но is_selected сейчас указывает на другую строку. В этом
-// случае «сброс» с Ф21 не имеет права снимать is_selected — тот выбор сделан не здесь (см. PUT
-// option_id:null). Нет записи вовсе (никогда не было счёта под откат) — не протухла, обычный путь.
-function hasStalePrevMatch(db: ReturnType<typeof getDatabase>, memberId: number, currentMatchId: number | undefined): boolean {
-  const prev = db.prepare(
-    'SELECT chosen_match_id FROM price_option_prev_match WHERE specification_item_id = ?'
-  ).get(memberId) as { chosen_match_id: number | null } | undefined;
-  if (!prev) return false;
-  return prev.chosen_match_id != null && prev.chosen_match_id !== currentMatchId;
-}
 
 // П.2 дозадания: запоминаем invoice-матч, который стоял ДО первого выбора варианта — не
 // угадываем его. OR IGNORE: если у члена уже есть запомненная строка (вторая, третья смена
@@ -617,15 +606,10 @@ router.put('/api/projects/:id/price-options/:specItemId', (req: Request, res: Re
           const currentBeforeReset = db.prepare(
             'SELECT id FROM matched_items WHERE specification_item_id = ? AND is_selected = 1'
           ).get(memberId) as { id: number } | undefined;
-          // Дозадание 2: если prev протухла (кто-то выбрал ДРУГОЕ вне экрана Ф21 — например,
-          // /api/matching/select — и is_selected уже не chosen_match_id), «сброс» с этого экрана
-          // не трогает is_selected вообще: тот выбор сделан не здесь, и Ф21 его не откатывает,
-          // как не откатывает и восстановление счёта (см. isPrevRestoreValid внутри
-          // restorePrevInvoiceMatch ниже). Иначе — обычный путь: снимаем текущий вариант ЭТОГО
-          // экрана (OPTION_SOURCES), как раньше.
-          if (!hasStalePrevMatch(db, memberId, currentBeforeReset?.id)) {
-            unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
-          }
+          // «Сбросить выбор» — явное действие Ивана на этом экране: снимаем текущий вариант
+          // (OPTION_SOURCES), даже если он выбран в сопоставлении. Старый счёт при этом
+          // возвращается, только если prev не протухла (isPrevRestoreValid в restorePrevInvoiceMatch).
+          unselectOptionSourceMatch.run(memberId, memberId, ...OPTION_SOURCES);
           db.prepare('DELETE FROM price_option_skip WHERE specification_item_id = ?').run(memberId);
           // П.2 дозадания: сброс варианта возвращает ЗАПОМНЕННЫЙ (не угаданный) счёт.
           restorePrevInvoiceMatch(db, memberId, currentBeforeReset?.id);

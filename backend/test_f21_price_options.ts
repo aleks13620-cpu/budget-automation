@@ -433,13 +433,15 @@ async function main(): Promise<void> {
       check(`шаг 3: selected_option_id = вариант Б (${webOptsD2[1].option_id}), не вариант А`,
         item7382AfterSelect?.selected_option_id === webOptsD2[1].option_id, item7382AfterSelect);
 
-      // Шаг 4 — «вернуть цену из счёта» (PUT option_id:null) НЕ должен откатывать выбор варианта
-      // Б: prev протухла (isPrevRestoreValid=false), должен сработать обычный сброс.
+      // Шаг 4 — «сбросить выбор» (PUT option_id:null) при протухшей prev: обычный сброс —
+      // вариант Б снят (явное действие Ивана), старый счёт НЕ возвращается молча.
       const putNullD2 = await call(priceOptionsRouter, '/api/projects/:id/price-options/:specItemId', 'put', { id: '16', specItemId: '7382' }, { option_id: null });
       check('шаг 4: PUT option_id:null → 200', putNullD2.statusCode === 200, putNullD2.payload);
       const afterNullD2 = db.prepare('SELECT id FROM matched_items WHERE specification_item_id = 7382 AND is_selected = 1').get() as { id: number } | undefined;
-      check(`шаг 4: is_selected остался на выборе варианта Б из /select (matchIdB=${matchIdB}), НЕ откатился молча на счёт (match_id=${invoiceMatchId})`,
-        afterNullD2?.id === matchIdB, afterNullD2);
+      check(`шаг 4: после сброса не выбран ни вариант Б (matchIdB=${matchIdB}), ни старый счёт (match_id=${invoiceMatchId})`,
+        afterNullD2?.id !== matchIdB && afterNullD2?.id !== invoiceMatchId, afterNullD2);
+      const prevLeft = db.prepare('SELECT 1 FROM price_option_prev_match WHERE specification_item_id = 7382').get();
+      check('шаг 4: протухшая prev удалена', !prevLeft, prevLeft);
     }
   }
 
