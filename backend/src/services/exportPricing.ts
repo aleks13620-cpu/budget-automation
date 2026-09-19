@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { computeExportPrice, loadSupplierSites } from '../routes/priceOptions';
 
 /**
  * Ф14: вычисление «цена / поставщик / источник / ссылка» по позиции — вынесено из
@@ -178,7 +179,10 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
            er.source_url as ext_url, er.offers as ext_offers, er.price_max as ext_price_max,
            er.found_by as ext_found_by, er.mark as ext_mark,
            eg.grp as ext_group,
-           CASE WHEN enf.spec_item_id IS NOT NULL THEN 1 ELSE 0 END as ext_not_found
+           CASE WHEN enf.spec_item_id IS NOT NULL THEN 1 ELSE 0 END as ext_not_found,
+           epl.price as sel_price, epl.source as sel_source, epl.source_url as sel_url,
+           epl.supplier_name as sel_supplier,
+           CASE WHEN pos.specification_item_id IS NOT NULL THEN 1 ELSE 0 END as is_skipped
     FROM specification_items si
     LEFT JOIN matched_items m ON m.specification_item_id = si.id AND m.is_selected = 1 ${analogFilter}
     LEFT JOIN invoice_items ii ON (COALESCE(m.source,'invoice') = 'invoice') AND m.invoice_item_id = ii.id
@@ -189,6 +193,17 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
     LEFT JOIN ext_ranked er ON er.spec_item_id = si.id AND er.rn = 1
     LEFT JOIN ext_group eg ON eg.spec_item_id = si.id
     LEFT JOIN ext_notfound enf ON enf.spec_item_id = si.id
+    -- Ф21.4: выбранный вариант из price_list_items, чья row_index ссылается на СВОЮ же строку
+    -- external_prices (заведена getOrCreatePriceListMatchId/insertPriceListVariant/
+    -- ensureMemberEquivalent — priceOptions.ts) — чтобы взять его же source/source_url/
+    -- supplier_name/live-цену для расчёта скидки поставщика (computeExportPrice). Условие
+    -- source=pl.file_path и spec_item_id=si.id — тот же самый ключ, которым эти функции
+    -- находят/создают строку, поэтому обычный прайс-лист (row_index = номер строки файла) под
+    -- него случайно не попадёт.
+    LEFT JOIN external_prices epl ON epl.id = pli.row_index AND epl.project_id = si.project_id
+                                  AND epl.source = pl.file_path AND epl.spec_item_id = si.id
+                                  AND epl.price IS NOT NULL
+    LEFT JOIN price_option_skip pos ON pos.specification_item_id = si.id
     WHERE si.project_id = ?
     ORDER BY si.section, si.id
   `).all(projectId) as Array<{
@@ -203,15 +218,49 @@ export function computeExportRows(db: Database.Database, projectId: number, mode
     ext_url: string | null; ext_offers: number | null; ext_price_max: number | null;
     ext_found_by: string | null; ext_mark: string | null;
     ext_group: string | null; ext_not_found: number;
+    sel_price: number | null; sel_source: string | null; sel_url: string | null; sel_supplier: string | null;
+    is_skipped: number;
   }>;
+
+  const sites = loadSupplierSites(db);
 
   return rows.map((item) => {
     const qty = item.quantity || 0;
+    const isSkipped = !!item.is_skipped;
+
+    // Ф21.4: выбранный вариант со ссылкой на external_prices (web_search/supplier_price/API) —
+    // цена со скидкой поставщика Арты, тот же расчёт скидки, что на экране «Цены по позициям»
+    // (routes/priceOptions.ts::computeExportPrice/computePrelimPrice). Без реальной скидки —
+    // цена продавца как есть, без округления (иначе выгрузка отличалась бы от сегодняшней и
+    // при discount_pct=0 — округление к копейкам меняет значения с бОльшей точностью в БД).
+    // Старый прайс-лист без ссылки на external_prices (sel_price отсутствует) — как раньше.
+    const selectedPrice = isSkipped
+      ? null
+      : (item.sel_price != null
+          ? computeExportPrice(sites, {
+              source: item.sel_source!, source_url: item.sel_url ?? '',
+              supplier_name: item.sel_supplier, price: item.sel_price,
+            })
+          : item.price);
+
     // Только в обычной выгрузке. В режимах «оригинал»/«аналог» пустая цена — это
     // ответ «такого варианта нет», и подставлять туда интернет-цену нельзя:
-    // она не является ни оригиналом, ни аналогом.
-    const usedExternal = mode === 'best' && item.price == null && item.ext_price != null;
-    const price = usedExternal ? item.ext_price : item.price;
+    // она не является ни оригиналом, ни аналогом. Позиция «Не брать цену» (price_option_skip) —
+    // автоподстановки тоже нет.
+    const usedExternal = mode === 'best' && !isSkipped && selectedPrice == null && item.ext_price != null;
+    // Ф21.4: автоподстановка — та же минимальная web_search-строка, что и раньше, но цена —
+    // её prelim_price (скидка её поставщика), не сырая цена продавца.
+    const autoPrice = usedExternal
+      ? computeExportPrice(sites, {
+          source: 'web_search', source_url: item.ext_url ?? '',
+          supplier_name: item.ext_supplier, price: item.ext_price!,
+        })
+      : null;
+    // Skip: ни выбранного варианта, ни автоподстановки; цена счёта (m.source='invoice'), если
+    // она есть, остаётся как сегодня — skip её не трогает (см. PUT price-options: skip снимает
+    // выбор только у source='price_list').
+    const invoicePrice = isSkipped && item.match_source === 'invoice' ? item.price : null;
+    const price = isSkipped ? invoicePrice : (usedExternal ? autoPrice : selectedPrice);
     const supplier = usedExternal ? (item.ext_supplier || '') : (item.supplier_name || '');
     const pricing = computeUnitPriceWithVat(
       price,

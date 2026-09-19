@@ -89,11 +89,54 @@ function optionGroupKey(row: OptionRow): string {
   return `${row.source}${SEP}${row.source_url}${SEP}${row.supplier_name ?? ''}${SEP}${row.price}`;
 }
 
+// Поставщик + скидка одной строки external_prices — правило (findSite выше) плюс «скидка 0
+// для price_source='api' и для ненайденного поставщика». Общее место для экрана (buildOption)
+// и выгрузок (exportPricing.ts::computePrelimPrice ниже) — считать один раз, не дважды.
+function resolveDiscountPct(
+  sites: SiteRow[], source: string, supplierName: string | null, sourceUrl: string,
+): { site: SiteRow | null; discountPct: number } {
+  const site = findSite(sites, source, supplierName, sourceUrl);
+  return { site, discountPct: site && site.price_source !== 'api' ? site.discount_pct : 0 };
+}
+
+export interface PrelimPriceInput {
+  source: string;
+  source_url: string;
+  supplier_name: string | null;
+  price: number;
+}
+
+// Ф21.4: цена со скидкой Арты для строки external_prices — тот же расчёт, что видит Иван на
+// экране «Цены по позициям» (buildOption ниже). Экспортирована для exportPricing.ts, чтобы
+// выгрузки не считали поставщика/скидку вторым кодом.
+export function computePrelimPrice(sites: SiteRow[], row: PrelimPriceInput): number {
+  const { discountPct } = resolveDiscountPct(sites, row.source, row.supplier_name, row.source_url);
+  return Math.round(row.price * (1 - discountPct / 100) * 100) / 100;
+}
+
+// Список поставщиков Арты одним запросом — общее место для экрана и выгрузок, чтобы не
+// дублировать этот SELECT и не бить по БД в цикле по позициям.
+export function loadSupplierSites(db: ReturnType<typeof getDatabase>): SiteRow[] {
+  return db.prepare(
+    'SELECT id, name, domain, price_source, source_key, discount_pct FROM supplier_sites'
+  ).all() as SiteRow[];
+}
+
+// Ф21.4 (exportPricing.ts): цена для выгрузки — со скидкой, только когда она реально есть
+// (>0). Экран Ивана (buildOption/computePrelimPrice) округляет цену до копеек ВСЕГДА, даже
+// без скидки — так и должно остаться для экрана. Но приёмка выгрузки требует: «при всех
+// скидках 0 результат идентичен сегодняшнему» — а сегодня выгрузка отдаёт цену продавца как
+// есть, без округления. Поэтому без скидки — исходная цена без изменений, со скидкой —
+// computePrelimPrice (тот же расчёт, что на экране).
+export function computeExportPrice(sites: SiteRow[], row: PrelimPriceInput): number {
+  const { discountPct } = resolveDiscountPct(sites, row.source, row.supplier_name, row.source_url);
+  return discountPct > 0 ? computePrelimPrice(sites, row) : row.price;
+}
+
 function buildOption(sites: SiteRow[], row: OptionRow, stale: boolean): PriceOption {
-  const site = findSite(sites, row.source, row.supplier_name, row.source_url);
+  const { site, discountPct } = resolveDiscountPct(sites, row.source, row.supplier_name, row.source_url);
   const priceType = priceTypeForSource(row.source);
-  const discountPct = site && site.price_source !== 'api' ? site.discount_pct : 0;
-  const prelimPrice = Math.round(row.price * (1 - discountPct / 100) * 100) / 100;
+  const prelimPrice = computePrelimPrice(sites, row);
   const domain = site?.domain ?? hostOf(row.source_url);
   return {
     option_id: row.id,
@@ -164,9 +207,7 @@ export function buildPriceOptions(db: ReturnType<typeof getDatabase>, projectId:
   ).all(projectId) as Array<{ id: number; name: string | null; quantity: number | null }>;
   const specById = new Map(specRows.map(r => [r.id, r]));
 
-  const sites = db.prepare(
-    'SELECT id, name, domain, price_source, source_key, discount_pct FROM supplier_sites'
-  ).all() as SiteRow[];
+  const sites = loadSupplierSites(db);
 
   // Все found-строки последнего среза КАЖДОГО source по проекту (не только rn=1 — этим и
   // отличается от syncOneSourceVariants/exportPricing, которым хватало одного варианта).
